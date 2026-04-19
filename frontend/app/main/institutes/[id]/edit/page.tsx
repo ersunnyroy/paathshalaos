@@ -96,7 +96,12 @@ export default function EditInstitutePage() {
     const [loading, setLoading] = useState(false);
     const [fetchLoading, setFetchLoading] = useState(true);
     const [activeStep, setActiveStep] = useState(0);
+    const activeStepRef = useRef(0);
     const [touched, setTouched] = useState<Record<string, boolean>>({});
+
+    useEffect(() => {
+        activeStepRef.current = activeStep;
+    }, [activeStep]);
 
     const [formData, setFormData] = useState<FormData>({
         name: '',
@@ -201,9 +206,8 @@ export default function EditInstitutePage() {
 
     const prevStep = () => setActiveStep(prev => Math.max(prev - 1, 0));
 
-    const handleSubmit = async (e: React.FormEvent) => {
-        e.preventDefault();
-        if (activeStep !== steps.length - 1) {
+    const commitUpdate = async () => {
+        if (activeStepRef.current !== steps.length - 1) {
             return;
         }
         setLoading(true);
@@ -492,16 +496,17 @@ export default function EditInstitutePage() {
                 <Steps model={steps} activeIndex={activeStep} className="mb-4" />
 
                 <form
-                    onSubmit={handleSubmit}
+                    onSubmit={(e) => e.preventDefault()}
                     onKeyDown={(e) => {
-                        if (e.key !== 'Enter' || activeStep === steps.length - 1) {
-                            return;
-                        }
+                        if (e.key !== 'Enter') return;
                         const el = e.target as HTMLElement;
-                        if (el.tagName === 'TEXTAREA') {
+                        if (el.tagName === 'TEXTAREA') return;
+                        if (activeStepRef.current !== steps.length - 1) {
+                            e.preventDefault();
                             return;
                         }
                         e.preventDefault();
+                        if (!loading) void commitUpdate();
                     }}
                 >
                     {renderStepContent()}
@@ -526,10 +531,12 @@ export default function EditInstitutePage() {
                             />
                         ) : (
                             <Button
-                                type="submit"
+                                type="button"
                                 label="Save Changes"
                                 icon="pi pi-check"
                                 loading={loading}
+                                disabled={loading}
+                                onClick={() => void commitUpdate()}
                             />
                         )}
                     </div>

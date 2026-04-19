@@ -93,10 +93,15 @@ export default function NewInstitutePage() {
     const [success, setSuccess] = useState(false);
     const [user, setUser] = useState<any>(null);
     const [activeStep, setActiveStep] = useState(0);
+    const activeStepRef = useRef(0);
     const [touched, setTouched] = useState<Record<string, boolean>>({});
     const [subdomainCheckLoading, setSubdomainCheckLoading] = useState(false);
     const [subdomainAvailable, setSubdomainAvailable] = useState<boolean | null>(null);
     const subdomainCheckTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+
+    useEffect(() => {
+        activeStepRef.current = activeStep;
+    }, [activeStep]);
 
     const [formData, setFormData] = useState<FormData>({
         name: '',
@@ -206,9 +211,9 @@ export default function NewInstitutePage() {
         return null;
     };
 
-    const handleSubmit = async (e: React.FormEvent) => {
-        e.preventDefault();
-        if (activeStep !== steps.length - 1) {
+    /** Never rely on native form submit (Enter + implicit submit button can race with step state). */
+    const commitCreate = async () => {
+        if (activeStepRef.current !== steps.length - 1) {
             return;
         }
         setLoading(true);
@@ -513,16 +518,17 @@ export default function NewInstitutePage() {
                 {success && <Message severity="success" text="Institute created successfully!" className="mb-3 w-full" />}
 
                 <form
-                    onSubmit={handleSubmit}
+                    onSubmit={(e) => e.preventDefault()}
                     onKeyDown={(e) => {
-                        if (e.key !== 'Enter' || activeStep === steps.length - 1) {
-                            return;
-                        }
+                        if (e.key !== 'Enter') return;
                         const el = e.target as HTMLElement;
-                        if (el.tagName === 'TEXTAREA') {
+                        if (el.tagName === 'TEXTAREA') return;
+                        if (activeStepRef.current !== steps.length - 1) {
+                            e.preventDefault();
                             return;
                         }
                         e.preventDefault();
+                        if (!loading) void commitCreate();
                     }}
                 >
                     {renderStepContent()}
@@ -547,10 +553,12 @@ export default function NewInstitutePage() {
                             />
                         ) : (
                             <Button
-                                type="submit"
+                                type="button"
                                 label="Create Institute"
                                 icon="pi pi-check"
                                 loading={loading}
+                                disabled={loading}
+                                onClick={() => void commitCreate()}
                             />
                         )}
                     </div>
