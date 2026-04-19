@@ -55,6 +55,8 @@ export interface MenuContextProps {
 /* AppConfig Types */
 export interface AppConfigProps {
     simple?: boolean;
+    /** When true, the floating settings cog and config sidebar are not rendered (theme via top bar only). */
+    hideSettingsTrigger?: boolean;
 }
 
 /* AppTopbar Types */

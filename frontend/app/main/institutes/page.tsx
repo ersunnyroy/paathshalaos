@@ -27,7 +27,7 @@ interface Tenant {
     created_at: string;
 }
 
-export default function SchoolsPage() {
+export default function InstitutesPage() {
     const router = useRouter();
     const toast = useRef<Toast>(null);
     const [tenants, setTenants] = useState<Tenant[]>([]);
@@ -130,14 +130,14 @@ export default function SchoolsPage() {
                 <Button
                     icon="pi pi-eye"
                     className="p-button-text p-button-sm"
-                    onClick={() => router.push(`/main/schools/${rowData.id}`)}
+                    onClick={() => router.push(`/main/institutes/${rowData.id}`)}
                     tooltip="View"
                     tooltipOptions={{ position: 'top' }}
                 />
                 <Button
                     icon="pi pi-pencil"
                     className="p-button-text p-button-sm"
-                    onClick={() => router.push(`/main/schools/${rowData.id}/edit`)}
+                    onClick={() => router.push(`/main/institutes/${rowData.id}/edit`)}
                     tooltip="Edit"
                     tooltipOptions={{ position: 'top' }}
                 />
@@ -199,7 +199,7 @@ export default function SchoolsPage() {
             <Button
                 label="Onboard New Institute"
                 icon="pi pi-plus"
-                onClick={() => router.push('/main/schools/new')}
+                onClick={() => router.push('/main/institutes/new')}
             />
         </div>
     );
@@ -225,13 +225,13 @@ export default function SchoolsPage() {
                 rows={10}
                 rowsPerPageOptions={[5, 10, 25, 50]}
                 header={header}
-                emptyMessage="No schools found."
+                emptyMessage="No institutes found."
                 className="p-datatable-sm"
                 showGridlines
                 selectionMode="multiple"
             >
                 <Column selectionMode="multiple" headerStyle={{ width: '3rem' }} />
-                <Column field="name" header="School" body={nameTemplate} sortable />
+                <Column field="name" header="Institute" body={nameTemplate} sortable />
                 <Column field="email" header="Contact" body={contactTemplate} sortable />
                 <Column field="institute_type" header="Type" sortable />
                 <Column field="created_at" header="Created" body={dateTemplate} sortable />

@@ -2,9 +2,7 @@
 
 namespace App\Models;
 
-use Illuminate\Database\Eloquent\Model;
-
-class NotificationSetting extends Model
+class NotificationSetting extends BaseModel
 {
     protected $fillable = [
         'tenant_id',

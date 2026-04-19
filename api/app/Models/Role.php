@@ -2,10 +2,9 @@
 
 namespace App\Models;
 
-use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\SoftDeletes;
 
-class Role extends Model
+class Role extends BaseModel
 {
     use SoftDeletes;
 
@@ -20,7 +19,7 @@ class Role extends Model
 
     protected $casts = [
         'is_default' => 'boolean',
-        'status' => 'boolean',
+        'status' => 'integer',
     ];
 
     public function tenant()

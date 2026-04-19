@@ -1,6 +1,7 @@
 'use client';
 
 import React, { useState, useEffect, createContext } from 'react';
+import { resolveLaraTealTheme, themeToColorScheme } from '@/lib/themePreference';
 import { LayoutState, ChildContainerProps, LayoutConfig, LayoutContextProps } from '@/types';
 
 export const LayoutContext = createContext({} as LayoutContextProps);
@@ -11,7 +12,7 @@ export const LayoutProvider = ({ children }: ChildContainerProps) => {
         inputStyle: 'outlined',
         menuMode: 'static',
         colorScheme: 'light',
-        theme: 'lara-light-indigo',
+        theme: 'lara-light-teal',
         scale: 14,
     });
 
@@ -26,14 +27,12 @@ export const LayoutProvider = ({ children }: ChildContainerProps) => {
 
     useEffect(() => {
         if (typeof window === 'undefined') return;
-        const stored = localStorage.getItem('theme');
-        if (stored && /^[a-z0-9-]+$/i.test(stored)) {
-            setLayoutConfig((prev) => ({
-                ...prev,
-                theme: stored,
-                colorScheme: stored.includes('dark') ? 'dark' : 'light',
-            }));
-        }
+        const theme = resolveLaraTealTheme();
+        setLayoutConfig((prev) => ({
+            ...prev,
+            theme,
+            colorScheme: themeToColorScheme(theme),
+        }));
     }, []);
 
     const onMenuToggle = () => {

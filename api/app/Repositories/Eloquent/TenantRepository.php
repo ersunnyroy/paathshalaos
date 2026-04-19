@@ -6,13 +6,11 @@ use App\Models\Tenant;
 use App\Repositories\Contracts\TenantRepositoryInterface;
 use Illuminate\Database\Eloquent\Collection;
 
-class TenantRepository implements TenantRepositoryInterface
+class TenantRepository extends DbRepository implements TenantRepositoryInterface
 {
-    protected Tenant $model;
-
     public function __construct(Tenant $model)
     {
-        $this->model = $model;
+        parent::__construct($model);
     }
 
     public function getAll(array $filters = []): Collection
@@ -25,8 +23,8 @@ class TenantRepository implements TenantRepositoryInterface
 
         if (isset($filters['search'])) {
             $query->where(function ($q) use ($filters) {
-                $q->where('name', 'like', '%' . $filters['search'] . '%')
-                    ->orWhere('email', 'like', '%' . $filters['search'] . '%');
+                $q->where('name', 'like', '%'.$filters['search'].'%')
+                    ->orWhere('email', 'like', '%'.$filters['search'].'%');
             });
         }
 
@@ -35,7 +33,8 @@ class TenantRepository implements TenantRepositoryInterface
 
     public function findById(int $id): ?Tenant
     {
-        return $this->model->find($id);
+        /** @var ?Tenant */
+        return parent::findById($id);
     }
 
     public function findBySubdomain(string $subdomain): ?Tenant
@@ -50,23 +49,17 @@ class TenantRepository implements TenantRepositoryInterface
 
     public function create(array $data): Tenant
     {
-        return $this->model->create($data);
+        $model = parent::create($data);
+        assert($model instanceof Tenant);
+
+        return $model;
     }
 
     public function update(int $id, array $data): Tenant
     {
-        $model = $this->findById($id);
-        $model->update($data);
-        return $model->fresh();
-    }
+        $model = parent::update($id, $data);
+        assert($model instanceof Tenant);
 
-    public function delete(int $id): bool
-    {
-        return (bool) $this->findById($id)?->delete();
-    }
-
-    public function paginate(int $perPage = 15)
-    {
-        return $this->model->orderBy('name')->paginate($perPage);
+        return $model;
     }
 }

@@ -6,13 +6,19 @@ use App\Models\Permission;
 use App\Repositories\Contracts\PermissionRepositoryInterface;
 use Illuminate\Database\Eloquent\Collection;
 
-class PermissionRepository implements PermissionRepositoryInterface
+class PermissionRepository extends DbRepository implements PermissionRepositoryInterface
 {
-    protected Permission $model;
-
     public function __construct(Permission $model)
     {
-        $this->model = $model;
+        parent::__construct($model);
+    }
+
+    protected function paginationOrderBy(): array
+    {
+        return [
+            ['module', 'asc'],
+            ['name', 'asc'],
+        ];
     }
 
     public function getAll(array $filters = []): Collection
@@ -33,8 +39,8 @@ class PermissionRepository implements PermissionRepositoryInterface
 
         if (isset($filters['search'])) {
             $query->where(function ($q) use ($filters) {
-                $q->where('name', 'like', '%' . $filters['search'] . '%')
-                    ->orWhere('slug', 'like', '%' . $filters['search'] . '%');
+                $q->where('name', 'like', '%'.$filters['search'].'%')
+                    ->orWhere('slug', 'like', '%'.$filters['search'].'%');
             });
         }
 
@@ -43,7 +49,8 @@ class PermissionRepository implements PermissionRepositoryInterface
 
     public function findById(int $id): ?Permission
     {
-        return $this->model->find($id);
+        /** @var ?Permission */
+        return parent::findById($id);
     }
 
     public function findBySlug(string $slug): ?Permission
@@ -53,24 +60,18 @@ class PermissionRepository implements PermissionRepositoryInterface
 
     public function create(array $data): Permission
     {
-        return $this->model->create($data);
+        $model = parent::create($data);
+        assert($model instanceof Permission);
+
+        return $model;
     }
 
     public function update(int $id, array $data): Permission
     {
-        $model = $this->findById($id);
-        $model->update($data);
-        return $model->fresh();
-    }
+        $model = parent::update($id, $data);
+        assert($model instanceof Permission);
 
-    public function delete(int $id): bool
-    {
-        return (bool) $this->findById($id)?->delete();
-    }
-
-    public function paginate(int $perPage = 15)
-    {
-        return $this->model->orderBy('module')->orderBy('name')->paginate($perPage);
+        return $model;
     }
 
     public function getGlobalPermissions(): Collection

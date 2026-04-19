@@ -2,9 +2,7 @@
 
 namespace App\Models;
 
-use Illuminate\Database\Eloquent\Model;
-
-class CustomDomain extends Model
+class CustomDomain extends BaseModel
 {
     protected $fillable = [
         'tenant_id',

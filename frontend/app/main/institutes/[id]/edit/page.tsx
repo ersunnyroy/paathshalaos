@@ -87,7 +87,7 @@ const FieldLabel = ({ label, required }: { label: string; required?: boolean }) 
     </label>
 );
 
-export default function EditSchoolPage() {
+export default function EditInstitutePage() {
     const router = useRouter();
     const params = useParams();
     const toast = useRef<Toast>(null);
@@ -157,11 +157,11 @@ export default function EditSchoolPage() {
                         description: t.description || '',
                     });
                 } else {
-                    toast.current?.show({ severity: 'error', summary: 'Not Found', detail: 'School not found', life: 3000 });
-                    router.push('/main/schools');
+                    toast.current?.show({ severity: 'error', summary: 'Not Found', detail: 'Institute not found', life: 3000 });
+                    router.push('/main/institutes');
                 }
             } catch {
-                toast.current?.show({ severity: 'error', summary: 'Error', detail: 'Failed to load school data', life: 3000 });
+                toast.current?.show({ severity: 'error', summary: 'Error', detail: 'Failed to load institute data', life: 3000 });
             } finally {
                 setFetchLoading(false);
             }
@@ -203,13 +203,16 @@ export default function EditSchoolPage() {
 
     const handleSubmit = async (e: React.FormEvent) => {
         e.preventDefault();
+        if (activeStep !== steps.length - 1) {
+            return;
+        }
         setLoading(true);
         try {
             const { subdomain, ...updateData } = formData;
             const response = await tenantAdminService.update(id, updateData);
             if (response.success) {
                 toast.current?.show({ severity: 'success', summary: 'Saved', detail: 'Institute updated successfully', life: 2500 });
-                setTimeout(() => router.push('/main/schools'), 1500);
+                setTimeout(() => router.push('/main/institutes'), 1500);
             } else {
                 toast.current?.show({
                     severity: 'error',
@@ -471,10 +474,11 @@ export default function EditSchoolPage() {
 
             <div className="flex align-items-center justify-content-between mb-4">
                 <Button
+                    type="button"
                     icon="pi pi-arrow-left"
-                    label="Back to Schools"
+                    label="Back to Institutes"
                     className="p-button-text p-button-sm"
-                    onClick={() => router.push('/main/schools')}
+                    onClick={() => router.push('/main/institutes')}
                 />
             </div>
 
@@ -487,7 +491,19 @@ export default function EditSchoolPage() {
 
                 <Steps model={steps} activeIndex={activeStep} className="mb-4" />
 
-                <form onSubmit={handleSubmit}>
+                <form
+                    onSubmit={handleSubmit}
+                    onKeyDown={(e) => {
+                        if (e.key !== 'Enter' || activeStep === steps.length - 1) {
+                            return;
+                        }
+                        const el = e.target as HTMLElement;
+                        if (el.tagName === 'TEXTAREA') {
+                            return;
+                        }
+                        e.preventDefault();
+                    }}
+                >
                     {renderStepContent()}
 
                     <div className="flex justify-content-between mt-4 pt-3 border-top-1 surface-border">

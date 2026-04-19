@@ -34,7 +34,7 @@ interface User {
 
 const menuItems: MenuItem[] = [
     { label: 'Dashboard', icon: 'pi pi-home', url: '/main' },
-    { label: 'Schools', icon: 'pi pi-building', url: '/main/schools' },
+    { label: 'Institutes', icon: 'pi pi-building', url: '/main/institutes' },
     { label: 'Branches', icon: 'pi pi-map-marker', url: '/main/branches' },
     { label: 'Roles & Permissions', icon: 'pi pi-shield', url: '/main/roles' },
     { label: 'Features', icon: 'pi pi-cog', url: '/main/features' },

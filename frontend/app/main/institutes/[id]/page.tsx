@@ -124,7 +124,7 @@ const UserAvatar = ({ name, size = 'normal' }: { name: string; size?: 'normal' |
     );
 };
 
-export default function SchoolDetailPage() {
+export default function InstituteDetailPage() {
     const router = useRouter();
     const params = useParams();
     const [tenant, setTenant] = useState<Tenant | null>(null);
@@ -214,8 +214,8 @@ export default function SchoolDetailPage() {
     if (!tenant) {
         return (
             <div className="text-center p-5">
-                <h2>School not found</h2>
-                <Button label="Back to Schools" onClick={() => router.push('/schools')} />
+                <h2>Institute not found</h2>
+                <Button label="Back to Institutes" onClick={() => router.push('/main/institutes')} />
             </div>
         );
     }
@@ -249,13 +249,13 @@ export default function SchoolDetailPage() {
                         label="Edit"
                         icon="pi pi-pencil"
                         outlined
-                        onClick={() => router.push(`/schools/${tenantId}/edit`)}
+                        onClick={() => router.push(`/main/institutes/${tenantId}/edit`)}
                     />
                     <Button
                         icon="pi pi-arrow-left"
                         className="p-button-text"
-                        onClick={() => router.push('/schools')}
-                        tooltip="Back to Schools"
+                        onClick={() => router.push('/main/institutes')}
+                        tooltip="Back to Institutes"
                         tooltipOptions={{ position: 'top' }}
                     />
                 </div>

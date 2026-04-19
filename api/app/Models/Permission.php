@@ -2,10 +2,9 @@
 
 namespace App\Models;
 
-use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\SoftDeletes;
 
-class Permission extends Model
+class Permission extends BaseModel
 {
     use SoftDeletes;
 
@@ -20,7 +19,7 @@ class Permission extends Model
 
     protected $casts = [
         'is_global' => 'boolean',
-        'status' => 'boolean',
+        'status' => 'integer',
     ];
 
     public function roles()

@@ -6,13 +6,21 @@ use App\Models\Module;
 use App\Repositories\Contracts\ModuleRepositoryInterface;
 use Illuminate\Database\Eloquent\Collection;
 
-class ModuleRepository implements ModuleRepositoryInterface
+class ModuleRepository extends DbRepository implements ModuleRepositoryInterface
 {
-    protected Module $model;
-
     public function __construct(Module $model)
     {
-        $this->model = $model;
+        parent::__construct($model);
+    }
+
+    protected function defaultFindWith(): array
+    {
+        return ['features'];
+    }
+
+    protected function paginationOrderBy(): array
+    {
+        return [['sort_order', 'asc']];
     }
 
     public function getAll(array $filters = []): Collection
@@ -29,8 +37,8 @@ class ModuleRepository implements ModuleRepositoryInterface
 
         if (isset($filters['search'])) {
             $query->where(function ($q) use ($filters) {
-                $q->where('name', 'like', '%' . $filters['search'] . '%')
-                    ->orWhere('slug', 'like', '%' . $filters['search'] . '%');
+                $q->where('name', 'like', '%'.$filters['search'].'%')
+                    ->orWhere('slug', 'like', '%'.$filters['search'].'%');
             });
         }
 
@@ -39,7 +47,8 @@ class ModuleRepository implements ModuleRepositoryInterface
 
     public function findById(int $id): ?Module
     {
-        return $this->model->with('features')->find($id);
+        /** @var ?Module */
+        return parent::findById($id);
     }
 
     public function findBySlug(string $slug): ?Module
@@ -49,23 +58,17 @@ class ModuleRepository implements ModuleRepositoryInterface
 
     public function create(array $data): Module
     {
-        return $this->model->create($data);
+        $model = parent::create($data);
+        assert($model instanceof Module);
+
+        return $model;
     }
 
     public function update(int $id, array $data): Module
     {
-        $model = $this->findById($id);
-        $model->update($data);
-        return $model->fresh();
-    }
+        $model = parent::update($id, $data);
+        assert($model instanceof Module);
 
-    public function delete(int $id): bool
-    {
-        return (bool) $this->findById($id)?->delete();
-    }
-
-    public function paginate(int $perPage = 15)
-    {
-        return $this->model->orderBy('sort_order')->paginate($perPage);
+        return $model;
     }
 }

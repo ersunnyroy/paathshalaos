@@ -1,27 +1,20 @@
 'use client';
 
 import { useState, useEffect } from 'react';
+import { LARA_DARK_TEAL, LARA_LIGHT_TEAL, LaraTealTheme, resolveLaraTealTheme } from '@/lib/themePreference';
 
-type Theme = 'lara-light-indigo' | 'lara-dark-indigo';
-
-/** Optional hook for layouts that toggle only Lara indigo light/dark (matches Sakai template). */
+/** Lara teal light/dark only; matches top bar toggle and {@link localStorage} key `theme`. */
 export function useTheme() {
-    const [theme, setTheme] = useState<Theme>('lara-light-indigo');
+    const [theme, setTheme] = useState<LaraTealTheme>(LARA_LIGHT_TEAL);
     const [mounted, setMounted] = useState(false);
 
     useEffect(() => {
-        const savedTheme = localStorage.getItem('theme') as Theme | null;
-        if (savedTheme === 'lara-light-indigo' || savedTheme === 'lara-dark-indigo') {
-            setTheme(savedTheme);
-        } else {
-            const prefersDark = window.matchMedia('(prefers-color-scheme: dark)').matches;
-            setTheme(prefersDark ? 'lara-dark-indigo' : 'lara-light-indigo');
-        }
+        setTheme(resolveLaraTealTheme());
         setMounted(true);
     }, []);
 
     const toggleTheme = () => {
-        const newTheme = theme === 'lara-light-indigo' ? 'lara-dark-indigo' : 'lara-light-indigo';
+        const newTheme = theme === LARA_LIGHT_TEAL ? LARA_DARK_TEAL : LARA_LIGHT_TEAL;
         setTheme(newTheme);
         localStorage.setItem('theme', newTheme);
         const link = document.getElementById('theme-css') as HTMLLinkElement;
@@ -31,7 +24,7 @@ export function useTheme() {
     };
 
     const setThemeMode = (mode: 'light' | 'dark') => {
-        const newTheme = mode === 'dark' ? 'lara-dark-indigo' : 'lara-light-indigo';
+        const newTheme = mode === 'dark' ? LARA_DARK_TEAL : LARA_LIGHT_TEAL;
         setTheme(newTheme);
         localStorage.setItem('theme', newTheme);
         const link = document.getElementById('theme-css') as HTMLLinkElement;
@@ -42,7 +35,7 @@ export function useTheme() {
 
     return {
         theme,
-        themeMode: theme === 'lara-dark-indigo' ? 'dark' : 'light',
+        themeMode: theme === LARA_DARK_TEAL ? 'dark' : 'light',
         mounted,
         toggleTheme,
         setThemeMode,

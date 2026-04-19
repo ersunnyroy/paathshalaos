@@ -2,17 +2,21 @@
 
 namespace App\Repositories\Eloquent;
 
+use App\Helpers\CommonHelper;
 use App\Models\Branch;
 use App\Repositories\Contracts\BranchRepositoryInterface;
 use Illuminate\Database\Eloquent\Collection;
 
-class BranchRepository implements BranchRepositoryInterface
+class BranchRepository extends DbRepository implements BranchRepositoryInterface
 {
-    protected Branch $model;
-
     public function __construct(Branch $model)
     {
-        $this->model = $model;
+        parent::__construct($model);
+    }
+
+    protected function defaultFindWith(): array
+    {
+        return ['tenant'];
     }
 
     public function getAll(array $filters = []): Collection
@@ -20,7 +24,7 @@ class BranchRepository implements BranchRepositoryInterface
         $query = $this->model->newQuery();
 
         if (isset($filters['tenant_id'])) {
-            $query->where('tenant_id', $filters['tenant_id']);
+            $query->whereIn('tenant_id', CommonHelper::primaryKeyCandidatesForLookup((int) $filters['tenant_id']));
         }
 
         if (isset($filters['status'])) {
@@ -29,8 +33,8 @@ class BranchRepository implements BranchRepositoryInterface
 
         if (isset($filters['search'])) {
             $query->where(function ($q) use ($filters) {
-                $q->where('name', 'like', '%' . $filters['search'] . '%')
-                    ->orWhere('email', 'like', '%' . $filters['search'] . '%');
+                $q->where('name', 'like', '%'.$filters['search'].'%')
+                    ->orWhere('email', 'like', '%'.$filters['search'].'%');
             });
         }
 
@@ -39,7 +43,8 @@ class BranchRepository implements BranchRepositoryInterface
 
     public function findById(int $id): ?Branch
     {
-        return $this->model->with('tenant')->find($id);
+        /** @var ?Branch */
+        return parent::findById($id);
     }
 
     public function findBySubdomain(string $subdomain): ?Branch
@@ -49,24 +54,18 @@ class BranchRepository implements BranchRepositoryInterface
 
     public function create(array $data): Branch
     {
-        return $this->model->create($data);
+        $model = parent::create($data);
+        assert($model instanceof Branch);
+
+        return $model;
     }
 
     public function update(int $id, array $data): Branch
     {
-        $model = $this->findById($id);
-        $model->update($data);
-        return $model->fresh();
-    }
+        $model = parent::update($id, $data);
+        assert($model instanceof Branch);
 
-    public function delete(int $id): bool
-    {
-        return (bool) $this->findById($id)?->delete();
-    }
-
-    public function paginate(int $perPage = 15)
-    {
-        return $this->model->orderBy('name')->paginate($perPage);
+        return $model;
     }
 
     public function getByTenantId(int $tenantId): Collection

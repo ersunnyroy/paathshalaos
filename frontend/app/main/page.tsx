@@ -117,9 +117,9 @@ export default function DashboardPage() {
                 <div className="flex gap-2">
                     {isSuperAdmin && (
                         <Button
-                            label="Onboard New School"
+                            label="Onboard New Institute"
                             icon="pi pi-plus"
-                            onClick={() => router.push('/main/schools')}
+                            onClick={() => router.push('/main/institutes/new')}
                         />
                     )}
                     <Tag value={user?.roles?.[0]?.name || 'User'} severity="info" />
@@ -136,7 +136,7 @@ export default function DashboardPage() {
                                 </div>
                                 <div className="text-center">
                                     <span className="text-2xl font-medium">{stats.total_tenants}</span>
-                                    <div className="text-500">Total Schools</div>
+                                    <div className="text-500">Total Institutes</div>
                                 </div>
                             </div>
                         </div>
@@ -147,7 +147,7 @@ export default function DashboardPage() {
                                 </div>
                                 <div className="text-center">
                                     <span className="text-2xl font-medium">{stats.active_tenants}</span>
-                                    <div className="text-500">Active Schools</div>
+                                    <div className="text-500">Active Institutes</div>
                                 </div>
                             </div>
                         </div>
@@ -177,14 +177,14 @@ export default function DashboardPage() {
 
                     <div className="grid mt-3">
                         <div className="col-12 lg:col-6">
-                            <Card title="Recent Schools">
+                            <Card title="Recent Institutes">
                                 <div className="flex flex-column gap-2">
                                     {tenants.length > 0 ? (
                                         tenants.map((tenant) => (
                                             <div
                                                 key={tenant.id}
                                                 className="flex align-items-center justify-content-between p-2 surface-50 border-round cursor-pointer hover:surface-100"
-                                                onClick={() => router.push(`/schools/${tenant.id}`)}
+                                                onClick={() => router.push(`/main/institutes/${tenant.id}`)}
                                             >
                                                 <div>
                                                     <div className="font-medium">{tenant.name}</div>
@@ -198,7 +198,7 @@ export default function DashboardPage() {
                                         ))
                                     ) : (
                                         <div className="text-center text-500 p-4">
-                                            No schools yet. Onboard your first school!
+                                            No institutes yet. Onboard your first institute!
                                         </div>
                                     )}
                                 </div>
@@ -208,22 +208,22 @@ export default function DashboardPage() {
                             <Card title="Quick Actions">
                                 <div className="flex flex-column gap-2">
                                     <Button
-                                        label="View All Schools"
+                                        label="View All Institutes"
                                         icon="pi pi-building"
                                         className="p-button-text"
-                                        onClick={() => router.push('/main/schools')}
+                                        onClick={() => router.push('/main/institutes')}
                                     />
                                     <Button
                                         label="Manage Roles & Permissions"
                                         icon="pi pi-shield"
                                         className="p-button-text"
-                                        onClick={() => router.push('/roles')}
+                                        onClick={() => router.push('/main/roles')}
                                     />
                                     <Button
                                         label="Configure Features"
                                         icon="pi pi-cog"
                                         className="p-button-text"
-                                        onClick={() => router.push('/features')}
+                                        onClick={() => router.push('/main/features')}
                                     />
                                 </div>
                             </Card>

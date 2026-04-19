@@ -2,17 +2,21 @@
 
 namespace App\Repositories\Eloquent;
 
+use App\Helpers\CommonHelper;
 use App\Models\User;
 use App\Repositories\Contracts\UserRepositoryInterface;
 use Illuminate\Database\Eloquent\Collection;
 
-class UserRepository implements UserRepositoryInterface
+class UserRepository extends DbRepository implements UserRepositoryInterface
 {
-    protected User $model;
-
     public function __construct(User $model)
     {
-        $this->model = $model;
+        parent::__construct($model);
+    }
+
+    protected function defaultFindWith(): array
+    {
+        return ['tenant', 'branch', 'roles', 'roles.permissions'];
     }
 
     public function getAll(array $filters = []): Collection
@@ -20,11 +24,11 @@ class UserRepository implements UserRepositoryInterface
         $query = $this->model->newQuery();
 
         if (isset($filters['tenant_id'])) {
-            $query->where('tenant_id', $filters['tenant_id']);
+            $query->whereIn('tenant_id', CommonHelper::primaryKeyCandidatesForLookup((int) $filters['tenant_id']));
         }
 
         if (isset($filters['branch_id'])) {
-            $query->where('branch_id', $filters['branch_id']);
+            $query->whereIn('branch_id', CommonHelper::primaryKeyCandidatesForLookup((int) $filters['branch_id']));
         }
 
         if (isset($filters['status'])) {
@@ -33,9 +37,9 @@ class UserRepository implements UserRepositoryInterface
 
         if (isset($filters['search'])) {
             $query->where(function ($q) use ($filters) {
-                $q->where('name', 'like', '%' . $filters['search'] . '%')
-                    ->orWhere('email', 'like', '%' . $filters['search'] . '%')
-                    ->orWhere('phone', 'like', '%' . $filters['search'] . '%');
+                $q->where('name', 'like', '%'.$filters['search'].'%')
+                    ->orWhere('email', 'like', '%'.$filters['search'].'%')
+                    ->orWhere('phone', 'like', '%'.$filters['search'].'%');
             });
         }
 
@@ -44,7 +48,8 @@ class UserRepository implements UserRepositoryInterface
 
     public function findById(int $id): ?User
     {
-        return $this->model->with(['tenant', 'branch', 'roles', 'roles.permissions'])->find($id);
+        /** @var ?User */
+        return parent::findById($id);
     }
 
     public function findByEmail(string $email): ?User
@@ -59,24 +64,18 @@ class UserRepository implements UserRepositoryInterface
 
     public function create(array $data): User
     {
-        return $this->model->create($data);
+        $model = parent::create($data);
+        assert($model instanceof User);
+
+        return $model;
     }
 
     public function update(int $id, array $data): User
     {
-        $model = $this->findById($id);
-        $model->update($data);
-        return $model->fresh();
-    }
+        $model = parent::update($id, $data);
+        assert($model instanceof User);
 
-    public function delete(int $id): bool
-    {
-        return (bool) $this->findById($id)?->delete();
-    }
-
-    public function paginate(int $perPage = 15)
-    {
-        return $this->model->orderBy('name')->paginate($perPage);
+        return $model;
     }
 
     public function getByTenantId(int $tenantId): Collection

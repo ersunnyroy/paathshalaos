@@ -9,6 +9,7 @@ use Laravel\Sanctum\HasApiTokens;
 
 class User extends Authenticatable
 {
+    use Concerns\SerializesWithPublicIds;
     use HasApiTokens, Notifiable, SoftDeletes;
 
     protected $fillable = [
@@ -30,7 +31,7 @@ class User extends Authenticatable
     protected $casts = [
         'email_verified_at' => 'datetime',
         'password' => 'hashed',
-        'status' => 'boolean',
+        'status' => 'integer',
     ];
 
     public function tenant()

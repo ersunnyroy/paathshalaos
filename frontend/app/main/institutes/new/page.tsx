@@ -86,7 +86,7 @@ const FieldLabel = ({ label, required }: { label: string; required?: boolean }) 
     </label>
 );
 
-export default function NewSchoolPage() {
+export default function NewInstitutePage() {
     const router = useRouter();
     const [loading, setLoading] = useState(false);
     const [error, setError] = useState('');
@@ -208,6 +208,9 @@ export default function NewSchoolPage() {
 
     const handleSubmit = async (e: React.FormEvent) => {
         e.preventDefault();
+        if (activeStep !== steps.length - 1) {
+            return;
+        }
         setLoading(true);
         setError('');
 
@@ -227,13 +230,13 @@ export default function NewSchoolPage() {
             if (response.success) {
                 setSuccess(true);
                 setTimeout(() => {
-                    router.push('/main/schools');
+                    router.push('/main/institutes');
                 }, 2000);
             } else {
                 if (response.errors?.subdomain) {
                     setError(response.errors.subdomain[0] || 'Subdomain is already taken');
                 } else {
-                    setError(response.message || 'Failed to create school');
+                    setError(response.message || 'Failed to create institute');
                 }
             }
         } catch (err: any) {
@@ -492,10 +495,11 @@ export default function NewSchoolPage() {
         <div className="flex flex-column surface-section px-3 py-4 md:px-5 lg:px-6 min-h-full">
             <div className="flex align-items-center justify-content-between mb-4">
                 <Button
+                    type="button"
                     icon="pi pi-arrow-left"
                     label="Back"
                     className="p-button-text p-button-sm"
-                    onClick={() => router.push('/main/schools')}
+                    onClick={() => router.push('/main/institutes')}
                 />
             </div>
 
@@ -506,9 +510,21 @@ export default function NewSchoolPage() {
                 <Steps model={steps} activeIndex={activeStep} className="mb-4" />
 
                 {error && <Message severity="error" text={error} className="mb-3 w-full" />}
-                {success && <Message severity="success" text="School created successfully!" className="mb-3 w-full" />}
+                {success && <Message severity="success" text="Institute created successfully!" className="mb-3 w-full" />}
 
-                <form onSubmit={handleSubmit}>
+                <form
+                    onSubmit={handleSubmit}
+                    onKeyDown={(e) => {
+                        if (e.key !== 'Enter' || activeStep === steps.length - 1) {
+                            return;
+                        }
+                        const el = e.target as HTMLElement;
+                        if (el.tagName === 'TEXTAREA') {
+                            return;
+                        }
+                        e.preventDefault();
+                    }}
+                >
                     {renderStepContent()}
 
                     <div className="flex justify-content-between mt-4 pt-3 border-top-1 surface-border">

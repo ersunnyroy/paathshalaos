@@ -2,9 +2,7 @@
 
 namespace App\Models;
 
-use Illuminate\Database\Eloquent\Model;
-
-class FileConfig extends Model
+class FileConfig extends BaseModel
 {
     protected $fillable = [
         'name',
@@ -47,7 +45,7 @@ class FileConfig extends Model
     }
 }
 
-class FilePathConfig extends Model
+class FilePathConfig extends BaseModel
 {
     protected $fillable = [
         'file_config_id',

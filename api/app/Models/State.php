@@ -2,9 +2,7 @@
 
 namespace App\Models;
 
-use Illuminate\Database\Eloquent\Model;
-
-class State extends Model
+class State extends BaseModel
 {
     protected $fillable = [
         'country_id',
@@ -16,7 +14,7 @@ class State extends Model
     ];
 
     protected $casts = [
-        'status' => 'boolean',
+        'status' => 'integer',
     ];
 
     public function country()

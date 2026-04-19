@@ -4,6 +4,7 @@
 
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
+import { PrimeReactContext } from 'primereact/api';
 import { classNames } from 'primereact/utils';
 import React, { forwardRef, useContext, useImperativeHandle, useRef } from 'react';
 import { AppTopbarRef } from '@/types';
@@ -11,7 +12,8 @@ import { LayoutContext } from './context/layoutcontext';
 import { authService, api } from '@/services/api';
 
 const AppTopbar = forwardRef<AppTopbarRef>((props, ref) => {
-    const { layoutConfig, layoutState, onMenuToggle, showProfileSidebar } = useContext(LayoutContext);
+    const { layoutConfig, layoutState, setLayoutConfig, onMenuToggle, showProfileSidebar } = useContext(LayoutContext);
+    const { changeTheme } = useContext(PrimeReactContext);
     const router = useRouter();
     const menubuttonRef = useRef(null);
     const topbarmenuRef = useRef(null);
@@ -34,6 +36,29 @@ const AppTopbar = forwardRef<AppTopbarRef>((props, ref) => {
         }
     };
 
+    const toggleColorMode = () => {
+        const goDark = layoutConfig.colorScheme === 'light';
+        const newTheme = goDark ? 'lara-dark-teal' : 'lara-light-teal';
+        const newScheme = goDark ? 'dark' : 'light';
+
+        const apply = () => {
+            setLayoutConfig((prev) => ({ ...prev, theme: newTheme, colorScheme: newScheme }));
+            if (typeof window !== 'undefined') {
+                localStorage.setItem('theme', newTheme);
+            }
+        };
+
+        if (changeTheme) {
+            changeTheme(layoutConfig.theme, newTheme, 'theme-css', apply);
+        } else {
+            const link = document.getElementById('theme-css') as HTMLLinkElement | null;
+            if (link) {
+                link.href = `/themes/${newTheme}/theme.css`;
+            }
+            apply();
+        }
+    };
+
     return (
         <div className="layout-topbar">
             <Link href="/main" className="layout-topbar-logo">
@@ -48,6 +73,16 @@ const AppTopbar = forwardRef<AppTopbarRef>((props, ref) => {
 
             <button ref={menubuttonRef} type="button" className="p-link layout-menu-button layout-topbar-button" onClick={onMenuToggle}>
                 <i className="pi pi-bars" />
+            </button>
+
+            <button
+                type="button"
+                className="p-link layout-topbar-button"
+                onClick={toggleColorMode}
+                title={layoutConfig.colorScheme === 'light' ? 'Switch to dark mode' : 'Switch to light mode'}
+                aria-label={layoutConfig.colorScheme === 'light' ? 'Switch to dark mode' : 'Switch to light mode'}
+            >
+                <i className={layoutConfig.colorScheme === 'light' ? 'pi pi-moon' : 'pi pi-sun'} />
             </button>
 
             <button ref={topbarmenubuttonRef} type="button" className="p-link layout-topbar-menu-button layout-topbar-button" onClick={showProfileSidebar}>

@@ -15,7 +15,7 @@ const AppMenu = () => {
             label: 'Application',
             items: [
                 { label: 'Dashboard', icon: 'pi pi-fw pi-home', to: '/main' },
-                { label: 'Schools', icon: 'pi pi-fw pi-building', to: '/main/schools' },
+                { label: 'Institutes', icon: 'pi pi-fw pi-building', to: '/main/institutes' },
                 { label: 'Branches', icon: 'pi pi-fw pi-map-marker', to: '/main/branches' },
                 { label: 'Roles & Permissions', icon: 'pi pi-fw pi-shield', to: '/main/roles' },
                 { label: 'Features', icon: 'pi pi-fw pi-th-large', to: '/main/features' },

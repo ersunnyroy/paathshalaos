@@ -6,13 +6,21 @@ use App\Models\Feature;
 use App\Repositories\Contracts\FeatureRepositoryInterface;
 use Illuminate\Database\Eloquent\Collection;
 
-class FeatureRepository implements FeatureRepositoryInterface
+class FeatureRepository extends DbRepository implements FeatureRepositoryInterface
 {
-    protected Feature $model;
-
     public function __construct(Feature $model)
     {
-        $this->model = $model;
+        parent::__construct($model);
+    }
+
+    protected function defaultFindWith(): array
+    {
+        return ['module'];
+    }
+
+    protected function paginationOrderBy(): array
+    {
+        return [['sort_order', 'asc']];
     }
 
     public function getAll(array $filters = []): Collection
@@ -33,8 +41,8 @@ class FeatureRepository implements FeatureRepositoryInterface
 
         if (isset($filters['search'])) {
             $query->where(function ($q) use ($filters) {
-                $q->where('name', 'like', '%' . $filters['search'] . '%')
-                    ->orWhere('slug', 'like', '%' . $filters['search'] . '%');
+                $q->where('name', 'like', '%'.$filters['search'].'%')
+                    ->orWhere('slug', 'like', '%'.$filters['search'].'%');
             });
         }
 
@@ -43,7 +51,8 @@ class FeatureRepository implements FeatureRepositoryInterface
 
     public function findById(int $id): ?Feature
     {
-        return $this->model->with('module')->find($id);
+        /** @var ?Feature */
+        return parent::findById($id);
     }
 
     public function findBySlug(string $slug): ?Feature
@@ -60,23 +69,17 @@ class FeatureRepository implements FeatureRepositoryInterface
 
     public function create(array $data): Feature
     {
-        return $this->model->create($data);
+        $model = parent::create($data);
+        assert($model instanceof Feature);
+
+        return $model;
     }
 
     public function update(int $id, array $data): Feature
     {
-        $model = $this->findById($id);
-        $model->update($data);
-        return $model->fresh();
-    }
+        $model = parent::update($id, $data);
+        assert($model instanceof Feature);
 
-    public function delete(int $id): bool
-    {
-        return (bool) $this->findById($id)?->delete();
-    }
-
-    public function paginate(int $perPage = 15)
-    {
-        return $this->model->orderBy('sort_order')->paginate($perPage);
+        return $model;
     }
 }

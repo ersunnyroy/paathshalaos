@@ -6,13 +6,16 @@ use App\Models\Role;
 use App\Repositories\Contracts\RoleRepositoryInterface;
 use Illuminate\Database\Eloquent\Collection;
 
-class RoleRepository implements RoleRepositoryInterface
+class RoleRepository extends DbRepository implements RoleRepositoryInterface
 {
-    protected Role $model;
-
     public function __construct(Role $model)
     {
-        $this->model = $model;
+        parent::__construct($model);
+    }
+
+    protected function defaultFindWith(): array
+    {
+        return ['permissions'];
     }
 
     public function getAll(array $filters = []): Collection
@@ -36,7 +39,8 @@ class RoleRepository implements RoleRepositoryInterface
 
     public function findById(int $id): ?Role
     {
-        return $this->model->with(['permissions', 'permissions.roles'])->find($id);
+        /** @var ?Role */
+        return parent::findById($id);
     }
 
     public function findBySlug(string $slug): ?Role
@@ -46,24 +50,18 @@ class RoleRepository implements RoleRepositoryInterface
 
     public function create(array $data): Role
     {
-        return $this->model->create($data);
+        $model = parent::create($data);
+        assert($model instanceof Role);
+
+        return $model;
     }
 
     public function update(int $id, array $data): Role
     {
-        $model = $this->findById($id);
-        $model->update($data);
-        return $model->fresh();
-    }
+        $model = parent::update($id, $data);
+        assert($model instanceof Role);
 
-    public function delete(int $id): bool
-    {
-        return (bool) $this->findById($id)?->delete();
-    }
-
-    public function paginate(int $perPage = 15)
-    {
-        return $this->model->orderBy('name')->paginate($perPage);
+        return $model;
     }
 
     public function getByTenantId(int $tenantId): Collection

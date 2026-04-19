@@ -106,7 +106,7 @@ export default function RootLayout({ children }: RootLayoutProps) {
       <head>
         <link
           id="theme-css"
-          href={\`/themes/lara-light-indigo/theme.css\`}
+          href={\`/themes/lara-light-teal/theme.css\`}
           rel="stylesheet"
         ></link>
       </head>
@@ -169,7 +169,7 @@ export default function FullPageLayout({ children }: FullPageLayoutProps) {
   return (
     <React.Fragment>
       {children}
-      <AppConfig minimal />
+      <AppConfig simple hideSettingsTrigger />
     </React.Fragment>
   );
 }
@@ -178,7 +178,7 @@ export default function FullPageLayout({ children }: FullPageLayoutProps) {
                         </pre>
                         <h5>Default Configuration</h5>
                         <p>
-                            Initial layout configuration can be defined at the <span className="text-primary font-medium">layout/context/layoutcontext.js</span> file, this step is optional and only necessary when customizing the defaults.
+                            Initial layout configuration can be defined at the <span className="text-primary font-medium">layout/context/layoutcontext.tsx</span> file, this step is optional and only necessary when customizing the defaults.
                         </p>
 
                         <pre className="app-code">
@@ -194,7 +194,7 @@ export const LayoutProvider = (props) => {
         inputStyle: 'outlined',                 //default style for input elements
         menuMode: 'static',                     //layout mode of the menu, valid values are "static" or "overlay"
         colorScheme: 'light',                   //color scheme of the template, valid values are "light", "dim" and "dark"
-        theme: 'lara-light-indigo',             //default component theme for PrimeReact
+        theme: 'lara-light-teal',               //default PrimeReact preset (paired with lara-dark-teal)
         scale: 14                               //size of the body font size to scale the whole application
     });
 }`}
@@ -212,8 +212,12 @@ export const LayoutProvider = (props) => {
 
                         <h5>PrimeReact Theme</h5>
                         <p>
-                            Sakai theming is based on the PrimeReact theme being used.
+                            PaathshalaOS uses only the Lara <b>teal</b> light and dark presets (<span className="text-primary font-medium">lara-light-teal</span> /{' '}
+                            <span className="text-primary font-medium">lara-dark-teal</span>). The floating layout config button is hidden; users switch mode from the top bar, and the choice is stored under the{' '}
+                            <span className="text-primary font-medium">theme</span> key in <span className="text-primary font-medium">localStorage</span>. If nothing valid is saved, the app follows{' '}
+                            <span className="text-primary font-medium">prefers-color-scheme</span>.
                         </p>
+                        <p>Sakai theming is otherwise based on the PrimeReact theme CSS linked in the document head.</p>
 
                         <h5>SASS Variables</h5>
                         <p>

@@ -2,10 +2,9 @@
 
 namespace App\Models;
 
-use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\SoftDeletes;
 
-class Module extends Model
+class Module extends BaseModel
 {
     use SoftDeletes;
 
@@ -21,7 +20,7 @@ class Module extends Model
 
     protected $casts = [
         'is_core' => 'boolean',
-        'status' => 'boolean',
+        'status' => 'integer',
     ];
 
     public function features()
