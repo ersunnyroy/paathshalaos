@@ -1,6 +1,8 @@
 'use client';
-import React, { useState, createContext } from 'react';
+
+import React, { useState, useEffect, createContext } from 'react';
 import { LayoutState, ChildContainerProps, LayoutConfig, LayoutContextProps } from '@/types';
+
 export const LayoutContext = createContext({} as LayoutContextProps);
 
 export const LayoutProvider = ({ children }: ChildContainerProps) => {
@@ -10,7 +12,7 @@ export const LayoutProvider = ({ children }: ChildContainerProps) => {
         menuMode: 'static',
         colorScheme: 'light',
         theme: 'lara-light-indigo',
-        scale: 14
+        scale: 14,
     });
 
     const [layoutState, setLayoutState] = useState<LayoutState>({
@@ -19,8 +21,20 @@ export const LayoutProvider = ({ children }: ChildContainerProps) => {
         profileSidebarVisible: false,
         configSidebarVisible: false,
         staticMenuMobileActive: false,
-        menuHoverActive: false
+        menuHoverActive: false,
     });
+
+    useEffect(() => {
+        if (typeof window === 'undefined') return;
+        const stored = localStorage.getItem('theme');
+        if (stored && /^[a-z0-9-]+$/i.test(stored)) {
+            setLayoutConfig((prev) => ({
+                ...prev,
+                theme: stored,
+                colorScheme: stored.includes('dark') ? 'dark' : 'light',
+            }));
+        }
+    }, []);
 
     const onMenuToggle = () => {
         if (isOverlay()) {
@@ -43,7 +57,7 @@ export const LayoutProvider = ({ children }: ChildContainerProps) => {
     };
 
     const isDesktop = () => {
-        return window.innerWidth > 991;
+        return typeof window !== 'undefined' && window.innerWidth > 991;
     };
 
     const value: LayoutContextProps = {
@@ -52,7 +66,7 @@ export const LayoutProvider = ({ children }: ChildContainerProps) => {
         layoutState,
         setLayoutState,
         onMenuToggle,
-        showProfileSidebar
+        showProfileSidebar,
     };
 
     return <LayoutContext.Provider value={value}>{children}</LayoutContext.Provider>;
