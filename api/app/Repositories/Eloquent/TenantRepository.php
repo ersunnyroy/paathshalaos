@@ -28,7 +28,23 @@ class TenantRepository extends DbRepository implements TenantRepositoryInterface
             });
         }
 
-        return $query->orderBy('name')->get();
+        return $query->orderBy('name')->get()->transform(function ($tenant) {
+            return [
+                'id' => $tenant->id,
+                'name' => $tenant->name,
+                'slug' => $tenant->slug,
+                'subdomain' => $tenant->subdomain,
+                'email' => $tenant->email,
+                'phone' => $tenant->phone,
+                'address' => $tenant->address,
+                'logo' => $tenant->logo_url,
+                'favicon' => $tenant->favicon_url,
+                'primary_color' => $tenant->primary_color,
+                'status' => $tenant->status,
+                'institute_type' => $tenant->institute_type,
+                'created_at' => $tenant->created_at?->toIso8601String(),
+            ];
+        });
     }
 
     public function findById(int $id): ?Tenant

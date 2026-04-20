@@ -10,3 +10,121 @@
 .layout-main {
     flex: 1 1 auto;
 }
+
+.p-datatable {
+    .p-datatable-tbody > tr.p-highlight,
+    .p-datatable-tbody > tr.p-highlight-contextmenu,
+    .p-datatable-tbody > tr.p-selectable-row.p-highlight {
+        background: #0f766e !important;
+        color: #ffffff !important;
+    }
+
+    .p-datatable-tbody > tr.p-highlight > td {
+        background: #0f766e !important;
+        color: #ffffff !important;
+    }
+
+    .p-selectable-row:not(.p-highlight):hover {
+        background: #f3f4f6 !important;
+        color: #4b5563 !important;
+    }
+}
+
+.p-paginator {
+    padding: 1rem;
+    border-radius: 6px;
+    background: #ffffff;
+    border: 1px solid #e5e7eb;
+
+    .p-paginator-pages {
+        display: flex;
+        align-items: center;
+        gap: 0.25rem;
+
+        .p-paginator-page {
+            cursor: pointer;
+            border-radius: 50%;
+            border: 1px solid transparent;
+            transition: box-shadow 0.2s;
+            color: #6b7280;
+            min-width: 3rem;
+            height: 3rem;
+            margin: 0.143rem;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+
+            &:hover {
+                background: #f3f4f6;
+                border-color: transparent;
+                color: #374151;
+            }
+
+            &.p-highlight {
+                background: #0f766e !important;
+                border-color: #0f766e !important;
+                color: #ffffff !important;
+            }
+        }
+    }
+
+    .p-paginator-first,
+    .p-paginator-prev,
+    .p-paginator-next,
+    .p-paginator-last {
+        cursor: pointer;
+        border-radius: 50%;
+        border: 1px solid transparent;
+        color: #6b7280;
+        min-width: 3rem;
+        height: 3rem;
+        margin: 0.143rem;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        transition: box-shadow 0.2s;
+
+        &:hover:not(:disabled) {
+            background: #f3f4f6;
+            border-color: transparent;
+            color: #374151;
+        }
+
+        &:disabled {
+            opacity: 0.5;
+            cursor: not-allowed;
+        }
+    }
+
+    .p-dropdown {
+        border: 1px solid #e5e7eb;
+
+        &:not(.p-disabled):hover {
+            border-color: #0f766e;
+        }
+
+        .p-dropdown-label {
+            color: #374151;
+        }
+
+        &.p-focus {
+            border-color: #0f766e;
+            box-shadow: 0 0 0 2px rgba(15, 118, 110, 0.2);
+        }
+    }
+
+    .p-dropdown-panel {
+        .p-dropdown-item {
+            color: #374151;
+            
+            &.p-highlight {
+                background: #0f766e;
+                color: #ffffff;
+            }
+
+            &:not(.p-highlight):not(.p-disabled):hover {
+                background: #f3f4f6;
+            }
+        }
+    }
+}

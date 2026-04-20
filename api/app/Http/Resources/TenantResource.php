@@ -17,7 +17,7 @@ class TenantResource extends JsonResource
             'email' => $this->email,
             'phone' => $this->phone,
             'address' => $this->address,
-            'logo' => $this->logo,
+            'logo' => $this->logo_url,
             'primary_color' => $this->primary_color,
             'status' => $this->status,
             'created_at' => $this->created_at?->toIso8601String(),

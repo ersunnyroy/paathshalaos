@@ -16,11 +16,12 @@ class RoleController extends Controller
 
     public function index(Request $request)
     {
-        $tenantId = $request->header('X-Tenant-ID') ?? $request->user()?->tenant_id;
-
         $filters = $request->all();
-        if ($tenantId && !$request->has('tenant_id')) {
-            $filters['tenant_id'] = $tenantId;
+        
+        if ($request->has('tenant_id')) {
+            $filters['tenant_id'] = $request->input('tenant_id');
+        } else {
+            $filters['tenant_id'] = $request->header('X-Tenant-ID') ?? $request->user()?->tenant_id;
         }
 
         $roles = $this->roleService->getAllRoles($filters);

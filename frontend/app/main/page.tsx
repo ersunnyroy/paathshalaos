@@ -51,7 +51,7 @@ export default function DashboardPage() {
     useEffect(() => {
         const fetchData = async () => {
             if (!api.isAuthenticated()) {
-                router.push('/login');
+                router.push('/auth/login');
                 return;
             }
 
@@ -75,12 +75,12 @@ export default function DashboardPage() {
                     }
                 } else {
                     api.removeToken();
-                    router.push('/login');
+                    router.push('/auth/login');
                 }
             } catch (error) {
                 console.error('Error fetching data:', error);
                 api.removeToken();
-                router.push('/login');
+                router.push('/auth/login');
             } finally {
                 setLoading(false);
             }

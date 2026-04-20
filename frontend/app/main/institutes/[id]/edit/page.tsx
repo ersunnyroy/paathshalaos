@@ -10,6 +10,7 @@ import { Button } from 'primereact/button';
 import { Toast } from 'primereact/toast';
 import { Steps } from 'primereact/steps';
 import { ProgressSpinner } from 'primereact/progressspinner';
+import { FileUpload } from 'primereact/fileupload';
 import { classNames } from 'primereact/utils';
 import { authService, api, tenantAdminService } from '@/services/api';
 
@@ -32,6 +33,7 @@ interface FormData {
     established_year: number;
     student_count: number;
     description: string;
+    logo: string;
 }
 
 const instituteTypes = [
@@ -122,7 +124,12 @@ export default function EditInstitutePage() {
         established_year: new Date().getFullYear(),
         student_count: 0,
         description: '',
+        logo: '',
     });
+    const [logoFile, setLogoFile] = useState<File | null>(null);
+    const [logoPreview, setLogoPreview] = useState<string>('');
+    const [existingLogo, setExistingLogo] = useState<string>('');
+    const [logoUploadKey, setLogoUploadKey] = useState(0);
 
     useEffect(() => {
         const init = async () => {
@@ -160,7 +167,12 @@ export default function EditInstitutePage() {
                         established_year: t.established_year ? parseInt(t.established_year) : new Date().getFullYear(),
                         student_count: t.student_count || 0,
                         description: t.description || '',
+                        logo: t.logo || '',
                     });
+                    if (t.logo) {
+                        setExistingLogo(t.logo);
+                        setLogoPreview(t.logo);
+                    }
                 } else {
                     toast.current?.show({ severity: 'error', summary: 'Not Found', detail: 'Institute not found', life: 3000 });
                     router.push('/main/institutes');
@@ -212,8 +224,26 @@ export default function EditInstitutePage() {
         }
         setLoading(true);
         try {
+            let logoUrl = formData.logo;
+
+            if (logoFile) {
+                try {
+                    const uploadFormData = new FormData();
+                    uploadFormData.append('logo', logoFile);
+
+                    const uploadRes = await api.postWithFormData(`/tenants/${id}/logo`, uploadFormData);
+                    
+                    if (uploadRes.success && uploadRes.data?.url) {
+                        logoUrl = uploadRes.data.url;
+                    }
+                } catch (uploadErr) {
+                    console.error('Logo upload failed:', uploadErr);
+                }
+            }
+
             const { subdomain, ...updateData } = formData;
-            const response = await tenantAdminService.update(id, updateData);
+            const response = await tenantAdminService.update(id, { ...updateData, logo: logoUrl });
+            
             if (response.success) {
                 toast.current?.show({ severity: 'success', summary: 'Saved', detail: 'Institute updated successfully', life: 2500 });
                 setTimeout(() => router.push('/main/institutes'), 1500);
@@ -269,6 +299,53 @@ export default function EditInstitutePage() {
                                 placeholder="e.g., Delhi Public School"
                             />
                             {getError('name') && <small className="p-error">{getError('name')}</small>}
+                        </div>
+
+                        <div className="col-12">
+                            <FieldLabel label="Institute Logo" />
+                            <div className="flex align-items-center gap-3">
+                                {logoPreview && (
+                                    <img
+                                        src={logoPreview}
+                                        alt="Logo preview"
+                                        style={{ maxHeight: '80px', borderRadius: '8px' }}
+                                    />
+                                )}
+                                <FileUpload
+                                    mode="basic"
+                                    accept="image/jpeg,image/png,image/webp,image/svg+xml"
+                                    maxFileSize={2097152}
+                                    chooseLabel="Change Logo"
+                                    className="p-button-outlined p-button-sm"
+                                    auto
+                                    customUpload
+                                    key={logoUploadKey}
+                                    uploadHandler={(e: any) => {
+                                        const file = e.files[0];
+                                        if (file) {
+                                            setLogoFile(file);
+                                            const reader = new FileReader();
+                                            reader.onload = (ev) => {
+                                                setLogoPreview(ev.target?.result as string);
+                                            };
+                                            reader.readAsDataURL(file);
+                                        }
+                                    }}
+                                />
+                                {logoPreview && (
+                                    <Button
+                                        type="button"
+                                        icon="pi pi-times"
+                                        className="p-button-text p-button-danger p-button-sm"
+                                        onClick={() => {
+                                            setLogoFile(null);
+                                            setLogoPreview(existingLogo);
+                                            setLogoUploadKey(k => k + 1);
+                                        }}
+                                    />
+                                )}
+                            </div>
+                            <small className="text-500">Max 2MB. JPG, PNG, WebP, SVG</small>
                         </div>
 
                         <div className="col-12 md:col-6">

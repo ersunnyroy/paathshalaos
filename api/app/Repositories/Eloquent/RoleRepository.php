@@ -21,9 +21,11 @@ class RoleRepository extends DbRepository implements RoleRepositoryInterface
     public function getAll(array $filters = []): Collection
     {
         $query = $this->model->newQuery();
+        
+        \Log::info('RoleRepository getAll filters', $filters);
 
         if (isset($filters['tenant_id'])) {
-            $query->where('tenant_id', $filters['tenant_id']);
+            $query->where('tenant_id', (int) $filters['tenant_id']);
         }
 
         if (isset($filters['status'])) {

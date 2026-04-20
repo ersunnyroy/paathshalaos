@@ -20,7 +20,7 @@ export default function MainAuthGate({ children }: { children: React.ReactNode }
     useEffect(() => {
         const run = async () => {
             if (!api.isAuthenticated()) {
-                router.push('/login');
+                router.push('/auth/login');
                 return;
             }
             try {
@@ -29,11 +29,11 @@ export default function MainAuthGate({ children }: { children: React.ReactNode }
                     setUser(response.data as unknown as User);
                 } else {
                     api.removeToken();
-                    router.push('/login');
+                    router.push('/auth/login');
                 }
             } catch {
                 api.removeToken();
-                router.push('/login');
+                router.push('/auth/login');
             } finally {
                 setLoading(false);
             }

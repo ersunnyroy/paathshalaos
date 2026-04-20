@@ -3,14 +3,49 @@
 import { useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { Button } from 'primereact/button';
+import { api } from '@/services/api';
+
+interface Plan {
+    id: number;
+    name: string;
+    slug: string;
+    description: string;
+    price: number;
+    max_students: number;
+    max_teachers: number;
+    max_branches: number;
+    status: number;
+}
 
 export default function HomePage() {
     const router = useRouter();
     const [loading, setLoading] = useState(true);
+    const [plans, setPlans] = useState<Plan[]>([]);
 
     useEffect(() => {
-        setLoading(false);
+        const fetchPlans = async () => {
+            try {
+                const response = await api.get('/plans');
+                if (response.success && response.data) {
+                    setPlans(response.data);
+                }
+            } catch (error) {
+                console.error('Failed to fetch plans:', error);
+            } finally {
+                setLoading(false);
+            }
+        };
+
+        fetchPlans();
     }, []);
+
+    const formatPrice = (price: number) => {
+        return new Intl.NumberFormat('en-IN', {
+            style: 'currency',
+            currency: 'INR',
+            minimumFractionDigits: 0,
+        }).format(price);
+    };
 
     if (loading) {
         return (
@@ -55,6 +90,36 @@ export default function HomePage() {
                         onClick={() => router.push('/auth/login')}
                     />
                 </div>
+
+                {plans.length > 0 && (
+                    <div className="mt-8 w-full" style={{ maxWidth: '1000px' }}>
+                        <h2 className="text-center text-2xl font-bold mb-4">Choose Your Plan</h2>
+                        <div className="grid">
+                            {plans.map((plan) => (
+                                <div key={plan.id} className="col-12 md:col-4">
+                                    <div className="surface-card p-4 border-round text-center h-full border-1 border-300">
+                                        <h3 className="text-xl font-medium mb-2">{plan.name}</h3>
+                                        <div className="text-3xl font-bold text-primary mb-2">
+                                            {formatPrice(plan.price)}
+                                            <span className="text-sm text-500 font-normal">/month</span>
+                                        </div>
+                                        <p className="text-600 text-sm mb-3">{plan.description}</p>
+                                        <div className="text-left text-sm">
+                                            <p className="mb-1"><i className="pi pi-check text-green-500 mr-2" /> Up to {plan.max_students} students</p>
+                                            <p className="mb-1"><i className="pi pi-check text-green-500 mr-2" /> Up to {plan.max_teachers} teachers</p>
+                                            <p className="mb-1"><i className="pi pi-check text-green-500 mr-2" /> Up to {plan.max_branches} branches</p>
+                                        </div>
+                                        <Button
+                                            label="Get Started"
+                                            className="mt-3 w-full"
+                                            onClick={() => router.push('/auth/login')}
+                                        />
+                                    </div>
+                                </div>
+                            ))}
+                        </div>
+                    </div>
+                )}
 
                 <div className="grid mt-8" style={{ maxWidth: '1000px' }}>
                     <div className="col-12 md:col-4">

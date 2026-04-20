@@ -89,23 +89,6 @@ function RootLayoutInner({ children }: RootLayoutProps) {
         }
     }, [layoutConfig.theme]);
 
-    useEffect(() => {
-        let lastHostname = typeof window !== 'undefined' ? window.location.hostname : '';
-
-        const checkDomainChange = () => {
-            if (typeof window === 'undefined') return;
-            const currentHostname = window.location.hostname;
-            if (currentHostname !== lastHostname) {
-                lastHostname = currentHostname;
-                tenantService.resetForNewDomain();
-                window.location.reload();
-            }
-        };
-
-        const interval = setInterval(checkDomainChange, 2000);
-        return () => clearInterval(interval);
-    }, []);
-
     return (
         <TenantContext.Provider value={{ tenant, loading: tenantLoading, isMultiTenant, refreshTenant: fetchTenant }}>
             {children}

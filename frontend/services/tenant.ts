@@ -2,7 +2,7 @@ import { TENANT_INFO_STORAGE_KEY } from '@/lib/apiRequestContext';
 import { httpClient } from '@/lib/httpClient';
 import { apiRoutes } from '@/lib/apiRoutes';
 
-interface TenantInfo {
+export interface TenantInfo {
     id: number;
     name: string;
     subdomain: string;
@@ -135,5 +135,3 @@ export const tenantService = {
         }
     },
 };
-
-export type { TenantInfo };

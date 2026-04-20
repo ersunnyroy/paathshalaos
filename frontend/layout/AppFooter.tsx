@@ -1,16 +1,13 @@
 /* eslint-disable @next/next/no-img-element */
 
-import React, { useContext } from 'react';
-import { LayoutContext } from './context/layoutcontext';
+import React from 'react';
 
 const AppFooter = () => {
-    const { layoutConfig } = useContext(LayoutContext);
+    const currentYear = new Date().getFullYear();
 
     return (
         <div className="layout-footer">
-            <img src={`/layout/images/logo-${layoutConfig.colorScheme === 'light' ? 'dark' : 'white'}.svg`} alt="Logo" height="20" className="mr-2" />
-            by
-            <span className="font-medium ml-2">PrimeReact</span>
+            <span className="font-medium">© PaathshalaOS {currentYear}</span>
         </div>
     );
 };

@@ -9,6 +9,7 @@ import { InputNumber } from 'primereact/inputnumber';
 import { Button } from 'primereact/button';
 import { Message } from 'primereact/message';
 import { Steps } from 'primereact/steps';
+import { FileUpload } from 'primereact/fileupload';
 import { classNames } from 'primereact/utils';
 import { authService, api } from '@/services/api';
 
@@ -31,6 +32,7 @@ interface FormData {
     established_year: number;
     student_count: number;
     description: string;
+    logo: string;
 }
 
 const instituteTypes = [
@@ -122,7 +124,11 @@ export default function NewInstitutePage() {
         established_year: new Date().getFullYear(),
         student_count: 0,
         description: '',
+        logo: '',
     });
+    const [logoFile, setLogoFile] = useState<File | null>(null);
+    const [logoPreview, setLogoPreview] = useState<string>('');
+    const [logoUploadKey, setLogoUploadKey] = useState(0);
 
     useEffect(() => {
         const checkAuth = async () => {
@@ -226,22 +232,68 @@ export default function NewInstitutePage() {
                 return;
             }
 
-            const response = await api.post('/tenants', {
-                ...formData,
-                slug: formData.name.toLowerCase().replace(/[^a-z0-9]/g, '-'),
-                status: 1,
-            });
+            let logoUrl = '';
+            
+            if (logoFile) {
+                const tenantData = {
+                    ...formData,
+                    logo: '',
+                    slug: formData.name.toLowerCase().replace(/[^a-z0-9]/g, '-'),
+                    status: 1,
+                };
 
-            if (response.success) {
+                const response = await api.post('/tenants', tenantData);
+
+                if (!response.success) {
+                    if (response.errors?.subdomain) {
+                        setError(response.errors.subdomain[0] || 'Subdomain is already taken');
+                    } else {
+                        setError(response.message || 'Failed to create institute');
+                    }
+                    setLoading(false);
+                    return;
+                }
+
+                const tenantId = response.data?.id;
+                if (tenantId) {
+                    try {
+                        const formData2 = new FormData();
+                        formData2.append('logo', logoFile);
+
+                        const uploadRes = await api.postWithFormData(`/tenants/${tenantId}/logo`, formData2);
+                        
+                        if (uploadRes.success && uploadRes.data?.url) {
+                            logoUrl = uploadRes.data.url;
+                            
+                            await api.put(`/tenants/${tenantId}`, { logo: logoUrl });
+                        }
+                    } catch (uploadErr) {
+                        console.error('Logo upload failed:', uploadErr);
+                    }
+                }
+
                 setSuccess(true);
                 setTimeout(() => {
                     router.push('/main/institutes');
                 }, 2000);
             } else {
-                if (response.errors?.subdomain) {
-                    setError(response.errors.subdomain[0] || 'Subdomain is already taken');
+                const response = await api.post('/tenants', {
+                    ...formData,
+                    slug: formData.name.toLowerCase().replace(/[^a-z0-9]/g, '-'),
+                    status: 1,
+                });
+
+                if (response.success) {
+                    setSuccess(true);
+                    setTimeout(() => {
+                        router.push('/main/institutes');
+                    }, 2000);
                 } else {
-                    setError(response.message || 'Failed to create institute');
+                    if (response.errors?.subdomain) {
+                        setError(response.errors.subdomain[0] || 'Subdomain is already taken');
+                    } else {
+                        setError(response.message || 'Failed to create institute');
+                    }
                 }
             }
         } catch (err: any) {
@@ -290,6 +342,53 @@ export default function NewInstitutePage() {
                             {getError('name') && <small className="p-error">{getError('name')}</small>}
                         </div>
 
+                        <div className="col-12">
+                            <FieldLabel label="Institute Logo" />
+                            <div className="flex align-items-center gap-3">
+                                {logoPreview && (
+                                    <img
+                                        src={logoPreview}
+                                        alt="Logo preview"
+                                        style={{ maxHeight: '80px', borderRadius: '8px' }}
+                                    />
+                                )}
+                                <FileUpload
+                                    mode="basic"
+                                    accept="image/jpeg,image/png,image/webp,image/svg+xml"
+                                    maxFileSize={2097152}
+                                    chooseLabel="Upload Logo"
+                                    className="p-button-outlined p-button-sm"
+                                    auto
+                                    customUpload
+                                    key={logoUploadKey}
+                                    uploadHandler={(e: any) => {
+                                        const file = e.files[0];
+                                        if (file) {
+                                            setLogoFile(file);
+                                            const reader = new FileReader();
+                                            reader.onload = (ev) => {
+                                                setLogoPreview(ev.target?.result as string);
+                                            };
+                                            reader.readAsDataURL(file);
+                                        }
+                                    }}
+                                />
+                                {logoPreview && (
+                                    <Button
+                                        type="button"
+                                        icon="pi pi-times"
+                                        className="p-button-text p-button-danger p-button-sm"
+                                        onClick={() => {
+                                            setLogoFile(null);
+                                            setLogoPreview('');
+                                            setLogoUploadKey(k => k + 1);
+                                        }}
+                                    />
+                                )}
+                            </div>
+                            <small className="text-500">Max 2MB. JPG, PNG, WebP, SVG</small>
+                        </div>
+
                         <div className="col-12 md:col-6">
                             <FieldLabel label="Subdomain" required />
                             <div className="p-inputgroup">
@@ -301,7 +400,7 @@ export default function NewInstitutePage() {
                                     )}
                                     placeholder="dps"
                                 />
-                                <span className="p-inputgroup-addon text-500">.paathshalaos.com</span>
+                                <span className="p-inputgroup-addon text-800">.paathshalaos.com</span>
                             </div>
                             {subdomainAvailable === false && formData.subdomain && !subdomainCheckLoading && (
                                 <small className="p-error block mt-1">This subdomain is already taken</small>

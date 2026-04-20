@@ -32,7 +32,7 @@ const AppTopbar = forwardRef<AppTopbarRef>((props, ref) => {
             console.error('Logout error:', e);
         } finally {
             api.removeToken();
-            router.push('/login');
+            router.push('/auth/login');
         }
     };
 

@@ -4,6 +4,7 @@ namespace App\Http\Controllers\Api;
 
 use App\Http\Controllers\Controller;
 use App\Services\AuthService;
+use App\Repositories\Contracts\BranchRepositoryInterface;
 use App\Http\Requests\RegisterRequest;
 use App\Http\Requests\LoginRequest;
 use Illuminate\Http\Request;
@@ -12,7 +13,8 @@ use Illuminate\Support\Facades\Auth;
 class AuthController extends Controller
 {
     public function __construct(
-        private AuthService $authService
+        private AuthService $authService,
+        private BranchRepositoryInterface $branchRepository
     ) {}
 
     public function register(RegisterRequest $request)
@@ -43,8 +45,27 @@ class AuthController extends Controller
             'message' => 'Login successful',
             'data' => [
                 'user' => $data['user'],
+                'tenant' => $data['tenant'] ?? null,
+                'branches' => $data['branches'] ?? [],
+                'selected_branch' => $data['selected_branch'] ?? null,
                 'token' => $data['token'],
             ],
+        ]);
+    }
+
+    public function branches(Request $request)
+    {
+        $user = $request->user();
+        $tenantId = $user->tenant_id;
+
+        $branches = $this->branchRepository->getAll([
+            'tenant_id' => $tenantId,
+            'status' => 1,
+        ]);
+
+        return response()->json([
+            'success' => true,
+            'data' => $branches,
         ]);
     }
 
@@ -80,5 +101,75 @@ class AuthController extends Controller
                 'token' => $token,
             ],
         ]);
+    }
+
+    public function tenant(Request $request)
+    {
+        $subdomain = $request->query('subdomain');
+        
+        if (!$subdomain) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Subdomain is required',
+            ], 400);
+        }
+
+        $tenant = \App\Models\Tenant::where('subdomain', $subdomain)->first();
+
+        if (!$tenant) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Tenant not found',
+            ], 404);
+        }
+
+        return response()->json([
+            'success' => true,
+            'data' => $tenant,
+        ]);
+    }
+
+    public function forgotPassword(Request $request)
+    {
+        $data = $request->validate([
+            'email' => ['required', 'email'],
+        ]);
+
+        $result = $this->authService->forgotPassword($data['email']);
+
+        return response()->json($result);
+    }
+
+    public function resetPassword(Request $request)
+    {
+        $data = $request->validate([
+            'email' => ['required', 'email'],
+            'token' => ['required', 'string'],
+            'password' => ['required', 'string', 'min:6'],
+        ]);
+
+        $result = $this->authService->resetPassword(
+            $data['email'],
+            $data['token'],
+            $data['password']
+        );
+
+        return response()->json($result);
+    }
+
+    public function changePassword(Request $request)
+    {
+        $data = $request->validate([
+            'current_password' => ['required', 'string'],
+            'new_password' => ['required', 'string', 'min:6'],
+        ]);
+
+        $result = $this->authService->changePassword(
+            $request->user()->id,
+            $data['current_password'],
+            $data['new_password']
+        );
+
+        return response()->json($result);
     }
 }

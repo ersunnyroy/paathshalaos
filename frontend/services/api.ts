@@ -1,11 +1,27 @@
 import { createContext, useContext } from 'react';
-import type { ApiResponse, JsonBody } from '@/lib/httpClient';
+import type { ApiResponse, JsonBody, httpRequest } from '@/lib/httpClient';
 import { httpClient } from '@/lib/httpClient';
-import { apiRoutes } from '@/lib/apiRoutes';
+import { API, getApiUrl, API_BASE_URL } from '@/lib/apiConfig';
 import { tenantService, TenantInfo } from './tenant';
 
-export type { ApiResponse, JsonBody } from '@/lib/httpClient';
-export { httpClient, httpRequest } from '@/lib/httpClient';
+export type { ApiResponse, JsonBody, httpRequest };
+export { httpClient, API, getApiUrl, API_BASE_URL, tenantService };
+
+const API_AUTH = API.auth;
+const API_TENANTS = API.tenants;
+const API_USERS = API.users;
+const API_BRANCHES = API.branches;
+const API_ROLES = API.roles;
+const API_MODULES = API.modules;
+const API_FEATURES = API.features;
+
+function resolveEndpoint(endpoint: string | ((id: number) => string), id: number): string {
+    return typeof endpoint === 'function' ? endpoint(id) : endpoint;
+}
+
+function resolveListEndpoint(endpoint: string | ((params?: Record<string, string>) => string), params?: Record<string, string>): string {
+    return typeof endpoint === 'function' ? endpoint(params) : endpoint;
+}
 
 class ApiService {
     private getToken(): string | null {
@@ -23,6 +39,14 @@ class ApiService {
 
     async put<T = any>(endpoint: string, data: unknown): Promise<ApiResponse<T>> {
         return httpClient.put<T>(endpoint, data as JsonBody);
+    }
+
+    async postWithFormData<T = any>(endpoint: string, formData: FormData): Promise<ApiResponse<T>> {
+        return httpClient.post<T>(endpoint, undefined, formData);
+    }
+
+    async putWithFormData<T = any>(endpoint: string, formData: FormData): Promise<ApiResponse<T>> {
+        return httpClient.put<T>(endpoint, undefined, formData);
     }
 
     async patch<T = any>(endpoint: string, data: unknown): Promise<ApiResponse<T>> {
@@ -66,75 +90,78 @@ export const authService = {
         admin_name: string;
         password: string;
         password_confirmation: string;
-    }) => api.post(apiRoutes.auth.register(), data),
+    }) => api.post(API_AUTH.register, data),
 
     login: (credentials: {
         email_or_phone: string;
         password: string;
         tenant_id?: number;
-    }) => api.post(apiRoutes.auth.login(), credentials),
+    }) => api.post(API_AUTH.login, credentials),
 
-    logout: () => api.post(apiRoutes.auth.logout()),
+    logout: () => api.post(API_AUTH.logout),
 
-    me: () => api.get(apiRoutes.auth.me()),
+    me: () => api.get(API_AUTH.me),
+
+    forgotPassword: (email: string) => api.post(API_AUTH.forgotPassword, { email }),
+    
+    resetPassword: (email: string, token: string, password: string) => 
+        api.post(API_AUTH.resetPassword, { email, token, password }),
+    
+    changePassword: (currentPassword: string, newPassword: string) =>
+        api.post(API_AUTH.changePassword, { current_password: currentPassword, new_password: newPassword }),
 };
 
 export const branchService = {
-    getAll: (params?: Record<string, any>) => api.get(apiRoutes.branches.collection(params)),
-    getById: (id: number) => api.get(apiRoutes.branches.byId(id)),
-    create: (data: any) => api.post(apiRoutes.branches.collection(), data),
-    update: (id: number, data: any) => api.put(apiRoutes.branches.byId(id), data),
-    delete: (id: number) => api.delete(apiRoutes.branches.byId(id)),
+    getAll: (params?: Record<string, string>) => api.get(resolveListEndpoint(API_BRANCHES.list, params)),
+    getById: (id: number) => api.get(resolveEndpoint(API_BRANCHES.show, id)),
+    create: (data: any) => api.post(API_BRANCHES.create, data),
+    update: (id: number, data: any) => api.put(resolveEndpoint(API_BRANCHES.update, id), data),
+    delete: (id: number) => api.delete(resolveEndpoint(API_BRANCHES.delete, id)),
 };
 
 export const roleService = {
-    getAll: (params?: Record<string, any>) => api.get(apiRoutes.roles.collection(params)),
-    getById: (id: number) => api.get(apiRoutes.roles.byId(id)),
-    create: (data: any) => api.post(apiRoutes.roles.collection(), data),
-    update: (id: number, data: any) => api.put(apiRoutes.roles.byId(id), data),
-    delete: (id: number) => api.delete(apiRoutes.roles.byId(id)),
+    getAll: (params?: Record<string, string>) => api.get(resolveListEndpoint(API_ROLES.list, params)),
+    getById: (id: number) => api.get(resolveEndpoint(API_ROLES.show, id)),
+    create: (data: any) => api.post(API_ROLES.create, data),
+    update: (id: number, data: any) => api.put(resolveEndpoint(API_ROLES.update, id), data),
+    delete: (id: number) => api.delete(resolveEndpoint(API_ROLES.delete, id)),
     assignPermissions: (id: number, permissionIds: number[]) =>
-        api.post(apiRoutes.roles.permissions(id), { permission_ids: permissionIds }),
-    assignRoleToUser: (userId: number, roleId: number) =>
-        api.post(apiRoutes.roles.assignToUser(), { user_id: userId, role_id: roleId }),
+        api.post(resolveEndpoint(API_ROLES.permissions, id), { permission_ids: permissionIds }),
 };
 
 export const permissionService = {
-    getAll: (params?: Record<string, any>) => api.get(apiRoutes.permissions.collection(params)),
+    getAll: () => api.get(API.permissions?.list || '/api/permissions'),
 };
 
 export const moduleService = {
-    getAll: () => api.get(apiRoutes.modules.collection()),
-    toggle: (id: number, isEnabled: boolean) =>
-        api.post(apiRoutes.modules.toggle(id), { is_enabled: isEnabled }),
-    getTenantModules: () => api.get(apiRoutes.modules.tenantModules()),
+    getAll: () => api.get(API_MODULES.list),
+    getTenantModules: () => api.get(API_MODULES.tenantModules),
+    toggle: (id: number, isEnabled: boolean) => api.post(resolveEndpoint(API_MODULES.toggle, id), { is_enabled: isEnabled }),
 };
 
 export const featureService = {
-    getAll: () => api.get(apiRoutes.features.collection()),
-    toggle: (id: number, isEnabled: boolean) =>
-        api.post(apiRoutes.features.toggle(id), { is_enabled: isEnabled }),
-    getTenantFeatures: () => api.get(apiRoutes.features.tenantFeatures()),
-    checkFeature: (feature: string) => api.get(apiRoutes.features.check(feature)),
+    getAll: () => api.get(API_FEATURES.list),
+    getTenantFeatures: () => api.get(API_FEATURES.tenantFeatures),
+    checkFeature: (feature: string) => api.get(API_FEATURES.check + '?feature=' + feature),
+    toggle: (id: number, isEnabled: boolean) => api.post(resolveEndpoint(API_FEATURES.toggle, id), { is_enabled: isEnabled }),
 };
 
 export const tenantAdminService = {
-    getAll: (params?: Record<string, any>) => api.get(apiRoutes.tenants.collection(params)),
-    getById: (id: number) => api.get(apiRoutes.tenants.byId(id)),
-    create: (data: any) => api.post(apiRoutes.tenants.collection(), data),
-    update: (id: number, data: any) => api.put(apiRoutes.tenants.byId(id), data),
-    delete: (id: number) => api.delete(apiRoutes.tenants.byId(id)),
-    toggleStatus: (id: number, status: number) =>
-        api.post(apiRoutes.tenants.toggleStatus(id), { status }),
-    getStats: () => api.get(apiRoutes.tenants.stats()),
+    getAll: () => api.get(API_TENANTS.list),
+    getById: (id: number) => api.get(resolveEndpoint(API_TENANTS.show, id)),
+    create: (data: any) => api.post(API_TENANTS.create, data),
+    update: (id: number, data: any) => api.put(resolveEndpoint(API_TENANTS.update, id), data),
+    delete: (id: number) => api.delete(resolveEndpoint(API_TENANTS.delete, id)),
+    getStats: () => api.get(API_TENANTS.stats),
+    toggleStatus: (id: number, status: number) => api.post(resolveEndpoint(API_TENANTS.toggleStatus, id), { status }),
 };
 
 export const userService = {
-    getAll: (params?: Record<string, any>) => api.get(apiRoutes.users.collection(params)),
-    getById: (id: number) => api.get(apiRoutes.users.byId(id)),
-    create: (data: any) => api.post(apiRoutes.users.collection(), data),
-    update: (id: number, data: any) => api.put(apiRoutes.users.byId(id), data),
-    delete: (id: number) => api.delete(apiRoutes.users.byId(id)),
+    getAll: (params?: Record<string, string>) => api.get(resolveListEndpoint(API_USERS.list, params)),
+    getById: (id: number) => api.get(resolveEndpoint(API_USERS.show, id)),
+    create: (data: any) => api.post(API_USERS.create, data),
+    update: (id: number, data: any) => api.put(resolveEndpoint(API_USERS.update, id), data),
+    delete: (id: number) => api.delete(resolveEndpoint(API_USERS.delete, id)),
 };
 
 export const TenantContext = createContext<{

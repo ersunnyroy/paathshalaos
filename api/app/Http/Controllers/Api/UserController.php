@@ -32,6 +32,7 @@ class UserController extends Controller
     public function store(Request $request)
     {
         $tenantId = $request->header('X-Tenant-ID') ?? $request->user()?->tenant_id;
+        $roleId = $request->input('role_id');
 
         $data = $request->validate([
             'name' => ['required', 'string', 'max:255'],
@@ -39,16 +40,24 @@ class UserController extends Controller
             'phone' => ['nullable', 'string', 'max:20', 'unique:users,phone'],
             'password' => ['required', 'string', 'min:8'],
             'status' => ['nullable', 'in:0,1'],
+            'role_id' => ['nullable', 'integer'],
         ]);
 
         $data['tenant_id'] = $tenantId;
 
         $user = $this->userService->create($data);
 
+        if ($roleId) {
+            $role = \App\Models\Role::where('tenant_id', $tenantId)->find($roleId);
+            if ($role) {
+                $user->assignRole($role);
+            }
+        }
+
         return response()->json([
             'success' => true,
             'message' => 'User created successfully',
-            'data' => $user,
+            'data' => new \App\Http\Resources\UserResource($user->load('roles')),
         ], 201);
     }
 

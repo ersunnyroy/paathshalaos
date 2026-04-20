@@ -20,6 +20,7 @@ class Tenant extends BaseModel
         'state',
         'postal_code',
         'logo',
+        'favicon',
         'primary_color',
         'status',
         // NEW ONBOARDING FIELDS
@@ -37,6 +38,7 @@ class Tenant extends BaseModel
         'registration_code',
         'student_count',
         'branch_count',
+        'description',
         'facebook',
         'twitter',
         'instagram',
@@ -79,5 +81,27 @@ class Tenant extends BaseModel
     public function isActive()
     {
         return (bool) $this->status;
+    }
+
+    public function getLogoUrlAttribute(): ?string
+    {
+        if (!$this->logo) {
+            return null;
+        }
+        if (str_starts_with($this->logo, 'http://') || str_starts_with($this->logo, 'https://')) {
+            return $this->logo;
+        }
+        return config('file_paths.minio.endpoint').'/'.config('file_paths.minio.bucket').'/'.$this->logo;
+    }
+
+    public function getFaviconUrlAttribute(): ?string
+    {
+        if (!$this->favicon) {
+            return null;
+        }
+        if (str_starts_with($this->favicon, 'http://') || str_starts_with($this->favicon, 'https://')) {
+            return $this->favicon;
+        }
+        return config('file_paths.minio.endpoint').'/'.config('file_paths.minio.bucket').'/'.$this->favicon;
     }
 }

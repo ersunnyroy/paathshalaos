@@ -21,7 +21,7 @@ class UserRepository extends DbRepository implements UserRepositoryInterface
 
     public function getAll(array $filters = []): Collection
     {
-        $query = $this->model->newQuery();
+        $query = $this->model->newQuery()->with(['roles', 'tenant']);
 
         if (isset($filters['tenant_id'])) {
             $query->whereIn('tenant_id', CommonHelper::primaryKeyCandidatesForLookup((int) $filters['tenant_id']));
@@ -33,6 +33,14 @@ class UserRepository extends DbRepository implements UserRepositoryInterface
 
         if (isset($filters['status'])) {
             $query->where('status', $filters['status']);
+        }
+
+        if (isset($filters['email'])) {
+            $query->where('email', $filters['email']);
+        }
+
+        if (isset($filters['phone'])) {
+            $query->where('phone', $filters['phone']);
         }
 
         if (isset($filters['search'])) {

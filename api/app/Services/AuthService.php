@@ -8,8 +8,10 @@ use App\Models\Role;
 use App\Repositories\Contracts\TenantRepositoryInterface;
 use App\Repositories\Contracts\UserRepositoryInterface;
 use App\Repositories\Contracts\RoleRepositoryInterface;
+use App\Repositories\Contracts\BranchRepositoryInterface;
 use Illuminate\Support\Facades\Hash;
 use Illuminate\Support\Facades\Log;
+use Illuminate\Support\Str;
 use Illuminate\Validation\ValidationException;
 
 class AuthService
@@ -18,6 +20,7 @@ class AuthService
         private TenantRepositoryInterface $tenantRepository,
         private UserRepositoryInterface $userRepository,
         private RoleRepositoryInterface $roleRepository,
+        private BranchRepositoryInterface $branchRepository,
         private TenantService $tenantService,
     ) {}
 
@@ -110,7 +113,11 @@ class AuthService
             $filters['tenant_id'] = $credentials['tenant_id'];
         }
 
+        \Log::info('Login attempt', ['field' => $field, 'email_or_phone' => $credentials['email_or_phone'], 'filters' => $filters]);
+
         $user = $this->userRepository->getAll($filters)->first();
+        
+        \Log::info('User found', ['user' => $user ? $user->email : null, 'user_id' => $user?->id]);
 
         if (!$user) {
             throw ValidationException::withMessages([
@@ -134,14 +141,50 @@ class AuthService
 
         $token = $user->createToken('auth-token')->plainTextToken;
 
+        $tenant = null;
+        $branches = [];
+        $selectedBranch = null;
+
+        if ($user->tenant_id) {
+            $tenant = Tenant::find($user->tenant_id);
+            
+            $branches = $this->branchRepository->getAll([
+                'tenant_id' => $user->tenant_id,
+                'status' => 1,
+            ])->map(fn($b) => [
+                'id' => $b->id,
+                'name' => $b->name,
+                'branch_key' => $b->branch_key,
+                'logo' => $b->logo,
+            ])->toArray();
+
+            if ($user->branch_id) {
+                $selectedBranch = $this->branchRepository->findById($user->branch_id);
+                if ($selectedBranch) {
+                    $selectedBranch = [
+                        'id' => $selectedBranch->id,
+                        'name' => $selectedBranch->name,
+                        'branch_key' => $selectedBranch->branch_key,
+                        'logo' => $selectedBranch->logo,
+                    ];
+                }
+            } elseif (count($branches) === 1) {
+                $selectedBranch = $branches[0];
+            }
+        }
+
         Log::info('User logged in', [
             'user_id' => $user->id,
             'tenant_id' => $user->tenant_id,
+            'branch_id' => $user->branch_id,
             'ip' => request()->ip(),
         ]);
 
         return [
             'user' => $user,
+            'tenant' => $tenant,
+            'branches' => $branches,
+            'selected_branch' => $selectedBranch,
             'token' => $token,
         ];
     }
@@ -170,5 +213,115 @@ class AuthService
             'is_default' => 0,
             'status' => 1,
         ]);
+    }
+
+    public function forgotPassword(string $email): array
+    {
+        $user = $this->userRepository->getAll(['email' => $email])->first();
+
+        if (!$user) {
+            return [
+                'success' => false,
+                'message' => 'If the email exists, a reset link will be sent',
+            ];
+        }
+
+        $resetToken = Str::random(64);
+        $hashedToken = hash('sha256', $resetToken);
+
+        $this->userRepository->update($user->id, [
+            'reset_token' => $hashedToken,
+            'reset_expires' => now()->addHours(24),
+        ]);
+
+        $tenant = $user->tenant_id ? $this->tenantRepository->findById($user->tenant_id) : null;
+
+        try {
+            $app = app(\App\Services\EmailService::class);
+            $app->sendFromTemplate('password_reset', [
+                'to' => $user->email,
+                'to_name' => $user->name,
+                'user_name' => $user->name,
+                'reset_url' => config('app.frontend_url') . '/auth/reset-password?token=' . $resetToken . '&email=' . urlencode($user->email),
+                'school_name' => $tenant?->name ?? 'PaathshalaOS',
+            ], $tenant);
+        } catch (\Exception $e) {
+            Log::warning('Failed to send password reset email', [
+                'user_id' => $user->id,
+                'error' => $e->getMessage(),
+            ]);
+        }
+
+        return [
+            'success' => true,
+            'message' => 'If the email exists, a reset link will be sent',
+        ];
+    }
+
+    public function resetPassword(string $email, string $token, string $password): array
+    {
+        $hashedToken = hash('sha256', $token);
+
+        $user = $this->userRepository->getAll([
+            'email' => $email,
+            'reset_token' => $hashedToken,
+        ])->first();
+
+        if (!$user) {
+            throw ValidationException::withMessages([
+                'token' => ['Invalid or expired reset token'],
+            ]);
+        }
+
+        if ($user->reset_expires && now()->greaterThan($user->reset_expires)) {
+            throw ValidationException::withMessages([
+                'token' => ['Reset token has expired'],
+            ]);
+        }
+
+        $this->userRepository->update($user->id, [
+            'password' => Hash::make($password),
+            'reset_token' => null,
+            'reset_expires' => null,
+        ]);
+
+        Log::info('Password reset successfully', [
+            'user_id' => $user->id,
+        ]);
+
+        return [
+            'success' => true,
+            'message' => 'Password reset successfully',
+        ];
+    }
+
+    public function changePassword(int $userId, string $currentPassword, string $newPassword): array
+    {
+        $user = $this->userRepository->findById($userId);
+
+        if (!$user) {
+            throw ValidationException::withMessages([
+                'current_password' => ['User not found'],
+            ]);
+        }
+
+        if (!Hash::check($currentPassword, $user->password)) {
+            throw ValidationException::withMessages([
+                'current_password' => ['Current password is incorrect'],
+            ]);
+        }
+
+        $this->userRepository->update($userId, [
+            'password' => Hash::make($newPassword),
+        ]);
+
+        Log::info('Password changed successfully', [
+            'user_id' => $userId,
+        ]);
+
+        return [
+            'success' => true,
+            'message' => 'Password changed successfully',
+        ];
     }
 }

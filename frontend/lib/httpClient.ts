@@ -70,6 +70,15 @@ async function parseResponse<T>(response: Response): Promise<ApiResponse<T>> {
 }
 
 function resolveUrl(path: string): string {
+    if (path.startsWith('http://') || path.startsWith('https://')) {
+        return path;
+    }
+    if (path.startsWith('/api/')) {
+        return path;
+    }
+    if (path.startsWith('/api')) {
+        return path;
+    }
     return `${getApiBaseUrl()}${normalizePath(path)}`;
 }
 
@@ -114,11 +123,11 @@ export const httpClient = {
     get: <T = any>(path: string, options?: Pick<HttpRequestOptions, 'headers'>) =>
         httpRequest<T>('GET', path, options),
 
-    post: <T = any>(path: string, body?: JsonBody, options?: Omit<HttpRequestOptions, 'body' | 'formData'>) =>
-        httpRequest<T>('POST', path, { ...options, body }),
+    post: <T = any>(path: string, body?: JsonBody, formData?: FormData, options?: Omit<HttpRequestOptions, 'body' | 'formData'>) =>
+        httpRequest<T>('POST', path, formData ? { ...options, formData } : { ...options, body }),
 
-    put: <T = any>(path: string, body?: JsonBody, options?: Omit<HttpRequestOptions, 'body' | 'formData'>) =>
-        httpRequest<T>('PUT', path, { ...options, body }),
+    put: <T = any>(path: string, body?: JsonBody, formData?: FormData, options?: Omit<HttpRequestOptions, 'body' | 'formData'>) =>
+        httpRequest<T>('PUT', path, formData ? { ...options, formData } : { ...options, body }),
 
     patch: <T = any>(path: string, body?: JsonBody, options?: Omit<HttpRequestOptions, 'body' | 'formData'>) =>
         httpRequest<T>('PATCH', path, { ...options, body }),

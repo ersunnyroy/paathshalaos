@@ -48,6 +48,9 @@ export default function LoginPage() {
 
     const handleSubmit = async (e: React.FormEvent) => {
         e.preventDefault();
+        
+        if (loading) return;
+        
         setLoading(true);
         setError('');
 
@@ -119,7 +122,7 @@ export default function LoginPage() {
                             style={{ maxHeight: '60px' }}
                         />
                     ) : (
-                        <div className="text-900 text-3xl font-bold mb-2">PaathshalaOS</div>
+                        <i className="pi pi-building text-900 mb-2" style={{ fontSize: '3rem' }}></i>
                     )}
                     {tenant && <span className="text-600">Sign in to your account</span>}
                     {!tenant && (

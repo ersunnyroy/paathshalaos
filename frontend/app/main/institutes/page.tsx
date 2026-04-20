@@ -24,6 +24,7 @@ interface Tenant {
     phone: string | null;
     status: number;
     institute_type: string | null;
+    logo: string | null;
     created_at: string;
 }
 
@@ -102,9 +103,20 @@ export default function InstitutesPage() {
     };
 
     const nameTemplate = (rowData: Tenant) => (
-        <div>
-            <div className="font-medium">{rowData.name}</div>
-            <div className="text-sm text-500">{rowData.subdomain}.paathshala.local</div>
+        <div className="flex align-items-center gap-2">
+            {rowData.logo ? (
+                <img
+                    src={rowData.logo}
+                    alt={rowData.name}
+                    style={{ width: '32px', height: '32px', borderRadius: '4px', objectFit: 'cover' }}
+                />
+            ) : (
+                <i className="pi pi-building" style={{ fontSize: '1.5rem' }} />
+            )}
+            <div>
+                <div className="font-medium">{rowData.name}</div>
+                <div className="text-sm text-500">{rowData.subdomain}.paathshala.local</div>
+            </div>
         </div>
     );
 

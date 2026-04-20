@@ -66,7 +66,7 @@ export default function DashboardLayout({ children }: DashboardLayoutProps) {
     useEffect(() => {
         const fetchUser = async () => {
             if (!api.isAuthenticated()) {
-                router.push('/login');
+                router.push('/auth/login');
                 return;
             }
 
@@ -76,12 +76,12 @@ export default function DashboardLayout({ children }: DashboardLayoutProps) {
                     setUser(response.data as unknown as User);
                 } else {
                     api.removeToken();
-                    router.push('/login');
+                    router.push('/auth/login');
                 }
             } catch (error) {
                 console.error('Error fetching user:', error);
                 api.removeToken();
-                router.push('/login');
+                router.push('/auth/login');
             } finally {
                 setLoading(false);
             }
@@ -114,7 +114,7 @@ export default function DashboardLayout({ children }: DashboardLayoutProps) {
             console.error('Logout error:', e);
         } finally {
             api.removeToken();
-            router.push('/login');
+            router.push('/auth/login');
         }
     };
 
