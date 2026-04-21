@@ -3,6 +3,9 @@
 namespace App\Http\Controllers\Api;
 
 use App\Http\Controllers\Controller;
+use App\Http\Requests\StoreModuleRequest;
+use App\Http\Requests\UpdateModuleRequest;
+use App\Http\Requests\ToggleModuleRequest;
 use App\Services\ModuleService;
 use App\Services\TenantService;
 use Illuminate\Http\Request;
@@ -16,32 +19,22 @@ class ModuleController extends Controller
 
     public function index(Request $request)
     {
-        $filters = $request->all();
-        $modules = $this->moduleService->getAll($filters);
+        $modules = $this->moduleService->getAll($request->all());
 
         return response()->json([
             'success' => true,
-            'data' => $modules,
+            'data'    => $modules,
         ]);
     }
 
-    public function store(Request $request)
+    public function store(StoreModuleRequest $request)
     {
-        $data = $request->validate([
-            'name' => ['required', 'string', 'max:255'],
-            'slug' => ['required', 'string', 'max:100', 'unique:modules,slug'],
-            'description' => ['nullable', 'string', 'max:500'],
-            'icon' => ['nullable', 'string', 'max:100'],
-            'sort_order' => ['nullable', 'integer'],
-            'is_core' => ['nullable', 'in:0,1'],
-        ]);
-
-        $module = $this->moduleService->create($data);
+        $module = $this->moduleService->create($request->validated());
 
         return response()->json([
             'success' => true,
             'message' => 'Module created successfully',
-            'data' => $module,
+            'data'    => $module,
         ], 201);
     }
 
@@ -58,28 +51,18 @@ class ModuleController extends Controller
 
         return response()->json([
             'success' => true,
-            'data' => $module,
+            'data'    => $module,
         ]);
     }
 
-    public function update(Request $request, int $id)
+    public function update(UpdateModuleRequest $request, int $id)
     {
-        $data = $request->validate([
-            'name' => ['sometimes', 'string', 'max:255'],
-            'slug' => ['sometimes', 'string', 'max:100', 'unique:modules,slug,' . $id],
-            'description' => ['nullable', 'string', 'max:500'],
-            'icon' => ['nullable', 'string', 'max:100'],
-            'sort_order' => ['nullable', 'integer'],
-            'is_core' => ['nullable', 'in:0,1'],
-            'status' => ['nullable', 'in:0,1'],
-        ]);
-
-        $module = $this->moduleService->update($id, $data);
+        $module = $this->moduleService->update($id, $request->validated());
 
         return response()->json([
             'success' => true,
             'message' => 'Module updated successfully',
-            'data' => $module,
+            'data'    => $module,
         ]);
     }
 
@@ -100,15 +83,11 @@ class ModuleController extends Controller
         ]);
     }
 
-    public function toggle(Request $request, int $id)
+    public function toggle(ToggleModuleRequest $request, int $id)
     {
         $tenantId = $request->header('X-Tenant-ID') ?? $request->user()?->tenant_id;
 
-        $isEnabled = $request->validate([
-            'is_enabled' => ['required', 'boolean'],
-        ]);
-
-        $this->tenantService->toggleModule($tenantId, $id, $isEnabled['is_enabled']);
+        $this->tenantService->toggleModule($tenantId, $id, $request->validated()['is_enabled']);
 
         return response()->json([
             'success' => true,
@@ -124,7 +103,7 @@ class ModuleController extends Controller
 
         return response()->json([
             'success' => true,
-            'data' => $modules,
+            'data'    => $modules,
         ]);
     }
 }

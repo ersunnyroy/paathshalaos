@@ -15,24 +15,26 @@ class FileService
 
     public function __construct()
     {
-        $config = config('file_paths');
-        $defaultDriver = $config['default_driver'] ?? 'local';
-        
-        if ($defaultDriver === 'minio') {
-            $this->disk = 'minio';
-        }
+        $driver = config('file_paths.default_driver', 'local');
+        // Map driver name to a registered disk: 'local' → 'public' so files
+        // are web-accessible via /storage; 'minio'/'s3' used directly.
+        $this->disk = match ($driver) {
+            'minio' => 'minio',
+            's3'    => 's3',
+            default => 'public',
+        };
     }
 
     public function setConfig(string $pathType): self
     {
         $paths = config('file_paths.paths', []);
-        
+
         if (isset($paths[$pathType])) {
             $config = $paths[$pathType];
-            $this->pathPattern = $config['path'] ?? '';
-            $this->maxSizeMb = $config['max_size_mb'] ?? 2;
+            $this->pathPattern      = $config['path'] ?? '';
+            $this->maxSizeMb        = $config['max_size_mb'] ?? 2;
             $this->allowedExtensions = $config['allowed_extensions'] ?? ['jpg', 'jpeg', 'png'];
-            $this->disk = $config['disk'] ?? $this->disk;
+            // Do NOT override $this->disk from path config — the global driver wins.
         }
 
         return $this;

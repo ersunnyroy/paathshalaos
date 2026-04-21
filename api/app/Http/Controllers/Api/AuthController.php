@@ -3,12 +3,14 @@
 namespace App\Http\Controllers\Api;
 
 use App\Http\Controllers\Controller;
+use App\Http\Requests\LoginRequest;
+use App\Http\Requests\RegisterRequest;
+use App\Http\Requests\ForgotPasswordRequest;
+use App\Http\Requests\ResetPasswordRequest;
+use App\Http\Requests\ChangePasswordRequest;
 use App\Services\AuthService;
 use App\Repositories\Contracts\BranchRepositoryInterface;
-use App\Http\Requests\RegisterRequest;
-use App\Http\Requests\LoginRequest;
 use Illuminate\Http\Request;
-use Illuminate\Support\Facades\Auth;
 
 class AuthController extends Controller
 {
@@ -27,8 +29,8 @@ class AuthController extends Controller
             'data' => [
                 'tenant' => $data['tenant'],
                 'user' => [
-                    'id' => $data['user']->id,
-                    'name' => $data['user']->name,
+                    'id'    => $data['user']->id,
+                    'name'  => $data['user']->name,
                     'email' => $data['user']->email,
                 ],
                 'token' => $data['token'],
@@ -44,28 +46,28 @@ class AuthController extends Controller
             'success' => true,
             'message' => 'Login successful',
             'data' => [
-                'user' => $data['user'],
-                'tenant' => $data['tenant'] ?? null,
-                'branches' => $data['branches'] ?? [],
+                'user'            => $data['user'],
+                'tenant'          => $data['tenant'] ?? null,
+                'branches'        => $data['branches'] ?? [],
                 'selected_branch' => $data['selected_branch'] ?? null,
-                'token' => $data['token'],
+                'token'           => $data['token'],
             ],
         ]);
     }
 
     public function branches(Request $request)
     {
-        $user = $request->user();
+        $user     = $request->user();
         $tenantId = $user->tenant_id;
 
         $branches = $this->branchRepository->getAll([
             'tenant_id' => $tenantId,
-            'status' => 1,
+            'status'    => 1,
         ]);
 
         return response()->json([
             'success' => true,
-            'data' => $branches,
+            'data'    => $branches,
         ]);
     }
 
@@ -85,7 +87,7 @@ class AuthController extends Controller
 
         return response()->json([
             'success' => true,
-            'data' => $user,
+            'data'    => $user,
         ]);
     }
 
@@ -97,16 +99,14 @@ class AuthController extends Controller
 
         return response()->json([
             'success' => true,
-            'data' => [
-                'token' => $token,
-            ],
+            'data'    => ['token' => $token],
         ]);
     }
 
     public function tenant(Request $request)
     {
         $subdomain = $request->query('subdomain');
-        
+
         if (!$subdomain) {
             return response()->json([
                 'success' => false,
@@ -125,45 +125,28 @@ class AuthController extends Controller
 
         return response()->json([
             'success' => true,
-            'data' => $tenant,
+            'data'    => $tenant,
         ]);
     }
 
-    public function forgotPassword(Request $request)
+    public function forgotPassword(ForgotPasswordRequest $request)
     {
-        $data = $request->validate([
-            'email' => ['required', 'email'],
-        ]);
-
-        $result = $this->authService->forgotPassword($data['email']);
+        $result = $this->authService->forgotPassword($request->validated()['email']);
 
         return response()->json($result);
     }
 
-    public function resetPassword(Request $request)
+    public function resetPassword(ResetPasswordRequest $request)
     {
-        $data = $request->validate([
-            'email' => ['required', 'email'],
-            'token' => ['required', 'string'],
-            'password' => ['required', 'string', 'min:6'],
-        ]);
-
-        $result = $this->authService->resetPassword(
-            $data['email'],
-            $data['token'],
-            $data['password']
-        );
+        $data   = $request->validated();
+        $result = $this->authService->resetPassword($data['email'], $data['token'], $data['password']);
 
         return response()->json($result);
     }
 
-    public function changePassword(Request $request)
+    public function changePassword(ChangePasswordRequest $request)
     {
-        $data = $request->validate([
-            'current_password' => ['required', 'string'],
-            'new_password' => ['required', 'string', 'min:6'],
-        ]);
-
+        $data   = $request->validated();
         $result = $this->authService->changePassword(
             $request->user()->id,
             $data['current_password'],

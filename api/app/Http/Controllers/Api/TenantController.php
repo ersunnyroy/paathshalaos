@@ -3,58 +3,46 @@
 namespace App\Http\Controllers\Api;
 
 use App\Http\Controllers\Controller;
+use App\Http\Requests\StoreTenantRequest;
+use App\Http\Requests\UpdateTenantRequest;
+use App\Http\Requests\ToggleTenantStatusRequest;
 use App\Services\TenantService;
+use App\Services\TenantDomainService;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 
 class TenantController extends Controller
 {
     public function __construct(
-        private TenantService $tenantService
+        private TenantService $tenantService,
+        private TenantDomainService $domainService
     ) {}
 
     public function index(Request $request)
     {
-        $filters = $request->all();
-
-        $tenants = $this->tenantService->getAll($filters);
+        $tenants = $this->tenantService->getAll($request->all());
 
         return response()->json([
             'success' => true,
-            'data' => $tenants,
+            'data'    => $tenants,
         ]);
     }
 
-    public function store(Request $request)
+    public function store(StoreTenantRequest $request)
     {
-        $data = $request->validate([
-            'name' => ['required', 'string', 'max:255'],
-            'slug' => ['required', 'string', 'max:255', 'unique:tenants,slug'],
-            'subdomain' => ['required', 'string', 'max:63', 'unique:tenants,subdomain'],
-            'email' => ['required', 'email'],
-            'phone' => ['nullable', 'string', 'max:20'],
-            'address' => ['nullable', 'string', 'max:500'],
-            'logo' => ['nullable', 'string', 'max:500'],
-            'status' => ['nullable', 'in:0,1'],
-            'institute_type' => ['nullable', 'string', 'max:100'],
-            'country' => ['nullable', 'string', 'max:2'],
-            'timezone' => ['nullable', 'string', 'max:50'],
-            'currency' => ['nullable', 'string', 'max:3'],
-        ]);
-
-        $tenant = $this->tenantService->create($data);
+        $tenant = $this->tenantService->create($request->validated());
 
         return response()->json([
             'success' => true,
             'message' => 'Tenant created successfully',
-            'data' => $tenant,
+            'data'    => $tenant,
         ], 201);
     }
 
     public function checkSubdomain(Request $request)
     {
         $subdomain = $request->query('subdomain');
-        
+
         if (!$subdomain) {
             return response()->json([
                 'success' => false,
@@ -65,16 +53,16 @@ class TenantController extends Controller
         $exists = $this->tenantService->findBySubdomain($subdomain);
 
         return response()->json([
-            'success' => true,
+            'success'   => true,
             'available' => !$exists,
-            'message' => $exists ? 'Subdomain is already taken' : 'Subdomain is available',
+            'message'   => $exists ? 'This subdomain is already taken. Please choose another.' : 'Subdomain is available',
         ]);
     }
 
     public function checkDomain(Request $request)
     {
         $domain = $request->query('domain');
-        
+
         if (!$domain) {
             return response()->json([
                 'success' => false,
@@ -85,9 +73,9 @@ class TenantController extends Controller
         $exists = $this->tenantService->findBySubdomain($domain);
 
         return response()->json([
-            'success' => true,
+            'success'   => true,
             'available' => !$exists,
-            'message' => $exists ? 'Domain is already taken' : 'Domain is available',
+            'message'   => $exists ? 'This domain is already taken. Please choose another.' : 'Domain is available',
         ]);
     }
 
@@ -104,33 +92,18 @@ class TenantController extends Controller
 
         return response()->json([
             'success' => true,
-            'data' => $tenant,
+            'data'    => $tenant,
         ]);
     }
 
-    public function update(Request $request, int $id)
+    public function update(UpdateTenantRequest $request, int $id)
     {
-        $data = $request->validate([
-            'name' => ['sometimes', 'string', 'max:255'],
-            'slug' => ['sometimes', 'string', 'max:255', 'unique:tenants,slug,' . $id],
-            'subdomain' => ['sometimes', 'string', 'max:63', 'unique:tenants,subdomain,' . $id],
-            'email' => ['sometimes', 'email'],
-            'phone' => ['nullable', 'string', 'max:20'],
-            'address' => ['nullable', 'string', 'max:500'],
-            'logo' => ['nullable', 'string', 'max:500'],
-            'status' => ['nullable', 'in:0,1'],
-            'institute_type' => ['nullable', 'string', 'max:100'],
-            'country' => ['nullable', 'string', 'max:2'],
-            'timezone' => ['nullable', 'string', 'max:50'],
-            'currency' => ['nullable', 'string', 'max:3'],
-        ]);
-
-        $tenant = $this->tenantService->update($id, $data);
+        $tenant = $this->tenantService->update($id, $request->validated());
 
         return response()->json([
             'success' => true,
             'message' => 'Tenant updated successfully',
-            'data' => $tenant,
+            'data'    => $tenant,
         ]);
     }
 
@@ -151,51 +124,91 @@ class TenantController extends Controller
         ]);
     }
 
-    public function toggleStatus(Request $request, int $id)
+    public function toggleStatus(ToggleTenantStatusRequest $request, int $id)
     {
-        $data = $request->validate([
-            'status' => ['required', 'in:0,1'],
-        ]);
-
-        $tenant = $this->tenantService->update($id, ['status' => $data['status']]);
+        $tenant = $this->tenantService->update($id, $request->validated());
 
         return response()->json([
             'success' => true,
             'message' => 'Status updated successfully',
-            'data' => $tenant,
+            'data'    => $tenant,
         ]);
     }
 
     public function stats()
     {
-        $totalTenants = DB::table('tenants')->count();
-        $activeTenants = DB::table('tenants')->where('status', 1)->count();
-        $inactiveTenants = DB::table('tenants')->where('status', 0)->count();
-        $totalUsers = DB::table('users')->count();
-        $totalBranches = DB::table('branches')->count();
+        return response()->json([
+            'success' => true,
+            'data'    => [
+                'total_tenants'    => DB::table('tenants')->count(),
+                'active_tenants'   => DB::table('tenants')->where('status', 1)->count(),
+                'inactive_tenants' => DB::table('tenants')->where('status', 0)->count(),
+                'total_users'      => DB::table('users')->count(),
+                'total_branches'   => DB::table('branches')->count(),
+            ],
+        ]);
+    }
+
+    public function info(Request $request)
+    {
+        // Primary: full domain from X-Tenant-Host header
+        // Fallback: construct from ?tenant_key= (local dev convenience)
+        $host = $request->header('X-Tenant-Host');
+
+        if (!$host) {
+            $tenantKey = $request->query('tenant_key');
+            if ($tenantKey) {
+                $appDomain = config('app.domain', 'paathshalaos.com');
+                $host = $tenantKey . '.' . $appDomain;
+            }
+        }
+
+        if (!$host) {
+            return response()->json([
+                'success' => false,
+                'message' => 'X-Tenant-Host header is required',
+            ], 400);
+        }
+
+        $tenant = $this->domainService->detectTenantByDomain($host);
+
+        if (!$tenant) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Tenant not found',
+            ], 404);
+        }
+
+        if (!$tenant->isActive()) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Institution is inactive',
+            ], 403);
+        }
 
         return response()->json([
             'success' => true,
-            'data' => [
-                'total_tenants' => $totalTenants,
-                'active_tenants' => $activeTenants,
-                'inactive_tenants' => $inactiveTenants,
-                'total_users' => $totalUsers,
-                'total_branches' => $totalBranches,
+            'data'    => [
+                'id'              => $tenant->id,
+                'name'            => $tenant->name,
+                'subdomain'       => $tenant->subdomain,
+                'logo_url'        => $tenant->logo_url,
+                'favicon_url'     => $tenant->favicon_url,
+                'primary_color'   => $tenant->primary_color,
+                'secondary_color' => $tenant->secondary_color ?? null,
+                'host'            => $host,
             ],
         ]);
     }
 
     public function byDomain(Request $request)
     {
-        $host = $request->getHost();
+        $host      = $request->getHost();
         $subdomain = $request->query('subdomain');
 
-        if ($subdomain) {
-            $tenant = $this->tenantService->findBySubdomain($subdomain);
-        } else {
-            $tenant = $this->tenantService->findBySubdomain($host);
-        }
+        $tenant = $subdomain
+            ? $this->tenantService->findBySubdomain($subdomain)
+            : $this->tenantService->findBySubdomain($host);
 
         if (!$tenant || !$tenant->status) {
             return response()->json([
@@ -206,18 +219,18 @@ class TenantController extends Controller
 
         return response()->json([
             'success' => true,
-            'data' => [
-                'id' => $tenant->id,
-                'name' => $tenant->name,
-                'subdomain' => $tenant->subdomain,
-                'email' => $tenant->email,
-                'phone' => $tenant->phone,
-                'logo' => $tenant->logo,
-                'favicon' => $tenant->favicon,
-                'primary_color' => $tenant->primary_color,
-                'secondary_color' => $tenant->secondary_color,
-                'address' => $tenant->address,
-                'website' => $tenant->website,
+            'data'    => [
+                'id'             => $tenant->id,
+                'name'           => $tenant->name,
+                'subdomain'      => $tenant->subdomain,
+                'email'          => $tenant->email,
+                'phone'          => $tenant->phone,
+                'logo'           => $tenant->logo,
+                'favicon'        => $tenant->favicon,
+                'primary_color'  => $tenant->primary_color,
+                'secondary_color'=> $tenant->secondary_color,
+                'address'        => $tenant->address,
+                'website'        => $tenant->website,
                 'institute_type' => $tenant->institute_type,
             ],
         ]);

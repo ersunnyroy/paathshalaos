@@ -10,37 +10,13 @@ use InvalidArgumentException;
  */
 class CommonHelper
 {
-    // --- ID obfuscation (32-bit Feistel + HMAC round function) -----------------
+    // --- ID obfuscation (XOR operation) -----------------
 
-    private static function idObfuscationRounds(): int
+    private static function idObfuscationXorKey(): int
     {
-        $r = (int) Config::get('id_obfuscation.rounds', 4);
+        $key = (int) Config::get('id_obfuscation.xor_key', 0x5A3C9E7F);
 
-        return max(1, min(32, $r));
-    }
-
-    private static function idObfuscationHmacKey(): string
-    {
-        $custom = Config::get('id_obfuscation.secret');
-        if (is_string($custom) && $custom !== '') {
-            return $custom;
-        }
-
-        $key = (string) Config::get('app.key');
-        if (str_starts_with($key, 'base64:')) {
-            $decoded = base64_decode(substr($key, 7), true);
-            $key = $decoded !== false ? $decoded : $key;
-        }
-
-        return hash('sha256', $key.'|id_obfuscation', true);
-    }
-
-    private static function idObfuscationRoundFunction(int $value, int $round): int
-    {
-        $value &= 0xFFFF;
-        $hash = hash_hmac('sha256', $value.'|'.$round, self::idObfuscationHmacKey(), false);
-
-        return (int) hexdec(substr($hash, 0, 8)) & 0xFFFF;
+        return $key;
     }
 
     public static function encryptId(int $id): int
@@ -49,25 +25,9 @@ class CommonHelper
             return $id;
         }
 
-        if ($id < 0) {
-            throw new InvalidArgumentException('encryptId expects a non-negative integer');
-        }
+        $key = self::idObfuscationXorKey();
 
-        if ($id > 0xFFFFFFFF) {
-            throw new InvalidArgumentException('encryptId only supports 32-bit unsigned ids');
-        }
-
-        $left = ($id >> 16) & 0xFFFF;
-        $right = $id & 0xFFFF;
-        $rounds = self::idObfuscationRounds();
-
-        for ($i = 0; $i < $rounds; $i++) {
-            $temp = $right;
-            $right = $left ^ (self::idObfuscationRoundFunction($right, $i) & 0xFFFF);
-            $left = $temp;
-        }
-
-        return (($left & 0xFFFF) << 16) | ($right & 0xFFFF);
+        return $id ^ $key;
     }
 
     public static function decryptId(int $encrypted): int
@@ -76,18 +36,9 @@ class CommonHelper
             return $encrypted;
         }
 
-        $encrypted &= 0xFFFFFFFF;
-        $left = ($encrypted >> 16) & 0xFFFF;
-        $right = $encrypted & 0xFFFF;
-        $rounds = self::idObfuscationRounds();
+        $key = self::idObfuscationXorKey();
 
-        for ($i = $rounds - 1; $i >= 0; $i--) {
-            $temp = $left;
-            $left = $right ^ (self::idObfuscationRoundFunction($left, $i) & 0xFFFF);
-            $right = $temp;
-        }
-
-        return (($left & 0xFFFF) << 16) | ($right & 0xFFFF);
+        return $encrypted ^ $key;
     }
 
     public static function idObfuscationEnabled(): bool

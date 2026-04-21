@@ -3,6 +3,8 @@
 namespace App\Http\Controllers\Api;
 
 use App\Http\Controllers\Controller;
+use App\Http\Requests\StoreBranchRequest;
+use App\Http\Requests\UpdateBranchRequest;
 use App\Services\BranchService;
 use Illuminate\Http\Request;
 
@@ -25,30 +27,23 @@ class BranchController extends Controller
 
         return response()->json([
             'success' => true,
-            'data' => $branches,
+            'data'    => $branches,
         ]);
     }
 
-    public function store(Request $request)
+    public function store(StoreBranchRequest $request)
     {
         $tenantId = $request->header('X-Tenant-ID') ?? $request->user()?->tenant_id;
 
-        $data = $request->validate([
-            'name' => ['required', 'string', 'max:255'],
-            'subdomain' => ['nullable', 'string', 'max:63', 'unique:branches,subdomain'],
-            'address' => ['nullable', 'string', 'max:500'],
-            'phone' => ['nullable', 'string', 'max:20'],
-            'email' => ['nullable', 'email'],
-        ]);
-
-        $data['tenant_id'] = $tenantId;
+        $data               = $request->validated();
+        $data['tenant_id']  = $tenantId;
 
         $branch = $this->branchService->create($data);
 
         return response()->json([
             'success' => true,
             'message' => 'Branch created successfully',
-            'data' => $branch,
+            'data'    => $branch,
         ], 201);
     }
 
@@ -65,27 +60,18 @@ class BranchController extends Controller
 
         return response()->json([
             'success' => true,
-            'data' => $branch,
+            'data'    => $branch,
         ]);
     }
 
-    public function update(Request $request, int $id)
+    public function update(UpdateBranchRequest $request, int $id)
     {
-        $data = $request->validate([
-            'name' => ['sometimes', 'string', 'max:255'],
-            'subdomain' => ['sometimes', 'string', 'max:63', 'unique:branches,subdomain,' . $id],
-            'address' => ['nullable', 'string', 'max:500'],
-            'phone' => ['nullable', 'string', 'max:20'],
-            'email' => ['nullable', 'email'],
-            'status' => ['nullable', 'in:0,1'],
-        ]);
-
-        $branch = $this->branchService->update($id, $data);
+        $branch = $this->branchService->update($id, $request->validated());
 
         return response()->json([
             'success' => true,
             'message' => 'Branch updated successfully',
-            'data' => $branch,
+            'data'    => $branch,
         ]);
     }
 

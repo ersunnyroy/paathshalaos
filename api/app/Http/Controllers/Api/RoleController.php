@@ -3,6 +3,11 @@
 namespace App\Http\Controllers\Api;
 
 use App\Http\Controllers\Controller;
+use App\Http\Requests\StoreRoleRequest;
+use App\Http\Requests\UpdateRoleRequest;
+use App\Http\Requests\AssignPermissionsRequest;
+use App\Http\Requests\AssignRoleToUserRequest;
+use App\Http\Requests\RemoveRoleFromUserRequest;
 use App\Services\RoleService;
 use App\Services\PermissionService;
 use Illuminate\Http\Request;
@@ -17,7 +22,7 @@ class RoleController extends Controller
     public function index(Request $request)
     {
         $filters = $request->all();
-        
+
         if ($request->has('tenant_id')) {
             $filters['tenant_id'] = $request->input('tenant_id');
         } else {
@@ -28,28 +33,23 @@ class RoleController extends Controller
 
         return response()->json([
             'success' => true,
-            'data' => $roles,
+            'data'    => $roles,
         ]);
     }
 
-    public function store(Request $request)
+    public function store(StoreRoleRequest $request)
     {
         $tenantId = $request->header('X-Tenant-ID') ?? $request->user()?->tenant_id;
 
-        $data = $request->validate([
-            'name' => ['required', 'string', 'max:255'],
-            'description' => ['nullable', 'string', 'max:500'],
-            'is_default' => ['nullable', 'in:0,1'],
-        ]);
-
-        $data['tenant_id'] = $tenantId;
+        $data               = $request->validated();
+        $data['tenant_id']  = $tenantId;
 
         $role = $this->roleService->createRole($data);
 
         return response()->json([
             'success' => true,
             'message' => 'Role created successfully',
-            'data' => $role,
+            'data'    => $role,
         ], 201);
     }
 
@@ -66,25 +66,18 @@ class RoleController extends Controller
 
         return response()->json([
             'success' => true,
-            'data' => $role,
+            'data'    => $role,
         ]);
     }
 
-    public function update(Request $request, int $id)
+    public function update(UpdateRoleRequest $request, int $id)
     {
-        $data = $request->validate([
-            'name' => ['sometimes', 'string', 'max:255'],
-            'description' => ['nullable', 'string', 'max:500'],
-            'is_default' => ['nullable', 'in:0,1'],
-            'status' => ['nullable', 'in:0,1'],
-        ]);
-
-        $role = $this->roleService->updateRole($id, $data);
+        $role = $this->roleService->updateRole($id, $request->validated());
 
         return response()->json([
             'success' => true,
             'message' => 'Role updated successfully',
-            'data' => $role,
+            'data'    => $role,
         ]);
     }
 
@@ -105,7 +98,7 @@ class RoleController extends Controller
         ]);
     }
 
-    public function permissions(Request $request, int $id)
+    public function permissions(int $id)
     {
         $role = $this->roleService->findRoleById($id);
 
@@ -116,59 +109,44 @@ class RoleController extends Controller
             ], 404);
         }
 
-        $permissions = $this->roleService->getRolePermissions($id);
-
         return response()->json([
             'success' => true,
-            'data' => $permissions,
+            'data'    => $this->roleService->getRolePermissions($id),
         ]);
     }
 
-    public function assignPermissions(Request $request, int $id)
+    public function assignPermissions(AssignPermissionsRequest $request, int $id)
     {
-        $permissionIds = $request->validate([
-            'permission_ids' => ['required', 'array'],
-            'permission_ids.*' => ['integer'],
-        ]);
-
-        $role = $this->roleService->assignPermissionsToRole($id, $permissionIds['permission_ids']);
+        $role = $this->roleService->assignPermissionsToRole($id, $request->validated()['permission_ids']);
 
         return response()->json([
             'success' => true,
             'message' => 'Permissions assigned successfully',
-            'data' => $role->permissions,
+            'data'    => $role->permissions,
         ]);
     }
 
-    public function assignRoleToUser(Request $request)
+    public function assignRoleToUser(AssignRoleToUserRequest $request)
     {
-        $data = $request->validate([
-            'user_id' => ['required', 'integer'],
-            'role_id' => ['required', 'integer'],
-        ]);
-
+        $data = $request->validated();
         $user = $this->roleService->assignRoleToUser($data['user_id'], $data['role_id']);
 
         return response()->json([
             'success' => true,
             'message' => 'Role assigned successfully',
-            'data' => $user,
+            'data'    => $user,
         ]);
     }
 
-    public function removeRoleFromUser(Request $request)
+    public function removeRoleFromUser(RemoveRoleFromUserRequest $request)
     {
-        $data = $request->validate([
-            'user_id' => ['required', 'integer'],
-            'role_id' => ['required', 'integer'],
-        ]);
-
+        $data = $request->validated();
         $user = $this->roleService->removeRoleFromUser($data['user_id'], $data['role_id']);
 
         return response()->json([
             'success' => true,
             'message' => 'Role removed successfully',
-            'data' => $user,
+            'data'    => $user,
         ]);
     }
 }

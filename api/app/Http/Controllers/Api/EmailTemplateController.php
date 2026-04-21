@@ -3,6 +3,8 @@
 namespace App\Http\Controllers\Api;
 
 use App\Http\Controllers\Controller;
+use App\Http\Requests\StoreEmailTemplateRequest;
+use App\Http\Requests\UpdateEmailTemplateRequest;
 use App\Repositories\Contracts\EmailTemplateRepositoryInterface;
 use Illuminate\Http\Request;
 
@@ -14,12 +16,11 @@ class EmailTemplateController extends Controller
 
     public function index(Request $request)
     {
-        $filters = $request->all();
-        $templates = $this->emailTemplateRepository->getAll($filters);
+        $templates = $this->emailTemplateRepository->getAll($request->all());
 
         return response()->json([
             'success' => true,
-            'data' => $templates,
+            'data'    => $templates,
         ]);
     }
 
@@ -36,45 +37,29 @@ class EmailTemplateController extends Controller
 
         return response()->json([
             'success' => true,
-            'data' => $template,
+            'data'    => $template,
         ]);
     }
 
-    public function store(Request $request)
+    public function store(StoreEmailTemplateRequest $request)
     {
-        $data = $request->validate([
-            'slug' => ['required', 'string', 'unique:email_templates,slug'],
-            'name' => ['required', 'string'],
-            'subject' => ['required', 'string'],
-            'body' => ['required', 'string'],
-            'variables' => ['nullable', 'string'],
-            'is_default' => ['nullable', 'boolean'],
-        ]);
-
-        $template = $this->emailTemplateRepository->create($data);
+        $template = $this->emailTemplateRepository->create($request->validated());
 
         return response()->json([
             'success' => true,
             'message' => 'Template created successfully',
-            'data' => $template,
+            'data'    => $template,
         ], 201);
     }
 
-    public function update(Request $request, int $id)
+    public function update(UpdateEmailTemplateRequest $request, int $id)
     {
-        $data = $request->validate([
-            'name' => ['sometimes', 'string'],
-            'subject' => ['sometimes', 'string'],
-            'body' => ['sometimes', 'string'],
-            'variables' => ['nullable', 'string'],
-        ]);
-
-        $template = $this->emailTemplateRepository->update($id, $data);
+        $template = $this->emailTemplateRepository->update($id, $request->validated());
 
         return response()->json([
             'success' => true,
             'message' => 'Template updated successfully',
-            'data' => $template,
+            'data'    => $template,
         ]);
     }
 

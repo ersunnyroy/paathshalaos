@@ -46,10 +46,12 @@ class TenantService
 
     public function create(array $data): Tenant
     {
-        $tenant = $this->tenantRepository->create($data);
-        $this->createDefaultRolesAndPermissions($tenant);
-        $this->createAdminUser($tenant, $data['email']);
-        return $tenant;
+        return DB::transaction(function () use ($data) {
+            $tenant = $this->tenantRepository->create($data);
+            $this->createDefaultRolesAndPermissions($tenant);
+            $this->createAdminUser($tenant, $data['email']);
+            return $tenant;
+        });
     }
 
     private function createAdminUser(Tenant $tenant, string $adminEmail): User
@@ -74,17 +76,21 @@ class TenantService
         }
 
         try {
-            EmailService::quickSend([
-                'tenant' => $tenant,
-                'to' => $adminEmail,
-                'to_name' => 'Admin',
-                'subject' => 'Your PaathshalaOS Admin Account',
-                'body' => $this->getAdminCredentialsEmailBody($tenant->name, $adminEmail, $randomPassword),
-            ]);
+            EmailService::quickSend(
+                'admin_credentials',
+                [
+                    'school_name'   => $tenant->name,
+                    'to'            => $adminEmail,
+                    'to_name'       => 'Admin',
+                    'email'         => $adminEmail,
+                    'password'      => $randomPassword,
+                ],
+                $tenant,
+            );
         } catch (\Exception $e) {
             Log::warning('Failed to send admin credentials email', [
                 'tenant_id' => $tenant->id,
-                'error' => $e->getMessage(),
+                'error'     => $e->getMessage(),
             ]);
         }
 

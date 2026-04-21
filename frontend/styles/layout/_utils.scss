@@ -1,4 +1,12 @@
 /* Utils */
+
+// Reserves a fixed line of space for inline validation messages so the layout
+// never shifts when an error appears or disappears.
+.field-error-hint {
+    display: block;
+    min-height: 1.1rem;
+    margin-top: 0.25rem;
+}
 .clearfix:after {
     content: " ";
     display: block;

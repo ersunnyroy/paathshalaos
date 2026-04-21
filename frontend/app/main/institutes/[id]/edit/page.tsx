@@ -30,18 +30,20 @@ interface FormData {
     website: string;
     board: string;
     medium: string;
-    established_year: number;
-    student_count: number;
+    established_year: number | null;
+    student_count: number | null;
     description: string;
     logo: string;
 }
 
+type Errors = Partial<Record<keyof FormData, string>>;
+
 const instituteTypes = [
-    { label: 'School', value: 'school', icon: 'pi pi-building' },
-    { label: 'College', value: 'college', icon: 'pi pi-book' },
-    { label: 'University', value: 'university', icon: 'pi pi-verified' },
-    { label: 'Coaching Institute', value: 'coaching', icon: 'pi pi-users' },
-    { label: 'Pre-School', value: 'preschool', icon: 'pi pi-heart' },
+    { label: 'School', value: 'school', icon: 'pi-building' },
+    { label: 'College', value: 'college', icon: 'pi-book' },
+    { label: 'University', value: 'university', icon: 'pi-verified' },
+    { label: 'Coaching', value: 'coaching', icon: 'pi-users' },
+    { label: 'Pre-School', value: 'preschool', icon: 'pi-heart' },
 ];
 
 const countries = [
@@ -54,17 +56,18 @@ const countries = [
 ];
 
 const timezones = [
-    { label: 'Asia/Kolkata (IST)', value: 'Asia/Kolkata' },
-    { label: 'America/New_York (EST)', value: 'America/New_York' },
-    { label: 'Europe/London (GMT)', value: 'Europe/London' },
-    { label: 'Asia/Dubai (GST)', value: 'Asia/Dubai' },
+    { label: 'Asia/Kolkata (IST +5:30)', value: 'Asia/Kolkata' },
+    { label: 'America/New_York (EST -5:00)', value: 'America/New_York' },
+    { label: 'Europe/London (GMT +0:00)', value: 'Europe/London' },
+    { label: 'Asia/Dubai (GST +4:00)', value: 'Asia/Dubai' },
+    { label: 'Asia/Singapore (SGT +8:00)', value: 'Asia/Singapore' },
 ];
 
 const currencies = [
-    { label: '₹ INR', value: 'INR' },
-    { label: '$ USD', value: 'USD' },
-    { label: '£ GBP', value: 'GBP' },
-    { label: 'د.إ AED', value: 'AED' },
+    { label: '₹ INR — Indian Rupee', value: 'INR' },
+    { label: '$ USD — US Dollar', value: 'USD' },
+    { label: '£ GBP — British Pound', value: 'GBP' },
+    { label: 'د.إ AED — UAE Dirham', value: 'AED' },
 ];
 
 const generateYearOptions = () => {
@@ -76,18 +79,30 @@ const generateYearOptions = () => {
     return years;
 };
 
+const yearOptions = generateYearOptions();
+
 const steps = [
     { label: 'Basic Info' },
     { label: 'Details' },
     { label: 'Location' },
 ];
 
-const FieldLabel = ({ label, required }: { label: string; required?: boolean }) => (
-    <label className="block text-700 font-medium mb-1">
-        {label}
-        {required && <span className="text-red-500 ml-1">*</span>}
-    </label>
-);
+const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+const URL_RE = /^https?:\/\/.+/;
+
+function validateStep0(f: FormData): Errors {
+    const e: Errors = {};
+    if (!f.name.trim()) e.name = 'Institute name is required.';
+    if (!f.email.trim()) e.email = 'Admin email is required.';
+    else if (!EMAIL_RE.test(f.email)) e.email = 'Please enter a valid email address.';
+    return e;
+}
+
+function validateStep1(f: FormData): Errors {
+    const e: Errors = {};
+    if (f.website && !URL_RE.test(f.website)) e.website = 'Website must start with http:// or https://';
+    return e;
+}
 
 export default function EditInstitutePage() {
     const router = useRouter();
@@ -99,11 +114,9 @@ export default function EditInstitutePage() {
     const [fetchLoading, setFetchLoading] = useState(true);
     const [activeStep, setActiveStep] = useState(0);
     const activeStepRef = useRef(0);
-    const [touched, setTouched] = useState<Record<string, boolean>>({});
+    const [errors, setErrors] = useState<Errors>({});
 
-    useEffect(() => {
-        activeStepRef.current = activeStep;
-    }, [activeStep]);
+    useEffect(() => { activeStepRef.current = activeStep; }, [activeStep]);
 
     const [formData, setFormData] = useState<FormData>({
         name: '',
@@ -121,8 +134,8 @@ export default function EditInstitutePage() {
         website: '',
         board: '',
         medium: '',
-        established_year: new Date().getFullYear(),
-        student_count: 0,
+        established_year: null,
+        student_count: null,
         description: '',
         logo: '',
     });
@@ -133,16 +146,9 @@ export default function EditInstitutePage() {
 
     useEffect(() => {
         const init = async () => {
-            if (!api.isAuthenticated()) {
-                router.push('/auth/login');
-                return;
-            }
+            if (!api.isAuthenticated()) { router.push('/auth/login'); return; }
             const userRes = await authService.me();
-            if (!userRes.success) {
-                api.removeToken();
-                router.push('/auth/login');
-                return;
-            }
+            if (!userRes.success) { api.removeToken(); router.push('/auth/login'); return; }
 
             try {
                 const res = await tenantAdminService.getById(id);
@@ -164,15 +170,12 @@ export default function EditInstitutePage() {
                         website: t.website || '',
                         board: t.board || '',
                         medium: t.medium || '',
-                        established_year: t.established_year ? parseInt(t.established_year) : new Date().getFullYear(),
-                        student_count: t.student_count || 0,
+                        established_year: t.established_year ? parseInt(t.established_year) : null,
+                        student_count: t.student_count ?? null,
                         description: t.description || '',
                         logo: t.logo || '',
                     });
-                    if (t.logo) {
-                        setExistingLogo(t.logo);
-                        setLogoPreview(t.logo);
-                    }
+                    if (t.logo) { setExistingLogo(t.logo); setLogoPreview(t.logo); }
                 } else {
                     toast.current?.show({ severity: 'error', summary: 'Not Found', detail: 'Institute not found', life: 3000 });
                     router.push('/main/institutes');
@@ -188,72 +191,66 @@ export default function EditInstitutePage() {
 
     const handleChange = (field: keyof FormData, value: any) => {
         setFormData(prev => ({ ...prev, [field]: value }));
+        if (errors[field]) setErrors(prev => ({ ...prev, [field]: '' }));
     };
 
-    const handleBlur = (field: string) => {
-        setTouched(prev => ({ ...prev, [field]: true }));
-    };
-
-    const getError = (field: keyof FormData): string | null => {
-        if (!touched[field]) return null;
-        if (field === 'email' && formData.email && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(formData.email)) {
-            return 'Invalid email address';
-        }
-        return null;
-    };
-
-    const validateStep = (step: number): boolean => {
-        if (step === 0) {
-            if (!formData.name || !formData.email) return false;
-            if (formData.email && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(formData.email)) return false;
-        }
-        return true;
-    };
+    const field = (key: keyof FormData) => ({
+        value: formData[key] as string,
+        onChange: (e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement>) => handleChange(key, e.target.value),
+        className: classNames('w-full', errors[key] && 'p-invalid'),
+    });
 
     const nextStep = () => {
-        if (validateStep(activeStep)) {
-            setActiveStep(prev => Math.min(prev + 1, steps.length - 1));
+        let stepErrors: Errors = {};
+        if (activeStep === 0) stepErrors = validateStep0(formData);
+        if (activeStep === 1) stepErrors = validateStep1(formData);
+        if (Object.keys(stepErrors).length > 0) {
+            setErrors(prev => ({ ...prev, ...stepErrors }));
+            return;
         }
+        setErrors({});
+        setActiveStep(prev => Math.min(prev + 1, steps.length - 1));
     };
 
     const prevStep = () => setActiveStep(prev => Math.max(prev - 1, 0));
 
     const commitUpdate = async () => {
-        if (activeStepRef.current !== steps.length - 1) {
-            return;
-        }
+        if (activeStepRef.current !== steps.length - 1) return;
         setLoading(true);
         try {
             let logoUrl = formData.logo;
 
             if (logoFile) {
                 try {
-                    const uploadFormData = new FormData();
-                    uploadFormData.append('logo', logoFile);
-
-                    const uploadRes = await api.postWithFormData(`/tenants/${id}/logo`, uploadFormData);
-                    
-                    if (uploadRes.success && uploadRes.data?.url) {
-                        logoUrl = uploadRes.data.url;
-                    }
-                } catch (uploadErr) {
-                    console.error('Logo upload failed:', uploadErr);
+                    const fd = new FormData();
+                    fd.append('logo', logoFile);
+                    const uploadRes = await api.postWithFormData(`/tenants/${id}/logo`, fd);
+                    if (uploadRes.success && uploadRes.data?.url) logoUrl = uploadRes.data.url;
+                } catch {
+                    // non-fatal
                 }
             }
 
             const { subdomain, ...updateData } = formData;
-            const response = await tenantAdminService.update(id, { ...updateData, logo: logoUrl });
-            
+            const response = await tenantAdminService.update(id, {
+                ...updateData,
+                logo: logoUrl,
+                established_year: formData.established_year ?? undefined,
+                student_count: formData.student_count ?? undefined,
+                website: formData.website || undefined,
+                board: formData.board || undefined,
+                medium: formData.medium || undefined,
+                description: formData.description || undefined,
+            });
+
             if (response.success) {
                 toast.current?.show({ severity: 'success', summary: 'Saved', detail: 'Institute updated successfully', life: 2500 });
                 setTimeout(() => router.push('/main/institutes'), 1500);
             } else {
-                toast.current?.show({
-                    severity: 'error',
-                    summary: 'Error',
-                    detail: response.message || 'Failed to update institute',
-                    life: 4000,
-                });
+                const detail = response.errors
+                    ? Object.values(response.errors).flat().join(' ')
+                    : response.message || 'Failed to update institute';
+                toast.current?.show({ severity: 'error', summary: 'Error', detail, life: 4000 });
             }
         } catch (err: any) {
             toast.current?.show({ severity: 'error', summary: 'Error', detail: err.message || 'An error occurred', life: 4000 });
@@ -262,298 +259,233 @@ export default function EditInstitutePage() {
         }
     };
 
-    const renderStepContent = () => {
-        switch (activeStep) {
-            case 0:
-                return (
-                    <div className="grid nested-grid">
-                        <div className="col-12">
-                            <FieldLabel label="Institute Type" required />
-                            <div className="flex flex-wrap gap-2">
-                                {instituteTypes.map((type) => (
-                                    <div
-                                        key={type.value}
-                                        onClick={() => handleChange('institute_type', type.value)}
-                                        className={classNames(
-                                            'surface-card p-3 border-1 border-round cursor-pointer transition-colors transition-duration-200 flex align-items-center gap-2',
-                                            formData.institute_type === type.value
-                                                ? 'border-primary bg-primary-50'
-                                                : 'border-surface-200 hover:surface-50'
-                                        )}
-                                        style={{ minWidth: '140px', flex: '1 1 auto' }}
-                                    >
-                                        <i className={classNames('pi text-xl', type.icon)} />
-                                        <span className="font-medium">{type.label}</span>
-                                    </div>
-                                ))}
-                            </div>
+    const renderStep0 = () => (
+        <div className="grid">
+            <div className="col-12">
+                <label className="block text-700 font-medium mb-2">Institute Type <span className="text-red-500">*</span></label>
+                <div className="flex flex-wrap gap-2">
+                    {instituteTypes.map((type) => (
+                        <div
+                            key={type.value}
+                            onClick={() => handleChange('institute_type', type.value)}
+                            className={classNames(
+                                'flex align-items-center gap-2 px-3 py-2 border-1 border-round cursor-pointer transition-colors transition-duration-150',
+                                formData.institute_type === type.value
+                                    ? 'border-primary bg-primary-50 text-primary'
+                                    : 'border-300 hover:border-primary-300 surface-card'
+                            )}
+                            style={{ minWidth: '120px' }}
+                        >
+                            <i className={classNames('pi text-lg', type.icon)} />
+                            <span className="font-medium text-sm">{type.label}</span>
                         </div>
+                    ))}
+                </div>
+            </div>
 
-                        <div className="col-12 md:col-6">
-                            <FieldLabel label="Institute Name" required />
-                            <InputText
-                                value={formData.name}
-                                onChange={(e) => handleChange('name', e.target.value)}
-                                onBlur={() => handleBlur('name')}
-                                className={classNames('w-full', getError('name') && 'p-invalid')}
-                                placeholder="e.g., Delhi Public School"
+            <div className="col-12 md:col-6">
+                <label className="block text-700 font-medium mb-1">Institute Name <span className="text-red-500">*</span></label>
+                <InputText
+                    {...field('name')}
+                    placeholder="e.g., Delhi Public School"
+                />
+                <small className="p-error field-error-hint">{errors.name ?? ''}</small>
+            </div>
+
+            <div className="col-12 md:col-6">
+                <label className="block text-700 font-medium mb-1">Subdomain</label>
+                <div className="p-inputgroup">
+                    <InputText value={formData.subdomain} disabled className="p-disabled" />
+                    <span className="p-inputgroup-addon text-500 text-sm">.paathshalaos.com</span>
+                </div>
+                <small className="text-500 field-error-hint">Subdomain cannot be changed after creation.</small>
+            </div>
+
+            <div className="col-12 md:col-6">
+                <label className="block text-700 font-medium mb-1">Admin Email <span className="text-red-500">*</span></label>
+                <InputText
+                    {...field('email')}
+                    type="email"
+                    placeholder="admin@school.com"
+                />
+                <small className="p-error field-error-hint">{errors.email ?? ''}</small>
+            </div>
+
+            <div className="col-12 md:col-6">
+                <label className="block text-700 font-medium mb-1">Phone Number</label>
+                <InputText {...field('phone')} placeholder="+91 98765 43210" />
+                <small className="p-error field-error-hint">{errors.phone ?? ''}</small>
+            </div>
+
+            <div className="col-12">
+                <label className="block text-700 font-medium mb-2">Institute Logo</label>
+                <div className="flex align-items-center gap-3 p-3 border-1 border-300 border-round surface-50" style={{ minHeight: '72px' }}>
+                    {logoPreview ? (
+                        <img src={logoPreview} alt="Logo preview" style={{ height: '48px', width: 'auto', borderRadius: '6px', objectFit: 'contain' }} />
+                    ) : (
+                        <div className="flex align-items-center justify-content-center border-1 border-dashed border-300 border-round" style={{ width: '48px', height: '48px' }}>
+                            <i className="pi pi-image text-400 text-xl" />
+                        </div>
+                    )}
+                    <div className="flex flex-column gap-1 flex-1">
+                        <div className="flex align-items-center gap-2">
+                            <FileUpload
+                                mode="basic"
+                                accept="image/jpeg,image/png,image/webp,image/svg+xml"
+                                maxFileSize={2097152}
+                                chooseLabel={logoPreview ? 'Change Logo' : 'Upload Logo'}
+                                className="p-button-outlined p-button-sm"
+                                auto
+                                customUpload
+                                key={logoUploadKey}
+                                uploadHandler={(e: any) => {
+                                    const file = e.files[0];
+                                    if (!file) return;
+                                    setLogoFile(file);
+                                    const reader = new FileReader();
+                                    reader.onload = (ev) => setLogoPreview(ev.target?.result as string);
+                                    reader.readAsDataURL(file);
+                                }}
                             />
-                            {getError('name') && <small className="p-error">{getError('name')}</small>}
-                        </div>
-
-                        <div className="col-12">
-                            <FieldLabel label="Institute Logo" />
-                            <div className="flex align-items-center gap-3">
-                                {logoPreview && (
-                                    <img
-                                        src={logoPreview}
-                                        alt="Logo preview"
-                                        style={{ maxHeight: '80px', borderRadius: '8px' }}
-                                    />
-                                )}
-                                <FileUpload
-                                    mode="basic"
-                                    accept="image/jpeg,image/png,image/webp,image/svg+xml"
-                                    maxFileSize={2097152}
-                                    chooseLabel="Change Logo"
-                                    className="p-button-outlined p-button-sm"
-                                    auto
-                                    customUpload
-                                    key={logoUploadKey}
-                                    uploadHandler={(e: any) => {
-                                        const file = e.files[0];
-                                        if (file) {
-                                            setLogoFile(file);
-                                            const reader = new FileReader();
-                                            reader.onload = (ev) => {
-                                                setLogoPreview(ev.target?.result as string);
-                                            };
-                                            reader.readAsDataURL(file);
-                                        }
-                                    }}
+                            {logoFile && (
+                                <Button
+                                    type="button"
+                                    icon="pi pi-undo"
+                                    className="p-button-text p-button-secondary p-button-sm"
+                                    tooltip="Revert to saved logo"
+                                    tooltipOptions={{ position: 'top' }}
+                                    onClick={() => { setLogoFile(null); setLogoPreview(existingLogo); setLogoUploadKey(k => k + 1); }}
                                 />
-                                {logoPreview && (
-                                    <Button
-                                        type="button"
-                                        icon="pi pi-times"
-                                        className="p-button-text p-button-danger p-button-sm"
-                                        onClick={() => {
-                                            setLogoFile(null);
-                                            setLogoPreview(existingLogo);
-                                            setLogoUploadKey(k => k + 1);
-                                        }}
-                                    />
-                                )}
-                            </div>
-                            <small className="text-500">Max 2MB. JPG, PNG, WebP, SVG</small>
+                            )}
                         </div>
-
-                        <div className="col-12 md:col-6">
-                            <FieldLabel label="Subdomain" />
-                            <div className="p-inputgroup">
-                                <InputText
-                                    value={formData.subdomain}
-                                    disabled
-                                    className="p-disabled w-full"
-                                />
-                                <span className="p-inputgroup-addon text-500">.paathshalaos.com</span>
-                            </div>
-                            <small className="text-500">Subdomain cannot be changed after creation</small>
-                        </div>
-
-                        <div className="col-12 md:col-6">
-                            <FieldLabel label="Admin Email" required />
-                            <InputText
-                                value={formData.email}
-                                onChange={(e) => handleChange('email', e.target.value)}
-                                onBlur={() => handleBlur('email')}
-                                type="email"
-                                className={classNames('w-full', getError('email') && 'p-invalid')}
-                                placeholder="admin@school.com"
-                            />
-                            {getError('email') && <small className="p-error block">{getError('email')}</small>}
-                        </div>
-
-                        <div className="col-12 md:col-6">
-                            <FieldLabel label="Phone Number" />
-                            <InputText
-                                value={formData.phone}
-                                onChange={(e) => handleChange('phone', e.target.value)}
-                                className="w-full"
-                                placeholder="+91 98765 43210"
-                            />
-                        </div>
+                        <small className="text-500">JPG, PNG, WebP, SVG — max 2 MB</small>
                     </div>
-                );
+                </div>
+            </div>
+        </div>
+    );
 
-            case 1:
-                return (
-                    <div className="grid nested-grid">
-                        <div className="col-12 md:col-6">
-                            <FieldLabel label="Country" />
-                            <Dropdown
-                                value={formData.country}
-                                options={countries}
-                                onChange={(e) => handleChange('country', e.value)}
-                                className="w-full"
-                                optionLabel="label"
-                                placeholder="Select Country"
-                            />
-                        </div>
+    const renderStep1 = () => (
+        <div className="grid">
+            <div className="col-12 md:col-6">
+                <label className="block text-700 font-medium mb-1">Country</label>
+                <Dropdown value={formData.country} options={countries} onChange={(e) => handleChange('country', e.value)} className="w-full" placeholder="Select country" />
+                <small className="field-error-hint" />
+            </div>
 
-                        <div className="col-12 md:col-6">
-                            <FieldLabel label="Timezone" />
-                            <Dropdown
-                                value={formData.timezone}
-                                options={timezones}
-                                onChange={(e) => handleChange('timezone', e.value)}
-                                className="w-full"
-                                placeholder="Select Timezone"
-                            />
-                        </div>
+            <div className="col-12 md:col-6">
+                <label className="block text-700 font-medium mb-1">Timezone</label>
+                <Dropdown value={formData.timezone} options={timezones} onChange={(e) => handleChange('timezone', e.value)} className="w-full" placeholder="Select timezone" />
+                <small className="field-error-hint" />
+            </div>
 
-                        <div className="col-12 md:col-6">
-                            <FieldLabel label="Currency" />
-                            <Dropdown
-                                value={formData.currency}
-                                options={currencies}
-                                onChange={(e) => handleChange('currency', e.value)}
-                                className="w-full"
-                                placeholder="Select Currency"
-                            />
-                        </div>
+            <div className="col-12 md:col-6">
+                <label className="block text-700 font-medium mb-1">Currency</label>
+                <Dropdown value={formData.currency} options={currencies} onChange={(e) => handleChange('currency', e.value)} className="w-full" placeholder="Select currency" />
+                <small className="field-error-hint" />
+            </div>
 
-                        <div className="col-12 md:col-6">
-                            <FieldLabel label="Established Year" />
-                            <Dropdown
-                                value={formData.established_year}
-                                options={generateYearOptions()}
-                                onChange={(e) => handleChange('established_year', e.value)}
-                                className="w-full"
-                                placeholder="Select Year"
-                                filter
-                                filterPlaceholder="Search year"
-                            />
-                        </div>
+            <div className="col-12 md:col-6">
+                <label className="block text-700 font-medium mb-1">Established Year</label>
+                <Dropdown
+                    value={formData.established_year}
+                    options={yearOptions}
+                    onChange={(e) => handleChange('established_year', e.value)}
+                    className="w-full"
+                    placeholder="Select year"
+                    filter
+                    filterPlaceholder="Search year…"
+                />
+                <small className="field-error-hint" />
+            </div>
 
-                        <div className="col-12 md:col-6">
-                            <FieldLabel label="Board / Affiliation" />
-                            <InputText
-                                value={formData.board}
-                                onChange={(e) => handleChange('board', e.target.value)}
-                                className="w-full"
-                                placeholder="CBSE, ICSE, State Board"
-                            />
-                        </div>
+            <div className="col-12 md:col-6">
+                <label className="block text-700 font-medium mb-1">Board / Affiliation</label>
+                <InputText {...field('board')} placeholder="CBSE, ICSE, State Board…" />
+                <small className="p-error field-error-hint">{errors.board ?? ''}</small>
+            </div>
 
-                        <div className="col-12 md:col-6">
-                            <FieldLabel label="Medium of Instruction" />
-                            <InputText
-                                value={formData.medium}
-                                onChange={(e) => handleChange('medium', e.target.value)}
-                                className="w-full"
-                                placeholder="English, Hindi, etc."
-                            />
-                        </div>
+            <div className="col-12 md:col-6">
+                <label className="block text-700 font-medium mb-1">Medium of Instruction</label>
+                <InputText {...field('medium')} placeholder="English, Hindi, Tamil…" />
+                <small className="p-error field-error-hint">{errors.medium ?? ''}</small>
+            </div>
 
-                        <div className="col-12 md:col-6">
-                            <FieldLabel label="Expected Students" />
-                            <InputNumber
-                                value={formData.student_count}
-                                onChange={(e) => handleChange('student_count', e.value)}
-                                className="w-full"
-                                min={0}
-                                showButtons
-                                buttonLayout="horizontal"
-                                decrementButtonClassName="p-button-secondary"
-                                incrementButtonClassName="p-button-secondary"
-                            />
-                        </div>
+            <div className="col-12 md:col-6">
+                <label className="block text-700 font-medium mb-1">Expected Students</label>
+                <InputNumber
+                    value={formData.student_count}
+                    onValueChange={(e) => handleChange('student_count', e.value)}
+                    className="w-full"
+                    min={0}
+                    placeholder="0"
+                    useGrouping
+                />
+                <small className="p-error field-error-hint">{errors.student_count ?? ''}</small>
+            </div>
 
-                        <div className="col-12 md:col-6">
-                            <FieldLabel label="Website" />
-                            <InputText
-                                value={formData.website}
-                                onChange={(e) => handleChange('website', e.target.value)}
-                                className="w-full"
-                                placeholder="https://schoolwebsite.com"
-                            />
-                        </div>
+            <div className="col-12 md:col-6">
+                <label className="block text-700 font-medium mb-1">Website</label>
+                <InputText {...field('website')} placeholder="https://schoolwebsite.com" />
+                <small className="p-error field-error-hint">{errors.website ?? ''}</small>
+            </div>
 
-                        <div className="col-12">
-                            <FieldLabel label="Description" />
-                            <InputTextarea
-                                value={formData.description}
-                                onChange={(e) => handleChange('description', e.target.value)}
-                                className="w-full"
-                                placeholder="Brief description about the institute"
-                                rows={3}
-                                autoResize
-                            />
-                        </div>
-                    </div>
-                );
+            <div className="col-12">
+                <label className="block text-700 font-medium mb-1">Description</label>
+                <InputTextarea
+                    value={formData.description}
+                    onChange={(e) => handleChange('description', e.target.value)}
+                    className="w-full"
+                    placeholder="Brief description about the institute"
+                    rows={3}
+                    autoResize
+                />
+                <small className="p-error field-error-hint">{errors.description ?? ''}</small>
+            </div>
+        </div>
+    );
 
-            case 2:
-                return (
-                    <div className="grid nested-grid">
-                        <div className="col-12">
-                            <FieldLabel label="Address" />
-                            <InputText
-                                value={formData.address_line1}
-                                onChange={(e) => handleChange('address_line1', e.target.value)}
-                                className="w-full"
-                                placeholder="Street address"
-                            />
-                        </div>
+    const renderStep2 = () => (
+        <div className="grid">
+            <div className="col-12">
+                <label className="block text-700 font-medium mb-1">Street Address</label>
+                <InputText {...field('address_line1')} placeholder="Building, street, area" />
+                <small className="p-error field-error-hint">{errors.address_line1 ?? ''}</small>
+            </div>
 
-                        <div className="col-12 md:col-4">
-                            <FieldLabel label="City" />
-                            <InputText
-                                value={formData.city}
-                                onChange={(e) => handleChange('city', e.target.value)}
-                                className="w-full"
-                                placeholder="City"
-                            />
-                        </div>
+            <div className="col-12 md:col-5">
+                <label className="block text-700 font-medium mb-1">City</label>
+                <InputText {...field('city')} placeholder="City" />
+                <small className="p-error field-error-hint">{errors.city ?? ''}</small>
+            </div>
 
-                        <div className="col-12 md:col-4">
-                            <FieldLabel label="State" />
-                            <InputText
-                                value={formData.state}
-                                onChange={(e) => handleChange('state', e.target.value)}
-                                className="w-full"
-                                placeholder="State"
-                            />
-                        </div>
+            <div className="col-12 md:col-4">
+                <label className="block text-700 font-medium mb-1">State / Province</label>
+                <InputText {...field('state')} placeholder="State" />
+                <small className="p-error field-error-hint">{errors.state ?? ''}</small>
+            </div>
 
-                        <div className="col-12 md:col-4">
-                            <FieldLabel label="Postal Code" />
-                            <InputText
-                                value={formData.postal_code}
-                                onChange={(e) => handleChange('postal_code', e.target.value)}
-                                className="w-full"
-                                placeholder="PIN/ZIP"
-                            />
-                        </div>
-                    </div>
-                );
-        }
-    };
+            <div className="col-12 md:col-3">
+                <label className="block text-700 font-medium mb-1">Postal Code</label>
+                <InputText {...field('postal_code')} placeholder="PIN / ZIP" />
+                <small className="p-error field-error-hint">{errors.postal_code ?? ''}</small>
+            </div>
+        </div>
+    );
 
     if (fetchLoading) {
         return (
-            <div className="flex align-items-center justify-content-center min-h-screen">
+            <div className="flex align-items-center justify-content-center" style={{ minHeight: '60vh' }}>
                 <ProgressSpinner />
             </div>
         );
     }
 
     return (
-        <div className="flex flex-column surface-section px-3 py-4 md:px-5 lg:px-6 min-h-full">
+        <div className="surface-section px-3 py-4 md:px-5">
             <Toast ref={toast} />
 
-            <div className="flex align-items-center justify-content-between mb-4">
+            <div className="flex align-items-center mb-4">
                 <Button
                     type="button"
                     icon="pi pi-arrow-left"
@@ -563,59 +495,56 @@ export default function EditInstitutePage() {
                 />
             </div>
 
-            <div className="surface-card shadow-2 border-round p-4" style={{ maxWidth: '900px', margin: '0 auto', width: '100%' }}>
-                <div className="flex align-items-center gap-2 mb-1">
-                    <i className="pi pi-pencil text-xl" style={{ color: 'var(--primary-color)' }} />
-                    <h1 className="text-xl font-bold m-0">Edit Institute</h1>
+            <div className="surface-card shadow-2 border-round p-4 md:p-5" style={{ maxWidth: '860px', margin: '0 auto' }}>
+                <div className="mb-4">
+                    <h1 className="text-2xl font-bold text-900 m-0 mb-1">Edit Institute</h1>
+                    <p className="text-600 m-0 text-sm">Update the details for <strong>{formData.name}</strong></p>
                 </div>
-                <p className="text-600 m-0 mb-4 text-sm">Update the details for <strong>{formData.name}</strong></p>
 
-                <Steps model={steps} activeIndex={activeStep} className="mb-4" />
+                <Steps model={steps} activeIndex={activeStep} readOnly className="mb-5" />
 
-                <form
-                    onSubmit={(e) => e.preventDefault()}
-                    onKeyDown={(e) => {
-                        if (e.key !== 'Enter') return;
-                        const el = e.target as HTMLElement;
-                        if (el.tagName === 'TEXTAREA') return;
-                        if (activeStepRef.current !== steps.length - 1) {
-                            e.preventDefault();
-                            return;
-                        }
-                        e.preventDefault();
-                        if (!loading) void commitUpdate();
-                    }}
-                >
-                    {renderStepContent()}
+                <form onSubmit={(e) => e.preventDefault()} onKeyDown={(e) => {
+                    if (e.key !== 'Enter') return;
+                    if ((e.target as HTMLElement).tagName === 'TEXTAREA') return;
+                    e.preventDefault();
+                    if (activeStepRef.current === steps.length - 1 && !loading) void commitUpdate();
+                    else nextStep();
+                }}>
+                    {activeStep === 0 && renderStep0()}
+                    {activeStep === 1 && renderStep1()}
+                    {activeStep === 2 && renderStep2()}
 
-                    <div className="flex justify-content-between mt-4 pt-3 border-top-1 surface-border">
+                    <div className="flex justify-content-between align-items-center mt-5 pt-3 border-top-1 surface-border">
                         <Button
                             type="button"
                             label="Back"
                             icon="pi pi-arrow-left"
-                            className="p-button-secondary p-button-outlined"
+                            className="p-button-outlined p-button-secondary"
                             onClick={prevStep}
                             disabled={activeStep === 0}
                         />
 
-                        {activeStep < steps.length - 1 ? (
-                            <Button
-                                type="button"
-                                label="Continue"
-                                icon="pi pi-arrow-right"
-                                iconPos="right"
-                                onClick={nextStep}
-                            />
-                        ) : (
-                            <Button
-                                type="button"
-                                label="Save Changes"
-                                icon="pi pi-check"
-                                loading={loading}
-                                disabled={loading}
-                                onClick={() => void commitUpdate()}
-                            />
-                        )}
+                        <div className="flex align-items-center gap-2">
+                            <span className="text-500 text-sm">Step {activeStep + 1} of {steps.length}</span>
+                            {activeStep < steps.length - 1 ? (
+                                <Button
+                                    type="button"
+                                    label="Continue"
+                                    icon="pi pi-arrow-right"
+                                    iconPos="right"
+                                    onClick={nextStep}
+                                />
+                            ) : (
+                                <Button
+                                    type="button"
+                                    label="Save Changes"
+                                    icon="pi pi-check"
+                                    loading={loading}
+                                    disabled={loading}
+                                    onClick={() => void commitUpdate()}
+                                />
+                            )}
+                        </div>
                     </div>
                 </form>
             </div>

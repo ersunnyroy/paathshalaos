@@ -11,6 +11,16 @@ import { Message } from 'primereact/message';
 import { authService, api } from '@/services/api';
 import { tenantService } from '@/services/tenant';
 
+function setFavicon(url: string) {
+    let link = document.querySelector<HTMLLinkElement>("link[rel~='icon']");
+    if (!link) {
+        link = document.createElement('link');
+        link.rel = 'icon';
+        document.head.appendChild(link);
+    }
+    link.href = url;
+}
+
 export default function LoginPage() {
     const router = useRouter();
     const [tenant, setTenant] = useState<any>(null);
@@ -21,16 +31,20 @@ export default function LoginPage() {
     const [rememberMe, setRememberMe] = useState(false);
     const [loading, setLoading] = useState(false);
     const [error, setError] = useState('');
+    const [fieldErrors, setFieldErrors] = useState<{ emailOrPhone?: string; password?: string }>({});
 
     useEffect(() => {
         const initTenant = async () => {
+            // Try cached tenant first to avoid flash
             const stored = tenantService.getTenant();
             if (stored) {
                 setTenant(stored);
+                applyTenantBranding(stored);
             } else {
                 const result = await tenantService.check();
-                if (result.found) {
+                if (result.found && result.tenant) {
                     setTenant(result.tenant);
+                    applyTenantBranding(result.tenant);
                 } else if (tenantService.isMultiTenant()) {
                     setTenantFound(false);
                 }
@@ -40,6 +54,11 @@ export default function LoginPage() {
         initTenant();
     }, []);
 
+    function applyTenantBranding(t: any) {
+        if (t.name) document.title = `${t.name} — Sign In`;
+        if (t.favicon_url) setFavicon(t.favicon_url);
+    }
+
     useEffect(() => {
         if (!loadingTenant && api.isAuthenticated()) {
             router.push('/main');
@@ -48,9 +67,14 @@ export default function LoginPage() {
 
     const handleSubmit = async (e: React.FormEvent) => {
         e.preventDefault();
-        
         if (loading) return;
-        
+
+        const fe: typeof fieldErrors = {};
+        if (!emailOrPhone.trim()) fe.emailOrPhone = 'Email or phone is required.';
+        if (!password) fe.password = 'Password is required.';
+        if (Object.keys(fe).length) { setFieldErrors(fe); return; }
+        setFieldErrors({});
+
         setLoading(true);
         setError('');
 
@@ -97,7 +121,6 @@ export default function LoginPage() {
                     <p className="text-600 mb-4">
                         We couldn&apos;t find a school with this web address. The school may have moved or the web address might be incorrect.
                     </p>
-
                     <Button
                         label="Go to PaathshalaOS"
                         icon="pi pi-home"
@@ -114,20 +137,20 @@ export default function LoginPage() {
         <div className="flex align-items-center justify-content-center min-h-screen surface-50 p-4">
             <div className="surface-card p-4 shadow-2 border-round-xl w-full max-w-30rem">
                 <div className="text-center mb-4">
-                    {tenant?.logo ? (
+                    {tenant?.logo_url ? (
                         <img
-                            src={tenant.logo}
+                            src={tenant.logo_url}
                             alt={schoolName}
-                            className="mb-2"
-                            style={{ maxHeight: '60px' }}
+                            className="mb-3"
+                            style={{ maxHeight: '64px', maxWidth: '200px', objectFit: 'contain' }}
                         />
                     ) : (
-                        <i className="pi pi-building text-900 mb-2" style={{ fontSize: '3rem' }}></i>
+                        <i className="pi pi-building text-900 mb-3" style={{ fontSize: '3rem' }}></i>
                     )}
-                    {tenant && <span className="text-600">Sign in to your account</span>}
-                    {!tenant && (
-                        <span className="text-600">Sign in to your account or register your school</span>
-                    )}
+                    <h2 className="text-2xl font-bold text-900 mt-0 mb-1">{schoolName}</h2>
+                    <span className="text-600 text-sm">
+                        {tenant ? 'Sign in to your account' : 'Sign in to your account or register your school'}
+                    </span>
                 </div>
 
                 {error && (
@@ -142,11 +165,11 @@ export default function LoginPage() {
                         <InputText
                             id="email"
                             value={emailOrPhone}
-                            onChange={(e) => setEmailOrPhone(e.target.value)}
-                            className="w-full"
+                            onChange={(e) => { setEmailOrPhone(e.target.value); if (fieldErrors.emailOrPhone) setFieldErrors(f => ({ ...f, emailOrPhone: '' })); }}
+                            className={`w-full${fieldErrors.emailOrPhone ? ' p-invalid' : ''}`}
                             placeholder="Enter your email or phone"
-                            required
                         />
+                        <small className="p-error field-error-hint">{fieldErrors.emailOrPhone}</small>
                     </div>
 
                     <div className="mb-3">
@@ -156,14 +179,14 @@ export default function LoginPage() {
                         <Password
                             id="password"
                             value={password}
-                            onChange={(e) => setPassword(e.target.value)}
+                            onChange={(e) => { setPassword(e.target.value); if (fieldErrors.password) setFieldErrors(f => ({ ...f, password: '' })); }}
                             className="w-full"
-                            inputClassName="w-full"
+                            inputClassName={`w-full${fieldErrors.password ? ' p-invalid' : ''}`}
                             placeholder="Enter your password"
                             feedback={false}
                             toggleMask
-                            required
                         />
+                        <small className="p-error field-error-hint">{fieldErrors.password}</small>
                     </div>
 
                     <div className="flex align-items-center justify-content-between mb-3">
@@ -190,8 +213,6 @@ export default function LoginPage() {
                         loading={loading}
                     />
                 </form>
-
-                
             </div>
         </div>
     );

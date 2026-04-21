@@ -52,9 +52,9 @@ trait SerializesWithPublicIds
      */
     public function resolveRouteBinding($value, $field = null)
     {
-        if (CommonHelper::idObfuscationEnabled() && (is_int($value) || (is_string($value) && ctype_digit(trim((string) $value))))) {
-            $v = is_int($value) ? $value : (int) trim((string) $value);
-            $value = CommonHelper::decryptId($v & 0xFFFFFFFF);
+        $decoded = CommonHelper::decodeInboundIdValue($value);
+        if ($decoded !== $value) {
+            $value = $decoded;
         }
 
         return $this->resolveRouteBindingQuery($this, $value, $field)->first();

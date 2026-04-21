@@ -27,6 +27,10 @@ export const apiRoutes = {
         tenant: (subdomain: string) => withQuery('/auth/tenant', { subdomain }),
     },
 
+    tenant: {
+        info: () => '/tenant/info',
+    },
+
     branches: {
         collection: (params?: Record<string, QueryValue>) => withQuery('/branches', params),
         byId: (id: number) => `/branches/${id}`,

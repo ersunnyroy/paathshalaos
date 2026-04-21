@@ -1,5 +1,5 @@
 import { getApiBaseUrl } from '@/lib/apiBase';
-import { getBearerToken, getTenantIdForRequestHeaders } from '@/lib/apiRequestContext';
+import { getBearerToken, getTenantIdForRequestHeaders, getTenantHostForRequestHeaders } from '@/lib/apiRequestContext';
 
 export interface ApiResponse<T = any> {
     success: boolean;
@@ -41,6 +41,11 @@ function buildHeaders(content: 'json' | 'multipart' | 'none', extra?: Record<str
     const tenantId = getTenantIdForRequestHeaders();
     if (tenantId) {
         headers.set('X-Tenant-ID', tenantId);
+    }
+
+    const tenantHost = getTenantHostForRequestHeaders();
+    if (tenantHost) {
+        headers.set('X-Tenant-Host', tenantHost);
     }
 
     if (extra) {

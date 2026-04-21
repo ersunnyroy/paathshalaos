@@ -39,6 +39,8 @@ Route::prefix('auth')->group(function () {
     });
 });
 
+Route::get('/tenant/info', [TenantController::class, 'info']);
+
 Route::get('/tenants/check-subdomain', [TenantController::class, 'checkSubdomain']);
 Route::get('/tenants/check-domain', [TenantController::class, 'checkDomain']);
 

@@ -3,6 +3,9 @@
 namespace App\Http\Controllers\Api;
 
 use App\Http\Controllers\Controller;
+use App\Http\Requests\StoreFeatureRequest;
+use App\Http\Requests\UpdateFeatureRequest;
+use App\Http\Requests\ToggleFeatureRequest;
 use App\Services\FeatureService;
 use App\Services\TenantService;
 use Illuminate\Http\Request;
@@ -16,32 +19,22 @@ class FeatureController extends Controller
 
     public function index(Request $request)
     {
-        $filters = $request->all();
-        $features = $this->featureService->getAll($filters);
+        $features = $this->featureService->getAll($request->all());
 
         return response()->json([
             'success' => true,
-            'data' => $features,
+            'data'    => $features,
         ]);
     }
 
-    public function store(Request $request)
+    public function store(StoreFeatureRequest $request)
     {
-        $data = $request->validate([
-            'module_id' => ['required', 'integer'],
-            'name' => ['required', 'string', 'max:255'],
-            'slug' => ['required', 'string', 'max:100', 'unique:features,slug'],
-            'description' => ['nullable', 'string', 'max:500'],
-            'sort_order' => ['nullable', 'integer'],
-            'is_default_enabled' => ['nullable', 'in:0,1'],
-        ]);
-
-        $feature = $this->featureService->create($data);
+        $feature = $this->featureService->create($request->validated());
 
         return response()->json([
             'success' => true,
             'message' => 'Feature created successfully',
-            'data' => $feature,
+            'data'    => $feature,
         ], 201);
     }
 
@@ -58,28 +51,18 @@ class FeatureController extends Controller
 
         return response()->json([
             'success' => true,
-            'data' => $feature,
+            'data'    => $feature,
         ]);
     }
 
-    public function update(Request $request, int $id)
+    public function update(UpdateFeatureRequest $request, int $id)
     {
-        $data = $request->validate([
-            'module_id' => ['sometimes', 'integer'],
-            'name' => ['sometimes', 'string', 'max:255'],
-            'slug' => ['sometimes', 'string', 'max:100', 'unique:features,slug,' . $id],
-            'description' => ['nullable', 'string', 'max:500'],
-            'sort_order' => ['nullable', 'integer'],
-            'is_default_enabled' => ['nullable', 'in:0,1'],
-            'status' => ['nullable', 'in:0,1'],
-        ]);
-
-        $feature = $this->featureService->update($id, $data);
+        $feature = $this->featureService->update($id, $request->validated());
 
         return response()->json([
             'success' => true,
             'message' => 'Feature updated successfully',
-            'data' => $feature,
+            'data'    => $feature,
         ]);
     }
 
@@ -100,15 +83,11 @@ class FeatureController extends Controller
         ]);
     }
 
-    public function toggle(Request $request, int $id)
+    public function toggle(ToggleFeatureRequest $request, int $id)
     {
         $tenantId = $request->header('X-Tenant-ID') ?? $request->user()?->tenant_id;
 
-        $isEnabled = $request->validate([
-            'is_enabled' => ['required', 'boolean'],
-        ]);
-
-        $this->tenantService->toggleFeature($tenantId, $id, $isEnabled['is_enabled']);
+        $this->tenantService->toggleFeature($tenantId, $id, $request->validated()['is_enabled']);
 
         return response()->json([
             'success' => true,
@@ -124,13 +103,13 @@ class FeatureController extends Controller
 
         return response()->json([
             'success' => true,
-            'data' => $features,
+            'data'    => $features,
         ]);
     }
 
     public function checkFeature(Request $request)
     {
-        $tenantId = $request->header('X-Tenant-ID') ?? $request->user()?->tenant_id;
+        $tenantId    = $request->header('X-Tenant-ID') ?? $request->user()?->tenant_id;
         $featureSlug = $request->query('feature');
 
         if (!$featureSlug) {
@@ -144,8 +123,8 @@ class FeatureController extends Controller
 
         return response()->json([
             'success' => true,
-            'data' => [
-                'feature' => $featureSlug,
+            'data'    => [
+                'feature'    => $featureSlug,
                 'is_enabled' => $isEnabled,
             ],
         ]);

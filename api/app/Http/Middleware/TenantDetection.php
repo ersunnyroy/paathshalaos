@@ -39,6 +39,7 @@ class TenantDetection
 
     private function detectTenant(Request $request): ?Tenant
     {
+        // 1. Explicit tenant ID header (fastest)
         $tenantId = $request->header('X-Tenant-ID');
         if ($tenantId) {
             $tenant = Tenant::find($tenantId);
@@ -47,11 +48,22 @@ class TenantDetection
             }
         }
 
+        // 2. Resolved host header sent by frontend (used in local dev and proxied requests)
+        $tenantHost = $request->header('X-Tenant-Host');
+        if ($tenantHost) {
+            $tenant = $this->domainService->detectTenantByDomain($tenantHost);
+            if ($tenant && $tenant->isActive()) {
+                return $tenant;
+            }
+        }
+
+        // 3. Actual request host (production / staging)
         $host = $request->getHost();
         if ($host && $host !== 'localhost' && $host !== '127.0.0.1') {
             return $this->domainService->detectTenantByDomain($host);
         }
 
+        // 4. Authenticated user's tenant
         $user = $request->user();
         if ($user && $user->tenant_id) {
             return Tenant::find($user->tenant_id);

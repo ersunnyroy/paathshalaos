@@ -3,6 +3,7 @@
 namespace App\Models;
 
 use Illuminate\Database\Eloquent\SoftDeletes;
+use Illuminate\Support\Facades\Storage;
 
 class Tenant extends BaseModel
 {
@@ -85,23 +86,34 @@ class Tenant extends BaseModel
 
     public function getLogoUrlAttribute(): ?string
     {
-        if (!$this->logo) {
-            return null;
-        }
-        if (str_starts_with($this->logo, 'http://') || str_starts_with($this->logo, 'https://')) {
-            return $this->logo;
-        }
-        return config('file_paths.minio.endpoint').'/'.config('file_paths.minio.bucket').'/'.$this->logo;
+        return $this->resolveFileUrl($this->logo);
     }
 
     public function getFaviconUrlAttribute(): ?string
     {
-        if (!$this->favicon) {
+        return $this->resolveFileUrl($this->favicon);
+    }
+
+    private function resolveFileUrl(?string $path): ?string
+    {
+        if (!$path) return null;
+
+        if (str_starts_with($path, 'http://') || str_starts_with($path, 'https://')) {
+            return $path;
+        }
+
+        $driver = config('file_paths.default_driver', 'local');
+        $disk   = match ($driver) {
+            'minio' => 'public',
+            's3'    => 's3',
+            default => 'public',
+        };
+
+        try {
+            return Storage::disk($disk)->url($path);
+        } catch (\Exception $e) {
+            report($e);
             return null;
         }
-        if (str_starts_with($this->favicon, 'http://') || str_starts_with($this->favicon, 'https://')) {
-            return $this->favicon;
-        }
-        return config('file_paths.minio.endpoint').'/'.config('file_paths.minio.bucket').'/'.$this->favicon;
     }
 }

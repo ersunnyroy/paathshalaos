@@ -16,36 +16,12 @@ interface RootLayoutProps {
     children: React.ReactNode;
 }
 
-function getCurrentSubdomain(): string | null {
-    if (typeof window === 'undefined') return null;
-    const host = window.location.host;
-
-    if (host.includes('localhost') || host.includes('paathshala.local')) {
-        const parts = host.split('.')[0];
-        if (parts === 'localhost' || parts === 'paathshala') {
-            return null;
-        }
-        if (host.includes('paathshala.local')) {
-            return parts;
-        }
-        return null;
-    }
-
-    const baseDomain = 'paathshala.local';
-    if (host.endsWith(baseDomain)) {
-        const subdomain = host.replace('.' + baseDomain, '').replace(baseDomain, '').replace('://', '').split('.')[0];
-        return subdomain || null;
-    }
-
-    return null;
-}
-
 function RootLayoutInner({ children }: RootLayoutProps) {
     const { layoutConfig } = useContext(LayoutContext);
     const [tenant, setTenant] = useState<TenantInfo | null>(null);
     const [tenantLoading, setTenantLoading] = useState(true);
 
-    const isMultiTenant = getCurrentSubdomain() !== null;
+    const isMultiTenant = tenantService.isMultiTenant();
 
     const fetchTenant = async () => {
         setTenantLoading(true);
@@ -65,18 +41,25 @@ function RootLayoutInner({ children }: RootLayoutProps) {
         if (stored) {
             setTenant(stored);
             setTenantLoading(false);
+        } else if (!tenantService.isMultiTenant()) {
+            setTenantLoading(false);
         } else {
-            if (!getCurrentSubdomain()) {
-                setTenantLoading(false);
-            } else {
-                fetchTenant();
-            }
+            fetchTenant();
         }
     }, []);
 
     useEffect(() => {
         if (tenant) {
             document.title = tenant.name || 'PaathshalaOS';
+            if (tenant.favicon_url) {
+                let link = document.querySelector<HTMLLinkElement>("link[rel~='icon']");
+                if (!link) {
+                    link = document.createElement('link');
+                    link.rel = 'icon';
+                    document.head.appendChild(link);
+                }
+                link.href = tenant.favicon_url;
+            }
         } else {
             document.title = 'PaathshalaOS';
         }

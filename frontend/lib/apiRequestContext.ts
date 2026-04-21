@@ -1,6 +1,9 @@
 /** Must stay aligned with `tenantService` persistence key. */
 export const TENANT_INFO_STORAGE_KEY = 'tenant_info';
 
+/** Resolved tenant host (e.g. "school.paathshalaos.com") for X-Tenant-Host header. */
+export const TENANT_HOST_STORAGE_KEY = 'tenant_host';
+
 export function getBearerToken(): string | null {
     if (typeof window === 'undefined') return null;
     return localStorage.getItem('token');
@@ -16,4 +19,9 @@ export function getTenantIdForRequestHeaders(): string | null {
     } catch {
         return null;
     }
+}
+
+export function getTenantHostForRequestHeaders(): string | null {
+    if (typeof window === 'undefined') return null;
+    return localStorage.getItem(TENANT_HOST_STORAGE_KEY);
 }

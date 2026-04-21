@@ -3,6 +3,10 @@
 namespace App\Http\Controllers\Api;
 
 use App\Http\Controllers\Controller;
+use App\Http\Requests\StoreUserRequest;
+use App\Http\Requests\UpdateUserRequest;
+use App\Http\Resources\UserResource;
+use App\Models\Role;
 use App\Services\UserService;
 use Illuminate\Http\Request;
 
@@ -25,30 +29,22 @@ class UserController extends Controller
 
         return response()->json([
             'success' => true,
-            'data' => $users,
+            'data'    => $users,
         ]);
     }
 
-    public function store(Request $request)
+    public function store(StoreUserRequest $request)
     {
         $tenantId = $request->header('X-Tenant-ID') ?? $request->user()?->tenant_id;
-        $roleId = $request->input('role_id');
 
-        $data = $request->validate([
-            'name' => ['required', 'string', 'max:255'],
-            'email' => ['required', 'email', 'unique:users,email'],
-            'phone' => ['nullable', 'string', 'max:20', 'unique:users,phone'],
-            'password' => ['required', 'string', 'min:8'],
-            'status' => ['nullable', 'in:0,1'],
-            'role_id' => ['nullable', 'integer'],
-        ]);
-
+        $data              = $request->validated();
+        $roleId            = $data['role_id'] ?? null;
         $data['tenant_id'] = $tenantId;
 
         $user = $this->userService->create($data);
 
         if ($roleId) {
-            $role = \App\Models\Role::where('tenant_id', $tenantId)->find($roleId);
+            $role = Role::where('tenant_id', $tenantId)->find($roleId);
             if ($role) {
                 $user->assignRole($role);
             }
@@ -57,7 +53,7 @@ class UserController extends Controller
         return response()->json([
             'success' => true,
             'message' => 'User created successfully',
-            'data' => new \App\Http\Resources\UserResource($user->load('roles')),
+            'data'    => new UserResource($user->load('roles')),
         ], 201);
     }
 
@@ -74,26 +70,18 @@ class UserController extends Controller
 
         return response()->json([
             'success' => true,
-            'data' => $user,
+            'data'    => $user,
         ]);
     }
 
-    public function update(Request $request, int $id)
+    public function update(UpdateUserRequest $request, int $id)
     {
-        $data = $request->validate([
-            'name' => ['sometimes', 'string', 'max:255'],
-            'email' => ['sometimes', 'email', 'unique:users,email,' . $id],
-            'phone' => ['nullable', 'string', 'max:20', 'unique:users,phone,' . $id],
-            'password' => ['sometimes', 'string', 'min:8'],
-            'status' => ['nullable', 'in:0,1'],
-        ]);
-
-        $user = $this->userService->update($id, $data);
+        $user = $this->userService->update($id, $request->validated());
 
         return response()->json([
             'success' => true,
             'message' => 'User updated successfully',
-            'data' => $user,
+            'data'    => $user,
         ]);
     }
 

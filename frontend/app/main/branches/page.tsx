@@ -8,6 +8,7 @@ import { Dialog } from 'primereact/dialog';
 import { InputText } from 'primereact/inputtext';
 import { Dropdown } from 'primereact/dropdown';
 import { branchService } from '@/services/api';
+import { parseApiErrors } from '@/lib/formErrors';
 
 interface Branch {
     id: number;
@@ -25,10 +26,13 @@ const statusOptions = [
     { label: 'Inactive', value: 0 },
 ];
 
+const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+
 export default function BranchesPage() {
     const [branches, setBranches] = useState<Branch[]>([]);
     const [loading, setLoading] = useState(true);
     const [dialogVisible, setDialogVisible] = useState(false);
+    const [saving, setSaving] = useState(false);
     const [editingBranch, setEditingBranch] = useState<Branch | null>(null);
     const [formData, setFormData] = useState({
         name: '',
@@ -38,6 +42,7 @@ export default function BranchesPage() {
         address: '',
         status: 1,
     });
+    const [errors, setErrors] = useState<Record<string, string>>({});
 
     useEffect(() => {
         loadBranches();
@@ -59,14 +64,8 @@ export default function BranchesPage() {
 
     const openNew = () => {
         setEditingBranch(null);
-        setFormData({
-            name: '',
-            subdomain: '',
-            email: '',
-            phone: '',
-            address: '',
-            status: 1,
-        });
+        setFormData({ name: '', subdomain: '', email: '', phone: '', address: '', status: 1 });
+        setErrors({});
         setDialogVisible(true);
     };
 
@@ -74,65 +73,66 @@ export default function BranchesPage() {
         setEditingBranch(branch);
         setFormData({
             name: branch.name,
-            subdomain: branch.subdomain,
-            email: branch.email || '',
-            phone: branch.phone || '',
-            address: branch.address || '',
+            subdomain: branch.subdomain ?? '',
+            email: branch.email ?? '',
+            phone: branch.phone ?? '',
+            address: branch.address ?? '',
             status: branch.status,
         });
+        setErrors({});
         setDialogVisible(true);
     };
 
+    const validate = (): boolean => {
+        const e: Record<string, string> = {};
+        if (!formData.name.trim()) e.name = 'Branch name is required.';
+        if (formData.email && !EMAIL_RE.test(formData.email)) e.email = 'Please enter a valid email address.';
+        if (formData.phone && formData.phone.length > 20) e.phone = 'Phone number must not exceed 20 characters.';
+        setErrors(e);
+        return Object.keys(e).length === 0;
+    };
+
     const handleSave = async () => {
+        if (!validate()) return;
+        setSaving(true);
         try {
-            let response;
-            if (editingBranch) {
-                response = await branchService.update(editingBranch.id, formData);
-            } else {
-                response = await branchService.create(formData);
-            }
+            const payload = {
+                ...formData,
+                email: formData.email || undefined,
+                subdomain: formData.subdomain || undefined,
+                phone: formData.phone || undefined,
+                address: formData.address || undefined,
+            };
+            const response = editingBranch
+                ? await branchService.update(editingBranch.id, payload)
+                : await branchService.create(payload);
 
             if (response.success) {
                 loadBranches();
                 setDialogVisible(false);
+            } else if (response.errors) {
+                setErrors(parseApiErrors(response.errors));
             }
         } catch (error) {
             console.error('Error saving branch:', error);
+        } finally {
+            setSaving(false);
         }
     };
 
     const handleDelete = (branch: Branch) => {
-        if (!confirm(`Are you sure you want to delete "${branch.name}"?`)) {
-            return;
-        }
-        
+        if (!confirm(`Are you sure you want to delete "${branch.name}"?`)) return;
         branchService.delete(branch.id).then(() => loadBranches());
     };
 
-    const statusBodyTemplate = (rowData: Branch) => {
-        return (
-            <span className={`badge badge-${rowData.status === 1 ? 'success' : 'secondary'}`}>
-                {rowData.status === 1 ? 'Active' : 'Inactive'}
-            </span>
-        );
-    };
-
-    const actionsBodyTemplate = (rowData: Branch) => {
-        return (
-            <div className="flex gap-2">
-                <Button
-                    icon="pi pi-pencil"
-                    className="p-button-text p-button-sm"
-                    onClick={() => openEdit(rowData)}
-                />
-                <Button
-                    icon="pi pi-trash"
-                    className="p-button-text p-button-danger p-button-sm"
-                    onClick={() => handleDelete(rowData)}
-                />
-            </div>
-        );
-    };
+    const field = (key: keyof typeof formData) => ({
+        value: formData[key] as string,
+        onChange: (e: React.ChangeEvent<HTMLInputElement>) => {
+            setFormData({ ...formData, [key]: e.target.value });
+            if (errors[key]) setErrors({ ...errors, [key]: '' });
+        },
+        className: `w-full${errors[key] ? ' p-invalid' : ''}`,
+    });
 
     return (
         <div className="surface-card p-4 shadow-2 border-round">
@@ -153,56 +153,59 @@ export default function BranchesPage() {
                 <Column field="subdomain" header="Subdomain" sortable />
                 <Column field="email" header="Email" />
                 <Column field="phone" header="Phone" />
-                <Column field="status" header="Status" body={statusBodyTemplate} sortable />
-                <Column header="Actions" body={actionsBodyTemplate} style={{ width: '10rem' }} />
+                <Column
+                    field="status"
+                    header="Status"
+                    body={(row: Branch) => (
+                        <span className={row.status === 1 ? 'text-green-600' : 'text-500'}>
+                            {row.status === 1 ? 'Active' : 'Inactive'}
+                        </span>
+                    )}
+                    sortable
+                />
+                <Column
+                    header="Actions"
+                    body={(row: Branch) => (
+                        <div className="flex gap-2">
+                            <Button icon="pi pi-pencil" className="p-button-text p-button-sm" onClick={() => openEdit(row)} />
+                            <Button icon="pi pi-trash" className="p-button-text p-button-danger p-button-sm" onClick={() => handleDelete(row)} />
+                        </div>
+                    )}
+                    style={{ width: '8rem' }}
+                />
             </DataTable>
 
             <Dialog
                 visible={dialogVisible}
                 onHide={() => setDialogVisible(false)}
                 header={editingBranch ? 'Edit Branch' : 'Add Branch'}
-                style={{ width: '30rem' }}
+                style={{ width: '32rem' }}
             >
                 <div className="flex flex-column gap-3">
                     <div>
-                        <label className="block text-sm font-medium mb-1">Name *</label>
-                        <InputText
-                            value={formData.name}
-                            onChange={(e) => setFormData({ ...formData, name: e.target.value })}
-                            className="w-full"
-                        />
+                        <label className="block text-sm font-medium mb-1">Name <span className="text-red-500">*</span></label>
+                        <InputText {...field('name')} placeholder="e.g. Main Campus" />
+                        <small className="p-error field-error-hint">{errors.name}</small>
                     </div>
                     <div>
                         <label className="block text-sm font-medium mb-1">Subdomain</label>
-                        <InputText
-                            value={formData.subdomain}
-                            onChange={(e) => setFormData({ ...formData, subdomain: e.target.value })}
-                            className="w-full"
-                        />
+                        <InputText {...field('subdomain')} placeholder="e.g. main-campus" />
+                        <small className="p-error field-error-hint">{errors.subdomain}</small>
                     </div>
                     <div>
                         <label className="block text-sm font-medium mb-1">Email</label>
-                        <InputText
-                            value={formData.email}
-                            onChange={(e) => setFormData({ ...formData, email: e.target.value })}
-                            className="w-full"
-                        />
+                        <InputText {...field('email')} placeholder="branch@school.com" />
+                        <small className="p-error field-error-hint">{errors.email}</small>
                     </div>
                     <div>
                         <label className="block text-sm font-medium mb-1">Phone</label>
-                        <InputText
-                            value={formData.phone}
-                            onChange={(e) => setFormData({ ...formData, phone: e.target.value })}
-                            className="w-full"
-                        />
+                        <InputText {...field('phone')} placeholder="+91 98765 43210" />
+                        <small className="p-error field-error-hint">{errors.phone}</small>
                     </div>
                     <div>
                         <label className="block text-sm font-medium mb-1">Address</label>
-                        <InputText
-                            value={formData.address}
-                            onChange={(e) => setFormData({ ...formData, address: e.target.value })}
-                            className="w-full"
-                        />
+                        <InputText {...field('address')} placeholder="Full address" />
+                        <small className="p-error field-error-hint">{errors.address}</small>
                     </div>
                     <div>
                         <label className="block text-sm font-medium mb-1">Status</label>
@@ -213,13 +216,9 @@ export default function BranchesPage() {
                             className="w-full"
                         />
                     </div>
-                    <div className="flex justify-content-end gap-2 mt-3">
-                        <Button
-                            label="Cancel"
-                            className="p-button-text"
-                            onClick={() => setDialogVisible(false)}
-                        />
-                        <Button label="Save" onClick={handleSave} />
+                    <div className="flex justify-content-end gap-2 mt-2">
+                        <Button label="Cancel" className="p-button-text" onClick={() => setDialogVisible(false)} />
+                        <Button label="Save" onClick={handleSave} loading={saving} />
                     </div>
                 </div>
             </Dialog>
