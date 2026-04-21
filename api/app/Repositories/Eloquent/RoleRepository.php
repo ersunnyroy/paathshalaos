@@ -18,7 +18,7 @@ class RoleRepository extends DbRepository implements RoleRepositoryInterface
         return ['permissions'];
     }
 
-    public function getAll(array $filters = []): Collection
+    public function getAll(array $filters = [])
     {
         $query = $this->model->newQuery();
 
