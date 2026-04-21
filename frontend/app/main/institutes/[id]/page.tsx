@@ -243,6 +243,7 @@ export default function InstituteDetailPage() {
             <div>
                 <span className="font-medium">{rowData.name}</span>
                 <div className="text-xs text-500 dark:text-bluegray-400">{rowData.email}</div>
+                {rowData.phone && <div className="text-xs text-500 dark:text-bluegray-400">{rowData.phone}</div>}
             </div>
         </div>
     );
@@ -280,7 +281,7 @@ export default function InstituteDetailPage() {
                         name: rowData.name,
                         email: rowData.email,
                         phone: rowData.phone || '',
-                        role_id: null,
+                        role_id: rowData.roles?.[0]?.id || null,
                         password: ''
                     });
                     setEditUserDialog(false);

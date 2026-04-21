@@ -21,8 +21,6 @@ class RoleRepository extends DbRepository implements RoleRepositoryInterface
     public function getAll(array $filters = []): Collection
     {
         $query = $this->model->newQuery();
-        
-        \Log::info('RoleRepository getAll filters', $filters);
 
         if (isset($filters['tenant_id'])) {
             $query->where('tenant_id', (int) $filters['tenant_id']);
@@ -36,7 +34,16 @@ class RoleRepository extends DbRepository implements RoleRepositoryInterface
             $query->where('is_default', $filters['is_default']);
         }
 
-        return $query->orderBy('name')->get();
+        return $query->orderBy('name')->get()->map(function ($role) {
+            return [
+                'id' => $role->getEncryptedId(),
+                'name' => $role->name,
+                'slug' => $role->slug,
+                'description' => $role->description,
+                'is_default' => $role->is_default,
+                'status' => $role->status,
+            ];
+        });
     }
 
     public function findById(int $id): ?Role

@@ -19,7 +19,7 @@ class UserRepository extends DbRepository implements UserRepositoryInterface
         return ['tenant', 'branch', 'roles', 'roles.permissions'];
     }
 
-    public function getAll(array $filters = []): Collection
+    public function getAll(array $filters = [])
     {
         $query = $this->model->newQuery()->with(['roles', 'tenant']);
 
@@ -51,7 +51,24 @@ class UserRepository extends DbRepository implements UserRepositoryInterface
             });
         }
 
-        return $query->orderBy('name')->get();
+        return $query->orderBy('name')->get()->map(function ($user) {
+            return [
+                'id' => $user->getEncryptedId(),
+                'name' => $user->name,
+                'email' => $user->email,
+                'phone' => $user->phone,
+                'status' => $user->status,
+                'tenant_id' => $user->tenant_id,
+                'branch_id' => $user->branch_id,
+                'avatar' => $user->avatar,
+                'roles' => $user->roles->map(fn($role) => [
+                    'id' => $role->getEncryptedId(),
+                    'name' => $role->name,
+                    'slug' => $role->slug,
+                ])->toArray(),
+                'created_at' => $user->created_at?->toIso8601String(),
+            ];
+        });
     }
 
     public function findById(int $id): ?User

@@ -11,7 +11,7 @@ use App\Http\Requests\RemoveRoleFromUserRequest;
 use App\Services\RoleService;
 use App\Services\PermissionService;
 use Illuminate\Http\Request;
-
+use App\Helpers\CommonHelper;
 class RoleController extends Controller
 {
     public function __construct(
@@ -24,13 +24,14 @@ class RoleController extends Controller
         $filters = $request->all();
 
         if ($request->has('tenant_id')) {
-            $filters['tenant_id'] = $request->input('tenant_id');
+            // decrypt by xor before using in the repository
+            $filters['tenant_id'] = CommonHelper::decryptId($request->input('tenant_id'));
         } else {
             $filters['tenant_id'] = $request->header('X-Tenant-ID') ?? $request->user()?->tenant_id;
         }
 
-        $roles = $this->roleService->getAllRoles($filters);
 
+        $roles = $this->roleService->getAllRoles($filters);
         return response()->json([
             'success' => true,
             'data'    => $roles,
