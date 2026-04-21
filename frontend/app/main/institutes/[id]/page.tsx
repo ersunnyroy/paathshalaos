@@ -205,26 +205,53 @@ export default function InstituteDetailPage() {
     };
 
     const saveUser = async () => {
-        if (!userForm.name || !userForm.email || !userForm.password || !userForm.role_id) {
+        const isEdit = selectedUser !== null;
+        
+        if (!userForm.name || !userForm.email || !userForm.role_id) {
             toast.current?.show({ severity: 'error', summary: 'Error', detail: 'Please fill all required fields' });
             return;
         }
+
+        if (!isEdit && !userForm.password) {
+            toast.current?.show({ severity: 'error', summary: 'Error', detail: 'Password is required' });
+            return;
+        }
+
         setUserSubmitting(true);
         try {
-            const res = await userService.create({
-                ...userForm,
+            const userData = {
+                name: userForm.name,
+                email: userForm.email,
+                phone: userForm.phone || null,
+                role_id: userForm.role_id,
+                ...(userForm.password ? { password: userForm.password } : {}),
                 tenant_id: tenantId,
-            });
-            if (res.success) {
-                setUserDialog(false);
-                setUsers(prev => [...prev, res.data]);
-                toast.current?.show({ severity: 'success', summary: 'Success', detail: 'User created successfully' });
+            };
+
+            let res: any;
+            if (isEdit) {
+                res = await userService.update(selectedUser.id, userData);
+                if (res.success) {
+                    setUsers(prev => prev.map(u => u.id === selectedUser.id ? res.data : u));
+                    toast.current?.show({ severity: 'success', summary: 'Success', detail: 'User updated successfully' });
+                }
             } else {
+                res = await userService.create(userData);
+                if (res.success) {
+                    setUsers(prev => [...prev, res.data]);
+                    toast.current?.show({ severity: 'success', summary: 'Success', detail: 'User created successfully' });
+                }
+            }
+            
+            if (!res.success) {
                 toast.current?.show({ severity: 'error', summary: 'Error', detail: res.message });
             }
         } catch (error: any) {
             toast.current?.show({ severity: 'error', summary: 'Error', detail: error.message });
         } finally {
+            setUserDialog(false);
+            setSelectedUser(null);
+            setEditUserDialog(false);
             setUserSubmitting(false);
         }
     };
@@ -284,7 +311,7 @@ export default function InstituteDetailPage() {
                         role_id: rowData.roles?.[0]?.id || null,
                         password: ''
                     });
-                    setEditUserDialog(false);
+                    setEditUserDialog(true);
                     setUserDialog(true);
                 }}
             />

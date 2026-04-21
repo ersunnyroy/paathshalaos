@@ -3,6 +3,7 @@
 namespace App\Http\Requests;
 
 use Illuminate\Foundation\Http\FormRequest;
+use App\Helpers\CommonHelper;
 
 class UpdateUserRequest extends FormRequest
 {
@@ -13,7 +14,8 @@ class UpdateUserRequest extends FormRequest
 
     public function rules(): array
     {
-        $id = $this->route('user');
+        $encryptedId = $this->route('user');
+        $id = CommonHelper::decryptId($encryptedId);
 
         return [
             'name'     => ['sometimes', 'string', 'max:255'],
@@ -21,6 +23,7 @@ class UpdateUserRequest extends FormRequest
             'phone'    => ['nullable', 'string', 'max:20', "unique:users,phone,{$id}"],
             'password' => ['sometimes', 'string', 'min:8'],
             'status'   => ['nullable', 'in:0,1'],
+            'role_id'  => ['nullable', 'integer'],
         ];
     }
 

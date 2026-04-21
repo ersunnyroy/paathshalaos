@@ -8,6 +8,7 @@ use App\Http\Requests\UpdateUserRequest;
 use App\Http\Resources\UserResource;
 use App\Models\Role;
 use App\Services\UserService;
+use App\Helpers\CommonHelper;
 use Illuminate\Http\Request;
 
 class UserController extends Controller
@@ -37,14 +38,18 @@ class UserController extends Controller
     {
         $tenantId = $request->header('X-Tenant-ID') ?? $request->user()?->tenant_id;
 
-        $data              = $request->validated();
-        $roleId            = $data['role_id'] ?? null;
+        $data = $request->validated();
+        
+        if (isset($data['role_id']) && $data['role_id']) {
+            $data['role_id'] = CommonHelper::decryptId($data['role_id']);
+        }
+        
         $data['tenant_id'] = $tenantId;
 
         $user = $this->userService->create($data);
 
-        if ($roleId) {
-            $role = Role::where('tenant_id', $tenantId)->find($roleId);
+        if ($data['role_id'] ?? null) {
+            $role = Role::where('tenant_id', $tenantId)->find($data['role_id']);
             if ($role) {
                 $user->assignRole($role);
             }
@@ -59,7 +64,8 @@ class UserController extends Controller
 
     public function show(int $id)
     {
-        $user = $this->userService->findById($id);
+        $decryptedUserId = CommonHelper::decodeInboundIdValue($id);
+        $user = $this->userService->findById($decryptedUserId);
 
         if (!$user) {
             return response()->json([
@@ -76,18 +82,39 @@ class UserController extends Controller
 
     public function update(UpdateUserRequest $request, int $id)
     {
-        $user = $this->userService->update($id, $request->validated());
+        $tenantId = $request->header('X-Tenant-ID') ?? $request->user()?->tenant_id;
+        
+        $decryptedUserId = CommonHelper::decodeInboundIdValue($id);
+        
+        $data = $request->validated();
+        
+        $roleId = null;
+        if (isset($data['role_id']) && $data['role_id']) {
+            $roleId = CommonHelper::decodeInboundIdValue($data['role_id']);
+            unset($data['role_id']);
+        }
+
+        $user = $this->userService->update($decryptedUserId, $data);
+
+        if ($roleId) {
+            $user->roles()->detach();
+            $role = Role::where('tenant_id', $tenantId)->find($roleId);
+            if ($role) {
+                $user->assignRole($role);
+            }
+        }
 
         return response()->json([
             'success' => true,
             'message' => 'User updated successfully',
-            'data'    => $user,
+            'data'    => new UserResource($user->load('roles')),
         ]);
     }
 
     public function destroy(int $id)
     {
-        $deleted = $this->userService->delete($id);
+        $decryptedUserId = CommonHelper::decodeInboundIdValue($id);
+        $deleted = $this->userService->delete($decryptedUserId);
 
         if (!$deleted) {
             return response()->json([

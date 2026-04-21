@@ -10,7 +10,7 @@ class UserResource extends JsonResource
     public function toArray(Request $request): array
     {
         return [
-            'id' => $this->id,
+            'id' => $this->getEncryptedId(),
             'tenant_id' => $this->tenant_id,
             'branch_id' => $this->branch_id,
             'name' => $this->name,
@@ -19,7 +19,7 @@ class UserResource extends JsonResource
             'avatar' => $this->avatar,
             'status' => $this->status,
             'roles' => $this->whenLoaded('roles', fn() => $this->roles->map(fn($role) => [
-                'id' => $role->id,
+                'id' => $role->getEncryptedId(),
                 'name' => $role->name,
                 'slug' => $role->slug,
             ])),
