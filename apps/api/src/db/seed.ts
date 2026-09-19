@@ -1,0 +1,585 @@
+/**
+ * A demo school, so the app has something real to show.
+ *
+ * Deliberately NOT a fixture: this runs as the owner and writes the same shapes
+ * the product does, so what you see on screen is what the services would have
+ * produced. The one thing it does differently is create users and role grants
+ * directly, because there is no self-service signup yet.
+ *
+ * Idempotent: running it twice leaves one school, not two. `npm run db:seed`
+ * after every migration is meant to be a habit, and a habit that duplicates data
+ * gets abandoned.
+ */
+import pg from 'pg';
+import { randomUUID } from 'node:crypto';
+import { loadDotenv } from '../config/load-dotenv.ts';
+
+loadDotenv();
+
+const OWNER_URL = process.env['DATABASE_OWNER_URL'];
+if (!OWNER_URL) {
+  console.error('DATABASE_OWNER_URL is not set.');
+  process.exit(1);
+}
+
+const PASSWORD = 'demo-password-1234';
+const ORG_NAME = 'Demo Vidyalaya';
+
+async function main(): Promise<void> {
+  const c = new pg.Client({ connectionString: OWNER_URL });
+  await c.connect();
+
+  try {
+    await c.query('BEGIN');
+
+    const existing = await c.query<{ id: string }>(
+      'SELECT id FROM organization WHERE display_name = $1', [ORG_NAME],
+    );
+    if (existing.rows[0]) {
+      console.log(`${ORG_NAME} already exists. Nothing to do.`);
+      console.log(`  tenantId: ${existing.rows[0].id}`);
+      await printLogins(c, existing.rows[0].id);
+      await c.query('COMMIT');
+      return;
+    }
+
+    const org = await one<{ id: string }>(c,
+      `INSERT INTO organization (legal_name, display_name, country)
+       VALUES ('Demo Vidyalaya Trust', $1, 'IN') RETURNING id`,
+      [ORG_NAME]);
+    const tenantId = org.id;
+
+    const campus = await one<{ id: string }>(c,
+      `INSERT INTO campus (tenant_id, code, name, is_primary)
+       VALUES ($1, 'MAIN', 'Main Campus', true) RETURNING id`, [tenantId]);
+    const unit = await one<{ id: string }>(c,
+      `INSERT INTO academic_unit (tenant_id, campus_id, code, name, unit_type)
+       VALUES ($1, $2, 'SCHOOL', 'Senior School', 'school') RETURNING id`,
+      [tenantId, campus.id]);
+
+    const year = await one<{ id: string }>(c,
+      `INSERT INTO academic_year (tenant_id, academic_unit_id, label, starts_on, ends_on, status)
+       VALUES ($1, $2, '2026-27', '2026-04-01', '2027-03-31', 'active') RETURNING id`,
+      [tenantId, unit.id]);
+    const term1 = await one<{ id: string }>(c,
+      `INSERT INTO term (tenant_id, academic_year_id, label, sequence, starts_on, ends_on)
+       VALUES ($1, $2, 'Term 1', 1, '2026-04-01', '2026-09-30') RETURNING id`,
+      [tenantId, year.id]);
+    await c.query(
+      `INSERT INTO term (tenant_id, academic_year_id, label, sequence, starts_on, ends_on)
+       VALUES ($1, $2, 'Term 2', 2, '2026-10-01', '2027-03-31')`,
+      [tenantId, year.id]);
+
+    const programme = await one<{ id: string }>(c,
+      `INSERT INTO programme (tenant_id, academic_unit_id, code, name, credential_type)
+       VALUES ($1, $2, 'CBSE-SR', 'CBSE Senior Secondary', 'board_examination') RETURNING id`,
+      [tenantId, unit.id]);
+    const subject = await one<{ id: string }>(c,
+      `INSERT INTO subject (tenant_id, academic_unit_id, code, name, subject_type)
+       VALUES ($1, $2, 'MATH', 'Mathematics', 'core') RETURNING id`, [tenantId, unit.id]);
+
+    // Two class groups, two sections each — enough for a dashboard to look like
+    // a school rather than a unit test.
+    const sections: Array<{ id: string; label: string }> = [];
+    for (const className of ['Class IX', 'Class X']) {
+      const cg = await one<{ id: string }>(c,
+        `INSERT INTO class_group (tenant_id, programme_id, academic_year_id, name, level_sequence)
+         VALUES ($1, $2, $3, $4, $5) RETURNING id`,
+        [tenantId, programme.id, year.id, className,
+         className === 'Class IX' ? 9 : 10]);
+      for (const sectionName of ['A', 'B']) {
+        const sec = await one<{ id: string }>(c,
+          `INSERT INTO section (tenant_id, class_group_id, name, capacity)
+           VALUES ($1, $2, $3, 40) RETURNING id`,
+          [tenantId, cg.id, sectionName]);
+        sections.push({ id: sec.id, label: `${className} ${sectionName}` });
+      }
+      await c.query(
+        `INSERT INTO course_offering
+           (tenant_id, class_group_id, subject_id, term_id) VALUES ($1, $2, $3, $4)`,
+        [tenantId, cg.id, subject.id, term1.id]);
+    }
+
+    // Staff.
+    const teacherPerson = await one<{ id: string }>(c,
+      `INSERT INTO person (tenant_id, given_name, family_name)
+       VALUES ($1, 'Meera', 'Nair') RETURNING id`, [tenantId]);
+    const teacherStaff = await one<{ id: string }>(c,
+      `INSERT INTO staff (tenant_id, person_id, campus_id, employee_code, designation, joined_on)
+       VALUES ($1, $2, $3, 'EMP-001', 'Class Teacher', '2020-06-01') RETURNING id`,
+      [tenantId, teacherPerson.id, campus.id]);
+    const bursarPerson = await one<{ id: string }>(c,
+      `INSERT INTO person (tenant_id, given_name, family_name)
+       VALUES ($1, 'Raj', 'Sharma') RETURNING id`, [tenantId]);
+    await c.query(
+      `INSERT INTO staff (tenant_id, person_id, campus_id, employee_code, designation, joined_on)
+       VALUES ($1, $2, $3, 'EMP-002', 'Accountant', '2021-04-01')`,
+      [tenantId, bursarPerson.id, campus.id]);
+
+    // Learners, spread across the sections, each with a guardian.
+    // Names that read as names. The index used to be appended to the given
+    // name — "Aarav1 Kumar" — which is fine until a demo screenshot shows a
+    // support thread and the parent looks like a database artefact. Uniqueness
+    // comes from the admission number, which is where it belongs.
+    const givenNames = ['Aarav', 'Diya', 'Kabir', 'Ishaan', 'Anaya', 'Vihaan',
+      'Myra', 'Reyansh', 'Saanvi', 'Arjun', 'Aadhya', 'Vivaan'];
+    const familyNames = ['Kumar', 'Sharma', 'Nair', 'Reddy', 'Iyer', 'Banerjee',
+      'Patel', 'Joshi', 'Rao', 'Gupta'];
+    const guardianNames = ['Sunita', 'Rajesh', 'Lakshmi', 'Manoj', 'Fatima',
+      'Deepak', 'Kavita', 'Imran', 'Shalini', 'Arun', 'Nisha'];
+    const enrollments: Array<{ id: string; sectionId: string }> = [];
+
+    for (let i = 0; i < 40; i++) {
+      const section = sections[i % sections.length]!;
+      const person = await one<{ id: string }>(c,
+        `INSERT INTO person (tenant_id, given_name, family_name, date_of_birth)
+         VALUES ($1, $2, $3, $4::date) RETURNING id`,
+        [tenantId, givenNames[i % givenNames.length],
+         familyNames[(i * 7) % familyNames.length],
+         `201${(i % 4) + 1}-0${(i % 9) + 1}-1${i % 9}`]);
+      const student = await one<{ id: string }>(c,
+        `INSERT INTO student (tenant_id, person_id, admission_no)
+         VALUES ($1, $2, $3) RETURNING id`,
+        [tenantId, person.id, `DEMO-${String(i + 1).padStart(4, '0')}`]);
+      const enrollment = await one<{ id: string }>(c,
+        `INSERT INTO enrollment (tenant_id, student_id, section_id, academic_year_id)
+         VALUES ($1, $2, $3, $4) RETURNING id`,
+        [tenantId, student.id, section.id, year.id]);
+      enrollments.push({ id: enrollment.id, sectionId: section.id });
+
+      // The guardian shares the learner's family name, as a parent usually
+      // does. "Guardian1 Kumar" was the same index-suffix artefact the learner
+      // names had, and it shows up on the messages screen where the whole point
+      // is that a real person was or was not written to.
+      const guardianPerson = await one<{ id: string }>(c,
+        `INSERT INTO person (tenant_id, given_name, family_name)
+         VALUES ($1, $2, $3) RETURNING id`,
+        [tenantId, guardianNames[i % guardianNames.length],
+         familyNames[(i * 7) % familyNames.length]]);
+      await c.query(
+        `INSERT INTO guardian_link (tenant_id, student_id, guardian_person_id, relationship,
+                                    is_primary, can_view_academics, can_view_finance, can_pay)
+         VALUES ($1, $2, $3, 'mother', true, true, true, true)`,
+        [tenantId, student.id, guardianPerson.id]);
+      await c.query(
+        `INSERT INTO contact_method (tenant_id, person_id, kind, value, is_primary, opt_in_state)
+         VALUES ($1, $2, 'phone', $3, true, 'opted_in')`,
+        [tenantId, guardianPerson.id, `+9198765${String(10000 + i).padStart(5, '0')}`]);
+    }
+
+    // Attendance for the last four school weeks, not just today. A sparkline
+    // drawn over one data point is a dot, and a dashboard that only ever has
+    // today's figure cannot show a trend — which is most of what a principal
+    // opens it for.
+    const firstSection = sections[0]!;
+    const sectionRoll = enrollments.filter((x) => x.sectionId === firstSection.id);
+    const days: string[] = [];
+    for (let back = 27; back >= 0; back--) {
+      const d = new Date();
+      d.setUTCDate(d.getUTCDate() - back);
+      // Sunday is a holiday; Saturday is a half day in most Indian schools and
+      // still has a register.
+      if (d.getUTCDay() === 0) continue;
+      days.push(d.toISOString().slice(0, 10));
+    }
+
+    for (const [index, day] of days.entries()) {
+      const session = await one<{ id: string }>(c,
+        `INSERT INTO attendance_session
+           (tenant_id, section_id, academic_year_id, session_date, mode, status,
+            submitted_at, marked_by_staff_id)
+         VALUES ($1, $2, $3, $4::date, 'day', 'submitted', now(), $5) RETURNING id`,
+        [tenantId, firstSection.id, year.id, day, teacherStaff.id]);
+
+      for (const [seat, e] of sectionRoll.entries()) {
+        // A deterministic pattern rather than random: re-running the seed on a
+        // colleague's machine should produce the same chart, or "it looks
+        // different on mine" becomes a bug report.
+        const absent = (seat + index * 3) % 11 === 0;
+        const late = !absent && (seat + index * 5) % 17 === 0;
+        await c.query(
+          `INSERT INTO attendance_record
+             (tenant_id, attendance_session_id, enrollment_id, state, minutes_late,
+              client_event_id, recorded_by_staff_id)
+           VALUES ($1, $2, $3, $4, $5, $6, $7)`,
+          [tenantId, session.id, e.id,
+           absent ? 'absent' : late ? 'late' : 'present',
+           late ? 10 : null, randomUUID(), teacherStaff.id]);
+      }
+    }
+
+    // Fees: one plan, assigned to everyone, one instalment invoiced. A couple
+    // are paid so the dashboard shows collection as well as billing.
+    // Draft first, components, THEN publish — the order the product enforces. A
+    // published plan's components are frozen, so seeding it the other way round
+    // is refused by the same trigger that protects a real school's fees.
+    const plan = await one<{ id: string }>(c,
+      `INSERT INTO fee_plan (tenant_id, academic_unit_id, academic_year_id, name)
+       VALUES ($1, $2, $3, 'Annual fees 2026-27') RETURNING id`,
+      [tenantId, unit.id, year.id]);
+    await c.query(
+      `INSERT INTO fee_component (tenant_id, fee_plan_id, code, name, amount, frequency)
+       VALUES ($1, $2, 'TUITION', 'Tuition', 30000.00, 'annual'),
+              ($1, $2, 'LAB', 'Laboratory', 3000.00, 'annual')`,
+      [tenantId, plan.id]);
+    await c.query(
+      `UPDATE fee_plan SET status = 'published', published_at = now(), published_by = $2
+        WHERE id = $1`,
+      [plan.id, teacherStaff.id]);
+
+    let invoiceNo = 0;
+    for (const e of enrollments.slice(0, 24)) {
+      const assignment = await one<{ id: string }>(c,
+        `INSERT INTO fee_assignment (tenant_id, enrollment_id, fee_plan_id)
+         VALUES ($1, $2, $3) RETURNING id`, [tenantId, e.id, plan.id]);
+      const instalment = await one<{ id: string }>(c,
+        `INSERT INTO installment
+           (tenant_id, fee_assignment_id, sequence, due_on, gross_amount,
+            concession_amount, net_amount, status)
+         VALUES ($1, $2, 1, '2026-06-10', 33000.00, 0, 33000.00, 'invoiced')
+         RETURNING id`, [tenantId, assignment.id]);
+      invoiceNo += 1;
+      const invoice = await one<{ id: string }>(c,
+        `INSERT INTO invoice
+           (tenant_id, campus_id, installment_id, enrollment_id, invoice_no, financial_year,
+            due_on, subtotal, discount_total, tax_total, total)
+         VALUES ($1, $2, $3, $4, $5, '2026-27', '2026-06-10',
+                 33000.00, 0, 0, 33000.00)
+         RETURNING id`,
+        [tenantId, campus.id, instalment.id, e.id,
+         `INV-${String(invoiceNo).padStart(6, '0')}`]);
+
+      if (invoiceNo % 3 === 0) {
+        await c.query(
+          `UPDATE invoice SET amount_paid = 33000.00, status = 'paid' WHERE id = $1`,
+          [invoice.id]);
+
+        // A payment and a receipt, dated across the window, so "collected" has a
+        // shape over time rather than a single spike on the day of the seed.
+        const paidOn = days[(invoiceNo * 5) % days.length] ?? days[0]!;
+        const payment = await one<{ id: string }>(c,
+          `INSERT INTO payment
+             (tenant_id, campus_id, method, amount, received_on, status,
+              idempotency_key, target_invoice_id)
+           VALUES ($1, $2, 'cash', 33000.00, $3::date, 'succeeded', $4, $5)
+           RETURNING id`,
+          [tenantId, campus.id, paidOn, `seed-${invoiceNo}`, invoice.id]);
+        await c.query(
+          `INSERT INTO payment_allocation (tenant_id, payment_id, invoice_id, amount)
+           VALUES ($1, $2, $3, 33000.00)`,
+          [tenantId, payment.id, invoice.id]);
+        await c.query(
+          `INSERT INTO receipt
+             (tenant_id, campus_id, payment_id, receipt_no, financial_year, amount, issued_on)
+           VALUES ($1, $2, $3, $4, '2026-27', 33000.00, $5::date)`,
+          [tenantId, campus.id, payment.id,
+           `RCP-${String(invoiceNo).padStart(6, '0')}`, paidOn]);
+      }
+    }
+
+    // Users. Passwords are hashed with the same algorithm the login path uses,
+    // so these accounts go through the real authentication rather than a bypass.
+    // The product's own hasher, not a local copy of the parameters: a seeded
+    // account that cannot log in through the real path is worse than no seed.
+    let demoCredential = '';
+    const { passwordService } = await import('../modules/auth/password.service.ts');
+    const passwordHash = await passwordService.hash(PASSWORD);
+    const users: Array<[string, string, string, string | null]> = [
+      ['principal@demo.school', 'ORG_OWNER', 'organization', null],
+      ['teacher@demo.school', 'TEACHER', 'campus', campus.id],
+      ['accounts@demo.school', 'ACCOUNTANT', 'campus', campus.id],
+    ];
+    let ownerUserId = '';
+    for (const [email, role, scopeType, scopeId] of users) {
+      const user = await one<{ id: string }>(c,
+        `INSERT INTO user_account (login_email, password_hash, status)
+         VALUES ($1, $2, 'active') RETURNING id`, [email, passwordHash]);
+      if (role === 'ORG_OWNER') ownerUserId = user.id;
+      await c.query(
+        `INSERT INTO role_grant (tenant_id, user_account_id, role, scope_type, scope_id)
+         VALUES ($1, $2, $3, $4, $5)`,
+        [tenantId, user.id, role, scopeType, scopeId]);
+
+      // Every login is a PERSON as well as an account.
+      //
+      // An earlier seed created these three accounts with no person row, and
+      // everything worked until a support reply — which is attributed to a
+      // person, because a ticket thread is a conversation between people rather
+      // than between rows in an auth table. The staff member then got "this
+      // account is not linked to a person" on a screen that had shown them the
+      // ticket perfectly well. The schema was right; the seed was not.
+      const person = await one<{ id: string }>(c,
+        `INSERT INTO person (tenant_id, given_name, family_name, user_account_id)
+         VALUES ($1, $2, $3, $4) RETURNING id`,
+        [tenantId,
+         role === 'ORG_OWNER' ? 'Anjali' : role === 'TEACHER' ? 'Suresh' : 'Priya',
+         role === 'ORG_OWNER' ? 'Menon' : role === 'TEACHER' ? 'Iyer' : 'Desai',
+         user.id]);
+      await c.query(
+        `INSERT INTO staff (tenant_id, person_id, campus_id, employee_code,
+                            designation, joined_on)
+         VALUES ($1, $2, $3, $4, $5, '2021-04-01')`,
+        [tenantId, person.id, campus.id,
+         `EMP-1${role === 'ORG_OWNER' ? '01' : role === 'TEACHER' ? '02' : '03'}`,
+         role === 'ORG_OWNER' ? 'Principal' : role === 'TEACHER' ? 'Teacher' : 'Accountant']);
+    }
+
+    // --- an integration, so the Integrations screen has something real on it ---
+    // The credential is printed at the end; it exists nowhere else afterwards.
+    //
+    // The endpoint points at a documentation-range address that will never
+    // answer, which is the point: the delivery log is most useful when it shows
+    // a FAILURE, and a seed where everything succeeded teaches nobody what the
+    // screen is for.
+    const client = await one<{ id: string }>(c,
+      `INSERT INTO api_client (tenant_id, name, description, scopes, created_by)
+       VALUES ($1, 'Accounting sync', 'Reads invoices into the accounts package',
+               ARRAY['invoices:read','payments:read','students:read']::text[], $2)
+       RETURNING id`, [tenantId, ownerUserId]);
+
+    // Issued through the real function, with the tenant and actor set the way a
+    // request sets them. A seed that hand-inserted the rows would not prove the
+    // issuing path works, and this is the one credential anybody will actually
+    // try to curl with.
+    await c.query('SELECT set_config($1, $2, true)', ['app.tenant_id', tenantId]);
+    await c.query('SELECT set_config($1, $2, true)', ['app.actor_id', ownerUserId]);
+    const issued = await one<{ prefix: string; secret: string }>(c,
+      `SELECT prefix, secret FROM api_key_issue($1, 'Seeded demo key', NULL, false)`,
+      [client.id]);
+    demoCredential = `${issued.prefix}.${issued.secret}`;
+
+    const endpoint = await one<{ id: string }>(c,
+      `INSERT INTO webhook_endpoint
+         (tenant_id, url, description, event_types, signing_secret, created_by)
+       VALUES ($1, 'https://203.0.113.10/paathshala-hook',
+               'Demo receiver (never answers, on purpose)',
+               ARRAY['invoice.issued','payment.received']::text[],
+               'whsec_' || encode(gen_random_bytes(32), 'hex'), $2)
+       RETURNING id`, [tenantId, ownerUserId]);
+
+    for (const [type, payload] of [
+      ['invoice.issued', { invoice_no: 'DEMO/2026/0001', total: '12500.00' }],
+      ['payment.received', { receipt_no: 'RCPT/2026/0001', amount: '12500.00' }],
+    ] as const) {
+      const event = await one<{ id: string }>(c,
+        `INSERT INTO outbox_event (tenant_id, event_type, aggregate_type, payload, published_at)
+         VALUES ($1, $2, 'demo', $3::jsonb, now()) RETURNING id`,
+        [tenantId, type, JSON.stringify(payload)]);
+      const delivery = await one<{ id: string }>(c,
+        `INSERT INTO webhook_delivery
+           (tenant_id, webhook_endpoint_id, outbox_event_id, event_type, payload,
+            status, attempt_count, last_error)
+         VALUES ($1, $2, $3, $4, $5::jsonb, 'dead', 8, 'HTTP no response')
+         RETURNING id`,
+        [tenantId, endpoint.id, event.id, type,
+         JSON.stringify({ type, data: payload })]);
+      for (let n = 1; n <= 8; n += 1) {
+        await c.query(
+          `INSERT INTO webhook_attempt
+             (tenant_id, webhook_delivery_id, attempt_no, duration_ms, error)
+           VALUES ($1, $2, $3, 10000, 'The operation was aborted due to timeout')`,
+          [tenantId, delivery.id, n]);
+      }
+    }
+
+    // --- help articles and one live ticket -------------------------------
+    //
+    // Two articles and a ticket that is awaiting a reply, so the support
+    // screens show a queue rather than an empty state. The ticket is
+    // deliberately past its first-response deadline: an empty support inbox
+    // teaches nobody what the breach column is for.
+    const parentPerson = await one<{ id: string }>(c,
+      `SELECT p.id FROM person p JOIN student s ON s.person_id = p.id
+        WHERE p.tenant_id = $1 LIMIT 1`, [tenantId]);
+
+    for (const [slug, title, audience, body] of [
+      ['paying-fees-online', 'Paying fees online', 'guardians',
+       'Open **Fees**, choose the invoice, then **Pay now**. '
+       + 'A receipt is issued the moment the payment settles — you do not need '
+       + 'to send us the screenshot.'],
+      ['marking-attendance', 'Marking attendance on your phone', 'staff',
+       'Open **Attendance**, pick your section, mark the register and press '
+       + '**Submit**. It works offline; marks sync when you are back on a '
+       + 'network, and the time recorded is the time you marked, not the time '
+       + 'it synced.'],
+      ['voiding-an-invoice', 'Voiding an invoice', 'staff',
+       'An issued invoice is never deleted — it is voided, with a reason, and '
+       + 'the number stays in the sequence. An auditor asks about gaps.'],
+    ] as const) {
+      const art = await one<{ id: string }>(c,
+        `INSERT INTO kb_article (tenant_id, slug, title, audience, status,
+                                 published_version, created_by)
+         VALUES ($1, $2, $3, $4, 'published', 1, $5) RETURNING id`,
+        [tenantId, slug, title, audience, ownerUserId]);
+      await c.query(
+        `INSERT INTO kb_article_version
+           (tenant_id, kb_article_id, version, title, body, written_by)
+         VALUES ($1, $2, 1, $3, $4, $5)`,
+        [tenantId, art.id, title, body, ownerUserId]);
+    }
+
+    const ticket = await one<{ id: string }>(c,
+      `INSERT INTO support_ticket
+         (tenant_id, reference, raised_by_person_id, subject, category, priority,
+          first_response_due_at, resolution_due_at, created_at)
+       VALUES ($1, 'TKT-' || to_char(now(), 'YYYY') || '-00001', $2,
+               'Fee receipt not received', 'fees_and_payments', 'high',
+               now() - interval '2 hours', now() + interval '46 hours',
+               now() - interval '10 hours')
+       RETURNING id`, [tenantId, parentPerson.id]);
+    await c.query(
+      `INSERT INTO ticket_message (tenant_id, ticket_id, author_person_id, body, created_at)
+       VALUES ($1, $2, $3, 'I paid on the 3rd by UPI but no receipt has arrived.',
+               now() - interval '10 hours')`,
+      [tenantId, ticket.id, parentPerson.id]);
+    await c.query(
+      `INSERT INTO ticket_event (tenant_id, ticket_id, actor_person_id, kind, occurred_at)
+       VALUES ($1, $2, $3, 'created', now() - interval '10 hours')`,
+      [tenantId, ticket.id, parentPerson.id]);
+
+    // --- results, messages and imports ------------------------------------
+    //
+    // Three milestones' worth of backend that had no screen until M13, and
+    // therefore no seed data. Each of these is shaped to show the thing the
+    // feature exists for rather than a happy path: a result run that is
+    // computed but NOT published, messages that were deliberately withheld with
+    // their reasons, and an import whose preview and apply agree.
+
+    // These columns reference `staff`, not `user_account` — a scale is
+    // published by a member of staff, and the two ids are not interchangeable.
+    const ownerStaff = await one<{ id: string }>(c,
+      `SELECT st.id FROM staff st
+         JOIN person p ON p.id = st.person_id
+        WHERE p.user_account_id = $1 AND st.tenant_id = $2 LIMIT 1`,
+      [ownerUserId, tenantId]);
+
+    const scale = await one<{ id: string }>(c,
+      `INSERT INTO grading_scale (tenant_id, academic_unit_id, name, kind,
+                                  is_published, published_at, published_by)
+       VALUES ($1, $2, 'CBSE 2026-27', 'percentage', true, now(), $3) RETURNING id`,
+      [tenantId, unit.id, ownerStaff.id]);
+
+    const resultSection = sections[0]!;
+    const run = await one<{ id: string }>(c,
+      `INSERT INTO result_run
+         (tenant_id, academic_year_id, term_id, section_id, grading_scale_id,
+          inputs_digest, status, computed_at, computed_by)
+       VALUES ($1, $2, $3, $4, $5,
+               encode(digest('demo-seed-inputs', 'sha256'), 'hex'),
+               'computed', now() - interval '2 hours', $6)
+       RETURNING id`,
+      [tenantId, year.id, term1.id, resultSection.id, scale.id, ownerStaff.id]);
+
+    const sectionEnrollments = enrollments
+      .filter((e) => e.sectionId === resultSection.id).slice(0, 10);
+    for (const [i, enrollment] of sectionEnrollments.entries()) {
+      // One learner has no marks at all. That row exists and says why, because
+      // a missing row is indistinguishable from a learner nobody noticed.
+      const absent = i === 3;
+      const pct = 42 + ((i * 7) % 55);
+      await c.query(
+        `INSERT INTO result_line
+           (tenant_id, result_run_id, enrollment_id, obtained, maximum,
+            percentage, grade_label, grade_point, is_pass, not_graded_reason)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)`,
+        [tenantId, run.id, enrollment.id,
+         absent ? null : pct, absent ? null : 100,
+         absent ? null : pct,
+         absent ? null : pct >= 90 ? 'A1' : pct >= 75 ? 'B1' : pct >= 60 ? 'C1' : pct >= 33 ? 'D' : 'E',
+         absent ? null : Math.max(1, Math.round(pct / 10)),
+         absent ? null : pct >= 33,
+         absent ? 'No marks recorded — absent for the assessment' : null]);
+    }
+
+    const template = await one<{ id: string }>(c,
+      `INSERT INTO message_template (tenant_id, code, name, purpose)
+       VALUES ($1, 'ATT_ABSENT_V1', 'Absence notice', 'attendance_notifications')
+       RETURNING id`, [tenantId]);
+
+    const request = await one<{ id: string }>(c,
+      `INSERT INTO message_request
+         (tenant_id, campus_id, message_template_id, purpose, source_type,
+          idempotency_key, status, requested_by, created_at)
+       VALUES ($1, $2, $3, 'attendance_notifications', 'attendance_session',
+               'demo-seed-' || gen_random_uuid(), 'completed', $4,
+               now() - interval '5 hours')
+       RETURNING id`, [tenantId, campus.id, template.id, ownerStaff.id]);
+
+    const guardianPeople = await c.query<{ id: string; given_name: string }>(
+      `SELECT gl.guardian_person_id AS id, p.given_name
+         FROM guardian_link gl JOIN person p ON p.id = gl.guardian_person_id
+        WHERE gl.tenant_id = $1 LIMIT 6`, [tenantId]);
+
+    // A spread that shows the screen's point: most delivered, one failed, and
+    // two withheld for different reasons — which is what AC-8 is about.
+    const outcomes: Array<[string, string | null, string | null]> = [
+      ['delivered', null, 'whatsapp'],
+      ['delivered', null, 'whatsapp'],
+      ['sent', null, 'sms'],
+      ['failed', null, 'sms'],
+      ['suppressed', 'no_consent_for_purpose', null],
+      ['suppressed', 'no_contact_for_channel', null],
+    ];
+    for (const [i, person] of guardianPeople.rows.entries()) {
+      const [status, reason, channel] = outcomes[i % outcomes.length]!;
+      await c.query(
+        `INSERT INTO message_recipient
+           (tenant_id, message_request_id, person_id, channel, locale,
+            rendered_body, status, suppression_reason, created_at)
+         VALUES ($1, $2, $3, $4, 'en-IN', $5, $6, $7, now() - interval '5 hours')`,
+        [tenantId, request.id, person.id, channel,
+         status === 'suppressed'
+           ? null
+           : 'Your child was marked absent today. Please contact the school office.',
+         status, reason]);
+    }
+
+    await c.query(
+      `INSERT INTO import_batch
+         (tenant_id, campus_id, entity, original_filename, source_sha256,
+          status, plan_digest, preview_counts, applied_counts,
+          uploaded_by, applied_by, created_at, validated_at, previewed_at, applied_at)
+       VALUES ($1, $2, 'learner_roster', 'class-9-roster.csv',
+               encode(digest('demo-roster', 'sha256'), 'hex'),
+               'applied', encode(digest('demo-plan', 'sha256'), 'hex'),
+               '{"total": 41, "valid": 40, "invalid": 1}'::jsonb,
+               '{"created": 40, "updated": 0, "skipped": 1}'::jsonb,
+               $3, $3, now() - interval '3 days', now() - interval '3 days',
+               now() - interval '3 days', now() - interval '3 days')`,
+      [tenantId, campus.id, ownerStaff.id]);
+
+    await c.query('COMMIT');
+
+    console.log('\nSeeded a demo school.\n');
+    console.log(`  API key (test, shown once): ${demoCredential}`);
+    console.log(`  tenantId: ${tenantId}`);
+    console.log(`  40 learners, 4 sections, 24 invoices, today's attendance for one section\n`);
+    await printLogins(c, tenantId);
+  } catch (error) {
+    await c.query('ROLLBACK');
+    throw error;
+  } finally {
+    await c.end();
+  }
+}
+
+async function printLogins(c: pg.Client, tenantId: string): Promise<void> {
+  console.log('  Sign in with:');
+  for (const email of ['principal@demo.school', 'teacher@demo.school', 'accounts@demo.school']) {
+    console.log(`    ${email.padEnd(24)} ${PASSWORD}`);
+  }
+  console.log(`\n  The web app needs the tenant id: ${tenantId}\n`);
+}
+
+async function one<T extends pg.QueryResultRow>(
+  c: pg.Client, sql: string, params: unknown[],
+): Promise<T> {
+  const { rows } = await c.query<T>(sql, params);
+  if (!rows[0]) throw new Error(`Expected a row from: ${sql.slice(0, 60)}...`);
+  return rows[0];
+}
+
+main().catch((error: unknown) => {
+  console.error('seed failed:', error instanceof Error ? error.message : error);
+  process.exit(1);
+});

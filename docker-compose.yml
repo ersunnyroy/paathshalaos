@@ -1,0 +1,64 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: paathshala-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: paathshala_owner
+      POSTGRES_PASSWORD: local_dev_only
+      POSTGRES_DB: paathshala
+    ports:
+      - "5433:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U paathshala_owner -d paathshala"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+  redis:
+    image: redis:7-alpine
+    container_name: paathshala-redis
+    restart: unless-stopped
+    command: ["redis-server", "--appendonly", "yes"]
+    ports:
+      - "6380:6379"
+    volumes:
+      - redisdata:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+  # A browser client for the database, on http://localhost:8081.
+  #
+  # Worth having precisely because this schema is unusual: almost every table
+  # carries row-level security, and the interesting questions are "which
+  # policies are on this table" and "what does this role actually see" rather
+  # than "what columns exist". Adminer will answer all three, and it connects as
+  # whichever role you type — so you can log in as paathshala_app and watch the
+  # policies filter your own SELECT.
+  #
+  # Local only. It is not in any deployment manifest and should never be: a
+  # database console reachable from a browser is a database console reachable
+  # from anything that can reach that browser.
+  adminer:
+    image: adminer:4-standalone
+    container_name: paathshala-adminer
+    restart: unless-stopped
+    ports:
+      - "8081:8080"
+    environment:
+      ADMINER_DEFAULT_SERVER: postgres
+      # 'dracula' reads better against a dark terminal beside it; 'pepa-linha'
+      # is the lighter one if you prefer.
+      ADMINER_DESIGN: pepa-linha
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+volumes:
+  pgdata:
+  redisdata:

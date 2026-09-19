@@ -1,0 +1,11 @@
+-- 0051 — provisioning could not take its own lock.
+--
+-- `SELECT ... FOR UPDATE` needs the UPDATE privilege as well as SELECT, because
+-- row locking is a write-shaped operation even when nothing is written. The
+-- replay check locks the provisioning row so two concurrent retries cannot both
+-- pass it, and raised `permission denied for table tenant_provisioning` instead.
+--
+-- Granted rather than removing the lock: without it, two people onboarding the
+-- same school in the same second both create one, which is the exact failure
+-- the request key exists to prevent.
+GRANT UPDATE ON tenant_provisioning TO paathshala_platform;
