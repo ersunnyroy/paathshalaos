@@ -31,7 +31,7 @@ SQL-level invariants are mutated by running `ALTER POLICY` / `CREATE OR REPLACE 
 against the live database. Editing an already-applied migration file does nothing — the
 runner has a checksum guard and will refuse to start instead.
 
-Tests currently: **526 passing, 58 migrations.** If that number drops, something regressed.
+Tests currently: **566 passing, 64 migrations.** If that number drops, something regressed.
 
 ## Architecture you must know before touching anything
 
@@ -66,6 +66,18 @@ intended. Do not "fix" it by relaxing the assertion.
 - **Money is an exact decimal string**, never a JSON number. Paise, formatted by string
   surgery — never divided.
 - **Pagination is keyset**, never OFFSET.
+- **Entitlement is not authorisation.** `app_tenant_has_feature()` returns true for a
+  school with no subscription, and row-level security never consults it. Billing decides
+  what a school has bought; RLS decides what it may see. Do not merge them.
+- **Usage is counted from the rows**, never from a stored counter, and a plan's hard cap
+  is a BEFORE INSERT trigger — so new records are refused and existing ones keep working
+  on every code path, not just the one that remembered to check.
+- **Pick the strongest mechanism each table can support.** Tenant-scoped tables get a
+  grant plus an RLS policy. Tables with no tenant column (the plan catalogue) get no app
+  grant at all and are read through `SECURITY DEFINER` functions, because there is no RLS
+  underneath them to catch a query that forgets its filter — and a definer function's
+  WHERE clause is then the whole boundary, so it must be tested against a database where
+  the wrong answer exists.
 - **OpenAPI is generated from the same Zod schemas the handlers validate with**, and a
   test walks the real Express router to catch drift.
 
@@ -101,6 +113,13 @@ Adminer is on **:8081** for browsing the schema; `SCHEMA.md` is the written vers
   matter are exercised over real HTTP with a real app (`*-http.spec.ts`,
   `platform-entry.spec.ts`) because the first bug of this kind shipped a 500 past 33
   passing tests.
+
+## Working alongside another agent
+
+This repo has already had one milestone built twice in parallel, which cost a day and
+overwrote uncommitted work. If more than one session is open on it: **commit to a branch
+before starting, and check `git log --oneline -3` and `git status` first.** A tree with
+two implementations of the same migration number does not migrate at all.
 
 ## Layout
 

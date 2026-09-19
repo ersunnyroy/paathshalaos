@@ -359,14 +359,61 @@ attendance to mark on Monday. So the ladder is:
    hostage. A school locked out of its attendance register on a Monday is a school that
    never renews and tells every other school in the district.
 
-| ID | Milestone | Definition of done |
-| --- | --- | --- |
-| M16.1 | Versioned plan catalogue | Plans with limits and feature flags; editing creates a version and never reprices an existing subscriber |
-| M16.2 | Subscriptions and trials | Per-school plan, trial with an end date, renewal period, and an append-only history of every change with who and why |
-| M16.3 | Feature gates in one place | `app_tenant_has_feature()` consulted by the guard, so a disabled module is refused identically in every caller rather than per-controller |
-| M16.4 | Metering | Learners, staff, campuses, messages and storage counted per period, from the real rows rather than a counter somebody increments |
-| M16.5 | The ladder, exactly as above | Over-allowance meters, hard cap refuses new records only, overdue degrades to read-only, and nothing is ever deleted or withheld |
-| M16.6 | Self-serve visibility | The school's own Getting started page shows their plan, usage against it, and what would change on the next tier. No surprises at renewal |
+| ID | Milestone | Status | What shipped |
+| --- | --- | --- | --- |
+| M16.1 | Versioned plan catalogue | Done | `plan` → `plan_version` → `plan_limit` / `plan_feature`. A published version is frozen by a trigger, **and so are its terms** — freezing the version row alone leaves the door open, since moving a learner cap from 600 to 60 needs no price change to put every school on the plan over it by morning |
+| M16.2 | Subscriptions and trials | Done | One live subscription per school, pointing at a **version**. Every change writes an append-only `subscription_event` carrying who, when and why — the row that settles "we were never told we'd moved to the new price" |
+| M16.3 | Feature gates in one place | Done | `app_tenant_has_feature()`, consulted by a global guard. A school with no subscription gets **true**: every school predating this milestone has no row, and defaulting to "no features" would switch transport off for all of them on deploy. Billing state is not an authorisation boundary — RLS is, and it never consults this |
+| M16.4 | Metering | Done | Counted from the rows, never from a stored counter: a counter drifts on any path that does not increment it, and a school refused at a cap it is not at is worse than a slow query. Learners are those **enrolled or on leave** — a child on leave holds a seat, a child who left does not |
+| M16.5 | The ladder, exactly as designed | Done | Over the allowance: metered, nobody stopped. At the cap: a **BEFORE INSERT** trigger refuses new records and existing ones keep working, including updates. Overdue: writable through a 14-day grace window, then read-only. The transitions are enumerated, so `active → read_only` without a recorded missed payment is refused |
+| M16.6 | Self-serve visibility | Done | The Getting started page shows the plan, usage against each limit with three states rather than a percentage, which modules are included, and what the next tier would change — so a school learns it has outgrown its plan in February rather than from a refused admission in April |
+
+**The rung I would not move.** A read-only school keeps every GET, including every
+export. Withholding a school's own register because they owe us money is the one thing in
+this ladder that would be indefensible — it is their record, their children; we are the
+processor, not the owner. That is a test (`never withholds the school's own data`), not a
+paragraph, and a mutation making the guard refuse safe methods fails it.
+
+**Merged from a parallel build.** M16 was built twice — once here and once in a Claude
+Code session on the same repo, which is a process failure worth recording rather than
+hiding. The two were reconciled by reading both, not by picking the newer one.
+
+The parallel version had never been executed against a real database: its metering
+function referenced three columns that do not exist (`message_attempt.recipient_id`,
+`message_recipient.request_id`, `message_attempt.attempted_at`), its
+`app_tenant_is_read_only()` filtered `status != 'cancelled'` while claiming to return true
+for cancelled — so cancelling a subscription restored full write access — its learner
+count omitted `deleted_at IS NULL`, and its immutability trigger on `plan_limit` covered
+UPDATE and DELETE but not INSERT. Its hard cap was a function for callers to consult
+rather than a trigger, so any path that forgot to ask was uncapped.
+
+It was righter about one thing, and that change was taken: **the app role should hold no
+grant on the catalogue at all.** Those four tables carry no tenant column, so there is no
+row-level security underneath them — the grant was the entire boundary, and it permitted
+any school to read draft prices and privately negotiated plans. Migration 0064 revokes it
+and puts the school's four legitimate questions behind `SECURITY DEFINER` functions.
+`subscription` and `subscription_event` deliberately keep their grant and policies: those
+ARE tenant-scoped, so RLS is available as a second line, and a definer function reading
+tenant data has none. Strongest mechanism each table can support, rather than one pattern
+everywhere.
+
+**Three things the tests found that the design did not.**
+
+*The freeze was half a freeze.* The first version froze `plan_version` and left
+`plan_limit` and `plan_feature` editable. The price was safe and the limits were not,
+which is the more dangerous half.
+
+*Append-only beat the FK.* Migration 0060 made `subscription_event.actor_user_id`
+`ON DELETE SET NULL` so that offboarding an account would not be blocked. The append-only
+trigger refused it immediately — SET NULL is an UPDATE. 0061 reverted it: two promises
+were in conflict and the stronger one wins, since accounts are soft-deleted in production
+and only the test teardown hard-deletes.
+
+*A mutation that changed nothing.* Relaxing the subscription policy's `WITH CHECK (false)`
+to the tenant match broke no test — because the app role has no write **grant** on the
+table at all, so the statement is refused before any policy is consulted. The test was
+proving the grant while appearing to prove the policy. The privilege is now asserted
+directly, and the migration says which mechanism is the enforcing one.
 
 ### Deliberately out of scope
 
@@ -406,7 +453,7 @@ left to the end.
 | M13 The rest of the surface | Done | — | Screens for results, messages and imports; three finished milestones made visible |
 | M14 Platform and provisioning | Done | 16 | 7 mutations verified; a school can be onboarded without a DBA, by a role that cannot read inside one |
 | M15 Super admin console | Done | 33 | 12 mutations verified; 2 real defects found (the console had no login; a read-only session could write) |
-| M16 Plans and entitlements | **Next** | — | Versioned catalogue, metering, and a degradation ladder that never locks a school out of its own data |
+| M16 Plans and entitlements | Done | 40 | 20 mutations verified; 4 real defects found, plus a parallel implementation reconciled |
 
 Two design decisions were made during M2 that are worth carrying forward:
 

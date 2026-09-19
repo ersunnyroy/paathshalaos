@@ -16,6 +16,8 @@ import { platformAdminService } from './platform-admin.service.ts';
 import { entryService } from './entry.service.ts';
 import { consoleService } from './console.service.ts';
 import { platformAuthService } from './platform-auth.service.ts';
+import { catalogueService } from '../billing-plans/catalogue.service.ts';
+import { subscriptionService } from '../billing-plans/subscription.service.ts';
 import { getContext } from '../../common/request-context.ts';
 import { ApiError } from '../../common/errors.ts';
 
@@ -29,6 +31,58 @@ const provision = z.object({
     'Uppercase letters, digits and hyphens — it appears in receipt numbers.'),
   boardOrAffiliation: z.string().max(80).optional(),
   timezone: z.string().max(60).optional(),
+});
+
+const METRICS = ['learners', 'staff', 'campuses', 'messages_per_month', 'storage_mb'] as const;
+const FEATURES = ['transport', 'hr', 'lms', 'public_api', 'whatsapp',
+                  'advanced_reports'] as const;
+
+/** Paise as a decimal string. Never a JSON number — see the money rules. */
+const money = z.string().regex(/^\d{1,12}(\.\d{1,2})?$/,
+  'An amount in paise, as a string. A price that has been through a float is not a price.');
+
+const planInput = z.object({
+  code: z.string().regex(/^[a-z][a-z0-9_]{1,30}$/),
+  name: z.string().min(1).max(120),
+  isPublic: z.boolean().optional(),
+});
+
+const versionInput = z.object({
+  planCode: z.string().min(1).max(32),
+  priceMonthly: money,
+  priceAnnual: money,
+  note: z.string().max(300).optional(),
+});
+
+const termsInput = z.object({
+  limits: z.array(z.object({
+    metric: z.enum(METRICS),
+    included: z.number().int().min(0),
+    hardCap: z.number().int().min(0).nullable(),
+  })).max(20),
+  features: z.array(z.object({
+    feature: z.enum(FEATURES),
+    enabled: z.boolean(),
+  })).max(20),
+});
+
+const subscribeInput = z.object({
+  tenantId: z.string().uuid(),
+  planVersionId: z.string().uuid(),
+  billingPeriod: z.enum(['monthly', 'annual']).optional(),
+  trialDays: z.number().int().min(0).max(120).optional(),
+});
+
+const moveInput = z.object({
+  tenantId: z.string().uuid(),
+  planVersionId: z.string().uuid(),
+  reason: z.string().min(5).max(300),
+});
+
+const statusInput = z.object({
+  tenantId: z.string().uuid(),
+  status: z.enum(['trialing', 'active', 'past_due', 'read_only', 'ended']),
+  reason: z.string().min(3).max(300),
 });
 
 const credentials = z.object({
@@ -177,6 +231,88 @@ export class PlatformController {
   @RequiresCapability('impersonate')
   async sessions() {
     return { data: await entryService.recent() };
+  }
+
+  // -------------------------------------------------------------------------
+  // Plans and subscriptions (M16)
+  // -------------------------------------------------------------------------
+
+  @Get('plans')
+  @RequiresCapability('billing')
+  async plans() {
+    return { data: await catalogueService.list() };
+  }
+
+  @Post('plans')
+  @RequiresCapability('billing')
+  async createPlan(@Body() body: unknown) {
+    const parsed = planInput.safeParse(body);
+    if (!parsed.success) throw ApiError.fromZod(parsed.error);
+    return { data: await catalogueService.createPlan(actor(), parsed.data) };
+  }
+
+  @Post('plans/versions')
+  @RequiresCapability('billing')
+  async draftVersion(@Body() body: unknown) {
+    const parsed = versionInput.safeParse(body);
+    if (!parsed.success) throw ApiError.fromZod(parsed.error);
+    const { planCode, ...rest } = parsed.data;
+    return {
+      data: await catalogueService.draftVersion(actor(), planCode, rest),
+      notice: 'A draft. Set its terms, then publish — after that the terms are '
+        + 'what every school on it agreed to and cannot be edited.',
+    };
+  }
+
+  @Post('plans/versions/:id/terms')
+  @RequiresCapability('billing')
+  async setTerms(@Param('id') id: string, @Body() body: unknown) {
+    const parsed = termsInput.safeParse(body);
+    if (!parsed.success) throw ApiError.fromZod(parsed.error);
+    await catalogueService.setTerms(actor(), id, parsed.data);
+    return { data: { status: 'set' } };
+  }
+
+  @Post('plans/versions/:id/publish')
+  @RequiresCapability('billing')
+  async publishVersion(@Param('id') id: string) {
+    await catalogueService.publish(actor(), id);
+    return { data: { status: 'published' } };
+  }
+
+  @Post('plans/versions/:id/retire')
+  @RequiresCapability('billing')
+  async retireVersion(@Param('id') id: string) {
+    await catalogueService.retire(actor(), id);
+    return {
+      data: { status: 'retired' },
+      notice: 'No new subscribers. Every school already on it stays on it at '
+        + 'their price until somebody moves them deliberately.',
+    };
+  }
+
+  @Post('subscriptions')
+  @RequiresCapability('billing')
+  async subscribe(@Body() body: unknown) {
+    const parsed = subscribeInput.safeParse(body);
+    if (!parsed.success) throw ApiError.fromZod(parsed.error);
+    return { data: await subscriptionService.subscribe(actor(), parsed.data) };
+  }
+
+  @Post('subscriptions/move')
+  @RequiresCapability('billing')
+  async moveSubscription(@Body() body: unknown) {
+    const parsed = moveInput.safeParse(body);
+    if (!parsed.success) throw ApiError.fromZod(parsed.error);
+    return { data: await subscriptionService.moveToVersion(actor(), parsed.data) };
+  }
+
+  @Post('subscriptions/status')
+  @RequiresCapability('billing')
+  async setSubscriptionStatus(@Body() body: unknown) {
+    const parsed = statusInput.safeParse(body);
+    if (!parsed.success) throw ApiError.fromZod(parsed.error);
+    return { data: await subscriptionService.setStatus(actor(), parsed.data) };
   }
 
   @Get('admins')

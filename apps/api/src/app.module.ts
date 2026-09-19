@@ -14,13 +14,15 @@ import { OpenApiController } from './modules/public-api/openapi.controller.ts';
 import { PlatformController } from './modules/platform/platform.controller.ts';
 import { ReadOnlyEntryGuard } from './modules/platform/read-only-entry.guard.ts';
 import { AccessLogController } from './modules/platform/access-log.controller.ts';
+import { EntitlementGuard } from './modules/billing-plans/entitlement.guard.ts';
+import { PlanController } from './modules/billing-plans/plan.controller.ts';
 
 @Module({
   controllers: [
     HealthController, AuthController, TenancyController,
     ReportingController, DirectoryController,
     IntegrationsController, PublicApiController, SupportController,
-    OpenApiController, PlatformController, AccessLogController,
+    OpenApiController, PlatformController, AccessLogController, PlanController,
   ],
   providers: [
     // Registered globally, so a new controller is authenticated by default and
@@ -30,6 +32,9 @@ import { AccessLogController } from './modules/platform/access-log.controller.ts
     // Order matters: Nest runs global guards in registration order, and this
     // one reads what AuthGuard put in the request context.
     { provide: APP_GUARD, useClass: ReadOnlyEntryGuard },
+    // Last: it asks the database a question, so it runs only for requests that
+    // have already proved who they are and which school they are in.
+    { provide: APP_GUARD, useClass: EntitlementGuard },
   ],
 })
 export class AppModule implements NestModule {

@@ -812,3 +812,11 @@ input:focus, select:focus { border-color: var(--brand); }
 .sheet label.check em {
   display: block; font-style: normal; font-size: 12px; color: var(--ink-3); margin-top: 2px;
 }
+
+/* ------------------------------------------------------------ plan usage */
+
+.usage { display: flex; flex-direction: column; gap: 14px; }
+.usage-row strong { font-size: 13px; font-weight: 600; }
+.usage-row .sub { display: block; font-size: 12px; color: var(--ink-3); margin-top: 1px; }
+.usage-row .meter { margin-top: 7px; }
+.features { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 16px; }

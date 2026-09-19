@@ -85,6 +85,7 @@ const TABLE_TEARDOWN_ORDER = [
   'room', 'subject', 'term',
   'guardian_link', 'student', 'staff', 'programme',
   'role_grant', 'tenant_principal', 'contact_method', 'address',
+  'subscription_event', 'subscription',
   'impersonation_session', 'audit_checkpoint',
   'person',
   'file',
@@ -101,6 +102,8 @@ const TABLE_TEARDOWN_ORDER = [
  */
 const APPEND_ONLY_TRIGGERS: ReadonlyArray<readonly [string, string]> = [
   ['consent_record', 'consent_record_append_only'],
+  ['subscription_event', 'subscription_event_no_update'],
+  ['subscription_event', 'subscription_event_no_delete'],
   ['enrollment_event', 'enrollment_event_no_update'],
   ['enrollment_event', 'enrollment_event_no_delete'],
   ['admission_decision', 'admission_decision_frozen'],
