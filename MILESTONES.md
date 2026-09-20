@@ -597,6 +597,117 @@ that can be set is a field somebody will ask to have set.
 - **A cross-tenant SQL console.** See the design note at the top. Every read of tenant
   data goes through a session that leaves a record.
 
+## M20 — transport
+
+`transport` has been a plan flag since M16 with nothing behind it. This is the module the
+flag was selling.
+
+The whole milestone turns on one sentence, written into 0066 before any code: **a manifest —
+children, stops, times — is the document you would want if you meant a child harm.** So it is
+not visible to "staff". It is visible to the people who need it for the run that is happening,
+and the definition of "happening" is *today*, not *this term*.
+
+| ID | Part | Status | What it is |
+| --- | --- | --- | --- |
+| M20.1 | The schema | Done | `vehicle`, `driver`, `route`, `route_stop`, `route_assignment`, `transport_enrolment`, `boarding_event` (0066). Papers that expire — fitness, insurance, permit, licence — are columns rather than a document folder, because a bus with lapsed fitness is not a data-quality problem |
+| M20.2 | Who may see a manifest | Done | `app_drives_route()` answers *today*, not *ever*. `app_may_see_transport()` has three ways in and no fourth: the office through the ordinary student-visibility rule, the driver or attendant of the route today, and nobody else |
+| M20.3 | The manifest as a document | Done | `app_route_manifest()` (0067) — a `SECURITY DEFINER` function with a fixed column list, checked once at the door. A driver gets the five fields a run needs and gains **no read** over `student`, `person` or `contact_method` |
+| M20.4 | Moving a child | Done | Ended, not overwritten: "which bus was my child on last Tuesday" stays answerable. A change to an arrangement that has not carried anyone yet is amended in place instead, because closing a row the day before it opened records a journey from Tuesday to Monday |
+| M20.5 | Boarding | Done | Same contract as classroom attendance — idempotent on a `client_event_id` minted on the device before any network call, so a bus coming back into signal replays rather than double-marks |
+| M20.6 | The HTTP surface | Done | `/v1/transport/*`, entirely behind `@RequiresFeature('transport')` |
+
+### Two defects, one of them severe
+
+**0066 opened every transport row in the school to anyone with a person record.** It called
+
+```sql
+app_student_visible(p_student_id, app_current_person_id())
+```
+
+The second parameter of that function is the *student's* `person_id`; it exists so the "or the
+learner themselves" branch can compare it to the caller. Passing the caller's own id made that
+branch read `app_current_person_id() = app_current_person_id()` — true for every guardian,
+teacher and former driver, for every child in the school. The tests caught it on their first
+run, which is the only good part of the story.
+
+0067 fixes it, and does not stop at fixing it: the trap was a two-argument predicate whose
+second argument is derivable from the first, and it was always going to be sprung by whoever
+called it next. There is now a one-argument `app_student_visible(uuid)` that resolves the
+learner itself, and nothing new is ever asked to supply the id.
+
+**A test passed for the wrong reason.** Weakening `boarding_event`'s `WITH CHECK` to tenant id
+alone left all 18 tests green. The refusal the test believed it was asserting came from
+Postgres applying a `FOR ALL` policy's `USING` clause on the `ON CONFLICT` path — that is,
+from a clause present for *idempotency*, not for authority. A plain `INSERT` walked straight
+through. The assertion is now made against the table with a bare insert, and the mutation dies.
+
+A mutation that changes nothing is a finding, not a pass. This is the second time that rule
+has earned its place.
+
+## The rest of the plan (M20–M31)
+
+The first nineteen milestones were a plan that ran out rather than a plan that finished.
+What follows is the honest remainder: everything named as a gap, everything sold but not
+built, and the work between a system that runs on a laptop and one a school can rely on.
+
+**Three of these are not optional in the way the others are.** Nothing is deployed
+anywhere; three modules are gated by plan flags that already exist and have nothing behind
+them; and money does not move. Those come first, and the ordering below says why.
+
+### The integrity debt, first
+
+M16 shipped feature flags for `transport`, `hr` and `lms`. The gates work. The modules do
+not exist. That is the wrong order to have built things in — a flag that guards nothing is
+a promise on a pricing page — so it is paid off before anything new is added.
+
+| ID | Milestone | Definition of done |
+| --- | --- | --- |
+| M20 | Transport — **done, see above** | Routes, stops, vehicles, drivers, and which child is on which bus today. A driver sees the children on **their** route and nothing else; a guardian sees their own child's bus and no other family's. Boarding is attendance, with the same offline queue and the same conflict rules |
+| M27 | HR | Staff lifecycle beyond a `staff` row: contracts, leave balances, and the **relief cover** that attendance has never been able to express. Payroll *inputs*, not payroll — running payroll is a compliance surface of its own and guessing at it would be worse than omitting it |
+| M28 | Learning | Lessons, assignments, submissions, and marks that flow into the assessment module rather than beside it |
+
+### The pilot set
+
+The smallest set that lets one real school use this in anger. Everything after it can
+follow real usage instead of guesses.
+
+| ID | Milestone | Definition of done |
+| --- | --- | --- |
+| M21 | The parent app | The mobile app stops being one screen. Attendance, fees, results and messages for a guardian's own children, readable offline. This is where parents actually live, and today they have nothing |
+| M22 | Deployed, reproducibly | Infrastructure as code for the AWS India region, two environments, secrets that are not in a repository, migrations that run as part of a deploy, and a rollback that has been performed rather than described |
+| M23 | Observability | Structured logs with a request id that survives across services, metrics, traces, and alerts that fire on the things that would actually hurt — failed migrations, auth error rates, webhook backlog, queue depth |
+| M24 | Backup and restore | Point-in-time recovery, and a **restore drill that has actually been run** with the time it took written down. A backup nobody has restored is a belief, not a backup |
+| M25 | Taking money from schools | Subscription invoicing against M16's plans, GST, and one payment provider. M16 deliberately stopped short of this; a metered plan nobody is billed for is a spreadsheet |
+| M26 | Taking money from parents | A real gateway behind M7's mandates and reconciliation — UPI AutoPay and cards. The ledger, the receipts and the settlement matching already exist and have never seen a live rupee |
+
+### Everything else named as a gap
+
+| ID | Milestone | Definition of done |
+| --- | --- | --- |
+| M29 | It speaks the language | Hindi and the regional languages a school actually teaches in. `organization.locale` has existed since M1 and nothing has ever read it, which makes "India-first" a claim rather than a feature |
+| M30 | Scale, where it is real | `attendance_record` partitioned by period; the rate limiter moved off per-process memory into the Redis that has been running unused since M0; query budgets on the paths that grow with a school's size |
+| M31 | Fit to be trusted | A security review by somebody who did not write this, a DPDP assessment by a lawyer, and a pilot with one real school. The pilot will find more than the other two |
+
+### What is deliberately NOT on this list
+
+- **Payroll.** Statutory deductions, PF, ESI and TDS are a compliance product, not a
+  feature. M27 produces the inputs and stops.
+- **A general report builder.** Every school wants one and every one of them wants a
+  different one. The `advanced_reports` flag stays unbuilt until real schools have asked
+  for the same report three times.
+- **Biometric and RFID attendance.** Hardware integrations are a support burden that scales
+  with the number of vendors, not the number of schools.
+- **An AI anything.** There is no question a school has asked that this product answers
+  better with a model in it, and adding one to a system holding children's records needs a
+  reason better than the current fashion.
+
+### Honest sizing
+
+Eleven milestones after M19, of which M22, M23 and M24 are a single piece of work in three
+parts and should be done together. The pilot set — M21, M22, M25, M26 — is what stands
+between this and a school using it for real. Every milestone so far has found defects that
+changed what the next one needed, and a pilot will reorder everything below M26.
+
 ## Build order and why
 
 Tenancy before everything, because isolation cannot be retrofitted. Identity and audit next,
@@ -628,6 +739,7 @@ left to the end.
 | M14 Platform and provisioning | Done | 16 | 7 mutations verified; a school can be onboarded without a DBA, by a role that cannot read inside one |
 | M15 Super admin console | Done | 33 | 12 mutations verified; 2 real defects found (the console had no login; a read-only session could write) |
 | M16 Plans and entitlements | Done | 40 | 20 mutations verified; 4 real defects found, plus a parallel implementation reconciled |
+| M20 Transport | Done | 19 | 13 mutations verified; 1 severe visibility defect and 1 test passing for the wrong reason |
 
 Two design decisions were made during M2 that are worth carrying forward:
 

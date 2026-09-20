@@ -18,6 +18,7 @@ import { EntitlementGuard } from './modules/billing-plans/entitlement.guard.ts';
 import { PlanController } from './modules/billing-plans/plan.controller.ts';
 import { BrandController, BrandingSettingsController }
   from './modules/branding/brand.controller.ts';
+import { TransportController } from './modules/transport/transport.controller.ts';
 
 @Module({
   controllers: [
@@ -25,7 +26,7 @@ import { BrandController, BrandingSettingsController }
     ReportingController, DirectoryController,
     IntegrationsController, PublicApiController, SupportController,
     OpenApiController, PlatformController, AccessLogController, PlanController,
-    BrandController, BrandingSettingsController,
+    BrandController, BrandingSettingsController, TransportController,
   ],
   providers: [
     // Registered globally, so a new controller is authenticated by default and

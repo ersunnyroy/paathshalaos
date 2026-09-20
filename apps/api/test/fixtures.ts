@@ -76,6 +76,8 @@ const TABLE_TEARDOWN_ORDER = [
   'payment_webhook_event', 'payment', 'mandate',
   'invoice_line', 'invoice', 'installment', 'concession', 'fee_assignment',
   'fee_component', 'fee_plan',
+  'boarding_event', 'transport_enrolment', 'route_assignment', 'route_stop',
+  'route', 'driver', 'vehicle',
   'attendance_correction', 'attendance_record', 'attendance_session',
   'leave_request', 'outbox_event',
   'subject_election', 'enrollment_event', 'enrollment',
@@ -269,6 +271,10 @@ export async function destroyUsers(userIds: string[]): Promise<void> {
     // platform_admin references the account too, and a suite whose teardown was
     // interrupted leaves rows that block every later purge. Cleared here so one
     // aborted run cannot wedge the whole suite.
+    // boarding_event.recorded_by points at the account. An aborted run leaves
+    // rows whose tenant is no longer discoverable, and they would block the
+    // account delete for ever.
+    await client.query('DELETE FROM boarding_event WHERE recorded_by = ANY($1)', [userIds]);
     await client.query('DELETE FROM platform_admin WHERE user_account_id = ANY($1)',
       [userIds]);
     await client.query('DELETE FROM role_grant WHERE user_account_id = ANY($1)', [userIds]);
@@ -551,6 +557,8 @@ export async function purgeTestData(emailDomain = '%-test.example'): Promise<voi
                        'payment_webhook_event', 'payment', 'mandate',
                        'invoice_line', 'invoice', 'installment', 'concession', 'fee_assignment',
                        'fee_component', 'fee_plan',
+                       'boarding_event', 'transport_enrolment', 'route_assignment',
+                       'route_stop', 'route', 'driver', 'vehicle',
                        'attendance_correction', 'attendance_record', 'attendance_session',
                        'leave_request', 'outbox_event',
                        'subject_election', 'enrollment_event', 'enrollment',
