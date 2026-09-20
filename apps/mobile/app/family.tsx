@@ -5,9 +5,10 @@ import {
 } from 'react-native';
 import { router } from 'expo-router';
 import {
-  tabsFor, rupees, attendanceRate, feeState, childName, childClass,
-  ATTENDANCE_LABEL, type Child, type Tab, type Fees, type AttendanceSummary,
+  tabsFor, rupees, attendanceRate, feeState, childName, childClass, ATTENDANCE_STATES,
+  type Child, type Tab, type Fees, type AttendanceSummary,
 } from '@/lib/family.ts';
+import { english, type StringKey, type Translator } from '@/lib/i18n.ts';
 import { sortWork, outstanding, workLine, bucketOf, type Work } from '@/lib/learning.ts';
 import { asOfLabel } from '@/lib/cache.ts';
 import { theme } from '@/lib/theme.ts';
@@ -30,10 +31,13 @@ interface Bus {
   vehicle_registration: string | null; direction: string;
 }
 
-const TAB_LABEL: Record<Tab, string> = {
-  attendance: 'Attendance', fees: 'Fees', work: 'Homework',
-  results: 'Results', bus: 'Bus',
-};
+/**
+ * Attendance states come off the wire, so the key is built rather than looked
+ * up — and a state this app has no word for falls through to the raw value
+ * instead of a blank cell. A register that says `half_day` is worse than one
+ * that says nothing only if you never have to explain the blank.
+ */
+const ATTENDANCE_KEYS = new Set<string>(ATTENDANCE_STATES);
 
 /**
  * The parent app.
@@ -56,9 +60,26 @@ export default function Family() {
   } | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  /*
+   * Starts in English and is corrected, rather than waiting for the chain
+   * before drawing anything. The first frame after launch uses what the phone
+   * remembered; the server's answer arrives a moment later. A blank screen on
+   * a train, in aid of a language the phone already knew, is the alternative.
+   */
+  const [say, setSay] = useState<Translator>(() => english);
 
   const child = children?.find((c) => c.id === childId) ?? null;
   const tabs = child ? tabsFor(child) : [];
+
+  useEffect(() => {
+    void (async () => {
+      const s = await session();
+      const remembered = await s.loadLocale();
+      setSay(() => remembered);
+      const fresh = await s.refreshLocale();
+      setSay(() => fresh);
+    })();
+  }, []);
 
   useEffect(() => {
     void (async () => {
@@ -70,7 +91,7 @@ export default function Family() {
         setChildren(held.data);
         setChildId((current) => current || held.data[0]?.id || '');
       } catch (e) {
-        setError(e instanceof Error ? e.message : 'Could not load your children.');
+        setError(e instanceof Error ? e.message : say('error.children'));
         setChildren([]);
       }
     })();
@@ -103,13 +124,13 @@ export default function Family() {
       const held = await (await s.cache()).read(`${tab}:${childId}`,
         () => s.api().get<unknown>(url));
       if (!held) {
-        setError('No signal, and nothing saved on this phone for this yet.');
+        setError(say('error.offline'));
       } else {
         setPanel(held);
       }
     } catch (e) {
       // A refusal reaches here rather than being papered over with the cache.
-      setError(e instanceof Error ? e.message : 'Could not load that.');
+      setError(e instanceof Error ? e.message : say('error.panel'));
     } finally {
       setLoading(false);
     }
@@ -128,10 +149,7 @@ export default function Family() {
       refreshControl={<RefreshControl refreshing={false} onRefresh={() => void load()} />}
     >
       {children.length === 0 ? (
-        <Text style={styles.empty}>
-          This account is not linked to any child yet. The school office can do
-          that for you.
-        </Text>
+        <Text style={styles.empty}>{say('family.noChildren')}</Text>
       ) : null}
 
       {children.length > 1 ? (
@@ -151,7 +169,7 @@ export default function Family() {
         <>
           <Text style={styles.title}>{childName(child)}</Text>
           <Text style={styles.sub}>
-            {childClass(child) ?? 'Not in a class yet'} · {child.admission_no}
+            {childClass(child) ?? say('child.noClass')} · {child.admission_no}
           </Text>
 
           <View style={styles.switcher}>
@@ -159,7 +177,7 @@ export default function Family() {
               <Pressable key={t} onPress={() => setTab(t)}
                          style={[styles.chip, t === tab && styles.chipOn]}>
                 <Text style={[styles.chipText, t === tab && styles.chipTextOn]}>
-                  {TAB_LABEL[t]}
+                  {say(`tab.${t}` as StringKey)}
                 </Text>
               </Pressable>
             ))}
@@ -175,17 +193,17 @@ export default function Family() {
               {!panel.live ? (
                 <View style={styles.stale}>
                   <Text style={styles.staleText}>
-                    No signal. This is what the school said {asOfLabel(panel.asOf)}.
+                    {say('cache.stale', { when: asOfLabel(panel.asOf) })}
                   </Text>
                 </View>
               ) : null}
 
               {tab === 'attendance'
-                ? <Attendance summary={panel.data as AttendanceSummary} />
-                : tab === 'fees' ? <FeesPanel fees={panel.data as Fees} />
-                : tab === 'work' ? <WorkPanel rows={panel.data as Work[]} />
-                : tab === 'results' ? <Results runs={panel.data as ResultRun[]} />
-                : <BusPanel bus={panel.data as Bus | null} />}
+                ? <Attendance summary={panel.data as AttendanceSummary} say={say} />
+                : tab === 'fees' ? <FeesPanel fees={panel.data as Fees} say={say} />
+                : tab === 'work' ? <WorkPanel rows={panel.data as Work[]} say={say} />
+                : tab === 'results' ? <Results runs={panel.data as ResultRun[]} say={say} />
+                : <BusPanel bus={panel.data as Bus | null} say={say} />}
             </>
           ) : null}
         </>
@@ -197,30 +215,32 @@ export default function Family() {
           router.replace('/sign-in');
         })();
       }}>
-        <Text style={styles.signOut}>Sign out</Text>
+        <Text style={styles.signOut}>{say('action.signOut')}</Text>
       </Pressable>
     </ScrollView>
   );
 }
 
-function Attendance({ summary }: { summary: AttendanceSummary }) {
+function Attendance({ summary, say }: { summary: AttendanceSummary; say: Translator }) {
   const rate = attendanceRate(summary);
   return (
     <View>
       <Text style={styles.big}>
-        {rate === null ? 'Nothing recorded yet' : `${rate}%`}
+        {rate === null ? say('attendance.none') : `${rate}%`}
       </Text>
       <Text style={styles.sub}>
         {summary.recorded === 0
-          ? 'The school has not marked a register in this period.'
-          : `${summary.present + summary.late} of ${summary.recorded} days in school`}
+          ? say('attendance.noRegister')
+          : say('attendance.daysInSchool', {
+              inSchool: summary.present + summary.late, recorded: summary.recorded })}
       </Text>
       {summary.days.map((d) => (
         <View key={d.on_date} style={styles.row}>
           <Text style={styles.rowKey}>{d.on_date}</Text>
           <Text style={[styles.rowValue,
             d.state === 'absent' ? { color: theme.critical } : null]}>
-            {ATTENDANCE_LABEL[d.state] ?? d.state}
+            {ATTENDANCE_KEYS.has(d.state)
+              ? say(`attendance.${d.state}` as StringKey) : d.state}
           </Text>
         </View>
       ))}
@@ -228,23 +248,22 @@ function Attendance({ summary }: { summary: AttendanceSummary }) {
   );
 }
 
-function FeesPanel({ fees }: { fees: Fees }) {
+function FeesPanel({ fees, say }: { fees: Fees; say: Translator }) {
   const state = feeState(fees);
   return (
     <View>
       <Text style={styles.big}>{rupees(fees.outstanding_paise)}</Text>
       <Text style={styles.sub}>
-        {state.kind === 'clear' ? 'Nothing outstanding'
-          : state.kind === 'overdue'
-            ? `Due ${state.days} ${state.days === 1 ? 'day' : 'days'} ago`
-            : state.days === 0 ? 'Due today'
-              : `Due in ${state.days} ${state.days === 1 ? 'day' : 'days'}`}
+        {state.kind === 'clear' ? say('fees.clear')
+          : state.kind === 'overdue' ? say('fees.overdue', { days: state.days })
+            : state.days === 0 ? say('fees.dueToday')
+              : say('fees.dueIn', { days: state.days })}
       </Text>
       {fees.invoices.map((i) => (
         <View key={i.id} style={styles.row}>
           <View style={{ flex: 1 }}>
             <Text style={styles.rowKey}>{i.invoice_no}</Text>
-            <Text style={styles.tiny}>Due {i.due_on}</Text>
+            <Text style={styles.tiny}>{say('fees.invoiceDue', { date: i.due_on })}</Text>
           </View>
           <Text style={styles.rowValue}>{rupees(i.outstanding_paise)}</Text>
         </View>
@@ -262,13 +281,10 @@ function FeesPanel({ fees }: { fees: Fees }) {
  * are finished is a number that makes somebody scroll to find out it was
  * nothing.
  */
-function WorkPanel({ rows }: { rows: Work[] }) {
+function WorkPanel({ rows, say }: { rows: Work[]; say: Translator }) {
   if (rows.length === 0) {
     return (
-      <Text style={styles.empty}>
-        Nothing set at the moment. Homework appears here once a teacher
-        publishes it.
-      </Text>
+      <Text style={styles.empty}>{say('work.none')}</Text>
     );
   }
   const waiting = outstanding(rows);
@@ -276,9 +292,7 @@ function WorkPanel({ rows }: { rows: Work[] }) {
     <View>
       <Text style={styles.big}>{waiting}</Text>
       <Text style={styles.sub}>
-        {waiting === 0 ? 'Nothing outstanding'
-          : waiting === 1 ? 'piece of work still to hand in'
-          : 'pieces of work still to hand in'}
+        {waiting === 0 ? say('work.clear') : say('work.waiting', { count: waiting })}
       </Text>
       {sortWork(rows).map((w) => {
         const bucket = bucketOf(w);
@@ -299,27 +313,25 @@ function WorkPanel({ rows }: { rows: Work[] }) {
   );
 }
 
-function Results({ runs }: { runs: ResultRun[] }) {
+function Results({ runs, say }: { runs: ResultRun[]; say: Translator }) {
   if (runs.length === 0) {
     return (
-      <Text style={styles.empty}>
-        Nothing published yet. Results appear here once the school releases them.
-      </Text>
+      <Text style={styles.empty}>{say('results.none')}</Text>
     );
   }
   return (
     <View>
       {runs.map((run) => (
         <View key={run.result_run_id} style={{ marginBottom: 18 }}>
-          <Text style={styles.heading}>{run.term_label ?? 'Results'}</Text>
+          <Text style={styles.heading}>{run.term_label ?? say('results.heading')}</Text>
           {run.lines.map((line, i) => (
             <View key={`${run.result_run_id}-${i}`} style={styles.row}>
-              <Text style={styles.rowKey}>{line.subject ?? 'Overall'}</Text>
+              <Text style={styles.rowKey}>{line.subject ?? say('results.overall')}</Text>
               <Text style={styles.rowValue}>
                 {line.not_graded_reason
                   ? line.not_graded_reason
                   : line.grade_label ?? (line.percentage
-                    ? `${Number(line.percentage).toFixed(1)}%` : '—')}
+                    ? `${Number(line.percentage).toFixed(1)}%` : say('results.notGraded'))}
               </Text>
             </View>
           ))}
@@ -329,29 +341,29 @@ function Results({ runs }: { runs: ResultRun[] }) {
   );
 }
 
-function BusPanel({ bus }: { bus: Bus | null }) {
+function BusPanel({ bus, say }: { bus: Bus | null; say: Translator }) {
   if (!bus) {
-    return <Text style={styles.empty}>This child does not travel by school bus.</Text>;
+    return <Text style={styles.empty}>{say('bus.none')}</Text>;
   }
   return (
     <View>
       <Text style={styles.big}>{bus.route_code}</Text>
       <Text style={styles.sub}>{bus.route_name}</Text>
       <View style={styles.row}>
-        <Text style={styles.rowKey}>Stop</Text>
+        <Text style={styles.rowKey}>{say('bus.stop')}</Text>
         <Text style={styles.rowValue}>{bus.stop_name}</Text>
       </View>
       <View style={styles.row}>
-        <Text style={styles.rowKey}>Pickup</Text>
+        <Text style={styles.rowKey}>{say('bus.pickup')}</Text>
         <Text style={styles.rowValue}>{bus.pickup_time?.slice(0, 5) ?? '—'}</Text>
       </View>
       <View style={styles.row}>
-        <Text style={styles.rowKey}>Drop</Text>
+        <Text style={styles.rowKey}>{say('bus.drop')}</Text>
         <Text style={styles.rowValue}>{bus.drop_time?.slice(0, 5) ?? '—'}</Text>
       </View>
       {bus.vehicle_registration ? (
         <View style={styles.row}>
-          <Text style={styles.rowKey}>Bus</Text>
+          <Text style={styles.rowKey}>{say('bus.vehicle')}</Text>
           <Text style={styles.rowValue}>{bus.vehicle_registration}</Text>
         </View>
       ) : null}

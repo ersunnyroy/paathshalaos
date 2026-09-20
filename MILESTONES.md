@@ -1154,6 +1154,194 @@ everything; and the refund refusals were proving the zod shape rather than the s
 because an empty string never reaches it. A teacher's list and a whitespace-only reason
 close both.
 
+## M29 — it speaks the language
+
+`organization.locale` was added in migration 0002, with a default of `en-IN`, and until this
+milestone **nothing in the product had ever read it**. Every locale decision resolved to a
+hard-coded `'en-IN'` in two places: `dispatch.service.ts:357` and `template.service.ts`.
+
+That is not a cosmetic gap. Follow it through: a Hindi-medium school registers its templates
+in Hindi, approves them, and sends an absence notice. The dispatcher looks for an `en-IN`
+template, finds none, and writes `no_approved_template` against every parent. **A school that
+does not operate in English could not send messages at all** — and the failure reports itself
+as a per-recipient suppression, which reads like a consent problem and sends whoever
+investigates to the wrong screen.
+
+So "India-first" was a claim about the schema. The chain is what makes it a behaviour.
+
+| ID | Sub-milestone | Status | What shipped |
+| --- | --- | --- | --- |
+| M29.1 | One locale chain, used everywhere | Done | `src/modules/i18n` — the vocabulary as a pure module, the resolution as a service. `approvedVersion` now *requires* a chain, so there is nowhere left to omit it |
+| M29.2 | The parent app in the family's language | Done | A string catalogue typed off the English one, per-key fallback, and an auditor that is itself tested against broken fixtures |
+| M29.3 | Setting a locale | Done | `/v1/locale` — the school's, the family's own, and the office's on their behalf. Migration 0079 closed the hole the first of those would have opened |
+
+### The chain, and why each link is there
+
+**What the person asked for → what the school teaches in → `en-IN`.**
+
+The person's own preference wins because a parent who set Hindi has told us something a
+default cannot override. The school's locale comes next because a Tamil-medium school's
+parents overwhelmingly read Tamil, and asking eight hundred families to each set a preference
+before the product works for them is not a migration anybody completes. `en-IN` is last
+because it is the only tag every seeded row carries — not because it is anybody's language.
+
+It is a *chain* rather than a winning string, and that is the whole fix. The old code
+collapsed the answer to one locale before the template lookup ran, so by the time anything
+could have consulted the school's language, the alternatives had been thrown away.
+
+Three smaller decisions inside it:
+
+- **An unrecognised but well-formed tag is kept, not dropped.** `message_template_version.locale`
+  is free text; a school that registered templates under `bho-IN` (Bhojpuri, not in the Eighth
+  Schedule) must still reach its parents. Only a malformed string is discarded, because a
+  malformed tag cannot match a row anyway. `TEACHING_LOCALES` is a picker list, not a
+  permission list.
+- **Every locale a person has stated counts, not just the one keyed to this purpose.**
+  `communication_preference.locale` is per purpose, which is a schema shape this has to live
+  with: a language belongs to the reader, not to the subject. Somebody who chose Tamil for
+  attendance and Bengali for fees has told us twice which languages they read.
+- **`message_recipient.locale` is corrected after the send** to the language actually used,
+  which is not always the head of the chain. A row claiming Hindi when the parent received
+  Tamil cannot answer "what did we actually say to them".
+
+### The endonyms that are missing on purpose
+
+`TEACHING_LOCALES` is English plus the twenty-two languages of the Eighth Schedule — the
+constitutional list, not a list of "languages we have translated into", because a school picks
+the language it teaches in and whether a template exists in it is a separate question the
+template table answers per row.
+
+Five entries carry no endonym: Kashmiri, Sindhi, Manipuri, Santali, Bodo. The spelling in
+those scripts is **not publicly verified** by this author, and a language name printed wrong in
+a picker is worse than one that is missing — the missing one reads as incomplete, the wrong one
+reads as carelessness about the reader. `endonymOf` falls back to the English name, and the
+gap is marked in the source for somebody who reads the script.
+
+### The mutation pass, and the one survivor
+
+Eighteen mutations against the eighteen tests. Seventeen died on the first pass. One did not:
+
+**Dropping `updated_at DESC` from the preference ordering broke nothing.** No test had ever set
+two locales under purposes *other* than the one being sent, so the tie-break had never
+decided anything — the assertion that looked like it covered recency was satisfied by
+alphabetical order by accident. Closed with a test that sets Bengali under fees thirty days
+ago and Tamil under marketing now, where the two orderings disagree.
+
+One earlier "kill" was also thrown out as dishonest: removing `(purpose = $2)` from the ORDER BY
+removed the last use of `$2`, so Postgres refused the bind and the test failed for a mechanical
+reason. Re-run as `(purpose <> $2)`, which keeps the parameter and inverts the preference, it
+died properly.
+
+
+### M29.2 — words, and what happens when they are missing
+
+The English catalogue **is** the type: `Strings = Partial<Record<keyof typeof EN, Phrase>>`.
+That one decision does three things no test does as well. A string added to the app breaks no
+translation, because being late is allowed. A key *removed* from English breaks every locale
+that still translates it, so dead strings cannot pile up. And a key **misspelled** in a
+translation is a type error immediately rather than a string that falls back to English
+forever — which is the failure this shape exists for: a translated app where one screen is
+quietly in the wrong language and nobody can see why.
+
+Resolution is **per key, not per catalogue**. The obvious implementation picks one catalogue up
+front, and a language with five strings in it then renders five words and fifteen blanks.
+
+**A missing interpolation value leaves its placeholder standing.** The API throws on a missing
+template variable, because a half-rendered SMS goes to eight hundred people and cannot be
+recalled. A phone is different: throwing inside a render takes the screen down, and a parent
+with a blank screen has lost more than a parent with a visibly broken sentence. So `t` renders
+`Due {days} days ago`, which is obviously wrong and gets reported, rather than `Due  days ago`,
+which reads like a sentence.
+
+**The Hindi catalogue is deliberately incomplete**, and shipping it half-done is the choice. A
+parent who reads Hindi and sees five familiar words among twenty English ones is better served
+than one who sees twenty English words because the translation was not finished — and the half
+state is visible to everybody, which is how the rest gets written.
+
+**The device locale is the last guess, not the first.** A family that told the school they read
+Tamil has said something deliberate; a second-hand handset with Hindi set on it has not. The
+phone's own setting is still consulted, because a fresh install at the sign-in screen has
+nothing else.
+
+**The remembered chain has no expiry**, unlike the read cache beside it. A fee balance from
+March is a wrong number with a date next to it; a language does not go wrong with age. Expiring
+it would drop a Tamil-reading parent into English after a fortnight with no signal — exactly
+when they are least able to go and change it back. The test says so, because that inconsistency
+is the thing most likely to be "fixed" later.
+
+### The audit is tested against a broken catalogue, not only a good one
+
+`auditCatalogue` names the three ways a translation goes wrong in a diff nobody reviewing it can
+read: a key English does not have, a dropped `{placeholder}`, and a plural pair flattened to one
+string. It was extracted out of the test for a reason the first version got wrong — the real
+catalogues are clean by construction, so a check written only against them passes whether or not
+it works. It now runs twice: over the shipped catalogues, where it must come back empty, and
+over deliberately broken fixtures, where it must not.
+
+### M29.3 — and the hole it would have opened
+
+`organization` has carried `GRANT SELECT, UPDATE ... TO paathshala_app` since 0003, and its
+`tenant_isolation` policy is `FOR ALL`. So **every principal of a tenant could update the
+organization row** — a parent included. Nothing exploited it because no endpoint wrote to that
+table, and M29.3 adds the first one.
+
+Migration 0079 splits the policy: reading stays open, because a parent legitimately sees the
+school's name and branding; writing needs an organisation-wide `ORG_OWNER` or `CAMPUS_ADMIN`.
+Deliberately narrower than `app_actor_has_staff_scope()`, which a teacher satisfies, and
+deliberately scoped — an admin of one campus changing what every campus writes in is a scope
+escalation wearing a settings screen.
+
+The rule is in the policy rather than the controller, because a rule enforced in one controller
+is a rule the second controller will not have.
+
+Two more decisions:
+
+- **Writing is restricted to the listed languages; reading is not.** Resolution has to tolerate
+  whatever is already in the column — an imported row, a tag from before the list existed — but
+  a picker that accepts free text is how `en_US`, `English` and `hindi` end up in one column,
+  none of which match a template row and all of which look like a setting that worked.
+- **Setting a person's language leaves one stated language, not a row per purpose.** The table
+  is keyed per purpose, so "my language" maps to no single row; writing one per purpose would
+  manufacture exactly the disagreeing-rows case the chain then has to arbitrate.
+
+### The office can set a family's language, and that is not a workaround
+
+A parent who cannot read the app cannot reach the screen that changes its language. That is the
+whole problem. `/v1/locale/people/:id` and the control on the Access page exist so the
+admissions desk can set it while the family is standing there, which is the only version of this
+that reaches the families who need it most. A parent pointing it at somebody else gets a 404 —
+not a 403, because whether that person exists is not their business.
+
+### Four survivors across M29.2 and M29.3
+
+Fourteen mutations against the mobile catalogue and store: none survived. Seven against the API
+service and nine against the 0079 policy function: four did, and each named a test that was
+weaker than it read.
+
+- **The account list's preference ordering.** Reading the *wrong* preference row passed, because
+  every row in the fixture agreed — `setForPerson` harmonises them, so after any change made
+  through the product the ordering cannot be wrong. Closed by writing a disagreeing row straight
+  to the table, which is what an import leaves behind and what the ordering exists for.
+- **`scope_type = 'organization'` in 0079.** Every `CAMPUS_ADMIN` in the suite was
+  organisation-wide, so the clause had never refused anything.
+- **`revoked_at IS NULL` in 0079.** The revoked grant in the test was campus-scoped, so the
+  *scope* clause was refusing it and the revocation clause was never consulted. Both closed by
+  one test that walks the whole lifecycle: campus-scoped refused, school-wide allowed, revoked
+  refused, expired refused, restored allowed.
+- **`tenant_id = app_current_tenant_id()` in 0079 — not closable.** `role_grant` carries its own
+  tenant policy, so for the application role that predicate can never exclude a row, and no test
+  could be written that removing it would fail. It stays for symmetry with
+  `app_actor_has_staff_scope()` and against a future `SECURITY DEFINER`, and migration **0080**
+  records that in the function's comment. A comment, shipped as a migration, because 0079 had
+  already been applied and the checksum guard is right to refuse an edit to a file some database
+  was built from.
+
+Writing the expiry test also turned up something worth stating: changing a grant row bumps
+`grants_version` and kills every token issued before it, so expiring a grant *in place* answers
+401 and never reaches the policy at all. The version bump is the first line of defence; the
+policy's `expires_at` clause is the second, for a grant that lapses by the passage of time with
+no row touched. Only a token taken out after the row exists can test it.
+
 ## The rest of the plan (M20–M31)
 
 The first nineteen milestones were a plan that ran out rather than a plan that finished.
@@ -1189,12 +1377,12 @@ follow real usage instead of guesses.
 | M24 | Backup and restore — **partly done, see above** | Point-in-time recovery, and a **restore drill that has actually been run** with the time it took written down. A backup nobody has restored is a belief, not a backup |
 | M25 | Taking money from schools — **invoicing done, see above** | Subscription invoicing against M16's plans, GST, and one payment provider. M16 deliberately stopped short of this; a metered plan nobody is billed for is a spreadsheet |
 | M26 | Taking money from parents | A real gateway behind M7's mandates and reconciliation — UPI AutoPay and cards. The ledger, the receipts and the settlement matching already exist and have never seen a live rupee |
+| M29 | It speaks the language — **done, see above** | The chain, the catalogue and the settings that set both. `organization.locale` had existed since M1 and nothing had ever read it, which meant a school that does not operate in English could not send messages at all |
 
 ### Everything else named as a gap
 
 | ID | Milestone | Definition of done |
 | --- | --- | --- |
-| M29 | It speaks the language | Hindi and the regional languages a school actually teaches in. `organization.locale` has existed since M1 and nothing has ever read it, which makes "India-first" a claim rather than a feature |
 | M30 | Scale, where it is real | `attendance_record` partitioned by period; the rate limiter moved off per-process memory into the Redis that has been running unused since M0; query budgets on the paths that grow with a school's size |
 | M31 | Fit to be trusted | A security review by somebody who did not write this, a DPDP assessment by a lawyer, and a pilot with one real school. The pilot will find more than the other two |
 
@@ -1258,6 +1446,7 @@ left to the end.
 | M22 Deploy safety | Partly | 16 | 5 mutations verified. The container stack has now been BUILT AND RUN on a real Docker daemon — .dockerignore was in the wrong directory, and the migration runner blamed a migration for a database whose history did not match it. AWS still absent |
 | M32 The write surface | Done | 68 | Over real HTTP. 19 mutations, none survived. 13 modules made reachable (115 routes → 201), 8 SQL/enum defects only a request could find, 3 author-from-the-body holes closed, 3 comments narrowed to what is true, and one bug only the built server could show |
 | M28 Learning | Done | 38 | 14 mutations verified, no survivors. Closed the last M16 flag that guarded nothing. 1 finding outside the milestone (0077: section scope ignored `section_id`, reaching student records, marks, attendance and transport), 1 guard that covered only UPDATE, 1 test proving a different policy than it named |
+| M29 It speaks the language | Done | 18 API + 26 mobile | 39 mutations verified, 4 survivors closed and 1 shown to be unclosable. `organization.locale` had been unread since M1, which meant a school not operating in English could not send at all. Migration 0079 closed a write policy that let any principal — a parent included — update the organization row; 0080 records the one clause no test can kill |
 
 Two design decisions were made during M2 that are worth carrying forward:
 

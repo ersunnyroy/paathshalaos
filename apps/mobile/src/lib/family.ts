@@ -147,9 +147,15 @@ export function childClass(child: Child): string | null {
   return parts.length > 0 ? parts.join(' ') : null;
 }
 
-export const ATTENDANCE_LABEL: Record<string, string> = {
-  present: 'Present',
-  absent: 'Absent',
-  late: 'Late',
-  excused: 'Excused',
-};
+/**
+ * The states a register can record, as the API sends them.
+ *
+ * The English words for these used to live here. They moved to the string
+ * catalogue in M29.2 — a label a parent reads is a translatable string, and
+ * one kept beside the data model is one a translator never sees. What stays
+ * here is the *list*, because it is a fact about the API rather than a word,
+ * and `i18n.spec` asserts the catalogue covers every entry: a state added to
+ * the API with no string would otherwise reach a parent as `half_day`.
+ */
+export const ATTENDANCE_STATES = ['present', 'absent', 'late', 'excused'] as const;
+export type AttendanceState = typeof ATTENDANCE_STATES[number];

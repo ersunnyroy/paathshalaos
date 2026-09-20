@@ -16,6 +16,8 @@
 import { withTenant, type TenantScope, type TenantClient } from '../../db/tenant.ts';
 import { ApiError } from '../../common/errors.ts';
 import { auditService } from '../audit/audit.service.ts';
+import { localeService } from '../i18n/locale.service.ts';
+import { DEFAULT_LOCALE } from '../i18n/locales.ts';
 
 export type Channel = 'sms' | 'whatsapp' | 'email' | 'push' | 'in_app';
 export type Purpose =
@@ -106,11 +108,19 @@ export const templateService = {
     }
 
     return withTenant(scope, async (db) => {
+      // A template added without naming a language is in the language the
+      // school teaches in. It used to be English, unconditionally, which meant
+      // a Hindi-medium school's registrar typing Hindi into the box produced a
+      // row labelled `en-IN` — and the row was then unreachable to every
+      // Hindi-speaking parent, because the lookup matches on the label and not
+      // on the letters.
+      const locale = input.locale ?? await localeService.forOrganization(db);
+
       const prior = await db.query<{ version: number }>(
         `SELECT COALESCE(max(version), 0) AS version
            FROM message_template_version
           WHERE message_template_id = $1::uuid AND channel = $2 AND locale = $3`,
-        [input.templateId, input.channel, input.locale ?? 'en-IN'],
+        [input.templateId, input.channel, locale],
       );
       const version = Number(prior.rows[0]?.version ?? 0) + 1;
 
@@ -121,7 +131,7 @@ export const templateService = {
          VALUES (app_current_tenant_id(), $1::uuid, $2, $3, $4::integer, $5, $6::text[],
                  $7::text, $8::text, $9::text, $10::text, $11::text)
          RETURNING ${SELECT_VERSION}`,
-        [input.templateId, input.channel, input.locale ?? 'en-IN', version,
+        [input.templateId, input.channel, locale, version,
          input.body, variablesIn(input.body),
          input.dltEntityId ?? null, input.dltTemplateId ?? null, input.senderHeader ?? null,
          input.waTemplateName ?? null, input.waLanguage ?? null],
@@ -179,19 +189,30 @@ export const templateService = {
   },
 
   /**
-   * The approved version to send on a channel, preferring the recipient's
-   * locale and falling back to `en-IN`.
+   * The approved version to send on a channel, given the reader's locale chain.
    *
    * Falling back rather than failing is deliberate: a parent who set Hindi and
    * whose Hindi template has not been approved yet should still be told their
    * child is absent.
+   *
+   * The chain is a required argument, and that is the M29.1 change. It used to
+   * be an optional single locale defaulting to `'en-IN'`, with `'en-IN'`
+   * appended as the only fallback — so the school's own language could never
+   * participate, and a Tamil-medium school that had approved only Tamil
+   * templates sent nothing. Making it required means a caller cannot
+   * accidentally re-introduce a hard-coded English default: there is nowhere
+   * left to omit it. Build the chain with `localeService.chainFor`.
+   *
+   * `array_position` ranks by the caller's order rather than by a hand-written
+   * comparison, so adding a third link to the chain needs no change here.
    */
   async approvedVersion(
     db: TenantClient,
     templateId: string,
     channel: Channel,
-    locale?: string,
+    locales: readonly string[],
   ): Promise<TemplateVersion | undefined> {
+    const chain = locales.length > 0 ? [...locales] : [DEFAULT_LOCALE];
     const { rows } = await db.query<TemplateVersion>(
       `SELECT ${SELECT_VERSION}
          FROM message_template_version
@@ -199,9 +220,9 @@ export const templateService = {
           AND channel = $2
           AND approval_status = 'approved'
           AND locale = ANY($3::text[])
-        ORDER BY (locale = $4) DESC, version DESC
+        ORDER BY array_position($3::text[], locale), version DESC
         LIMIT 1`,
-      [templateId, channel, [locale ?? 'en-IN', 'en-IN'], locale ?? 'en-IN'],
+      [templateId, channel, chain],
     );
     return rows[0];
   },

@@ -64,6 +64,16 @@ export class AccessController {
           `SELECT tp.user_account_id, tp.person_id,
                   p.given_name, p.family_name,
                   st.employee_code, st.designation, st.left_on::text,
+                  -- The language this person is written to in, if they have
+                  -- said. Null means they have not, and the school's own
+                  -- answers for them — a different fact from "chose the same
+                  -- as the school", and one that changes when the school's
+                  -- does. See M29.
+                  (SELECT cp.locale FROM communication_preference cp
+                    WHERE cp.person_id = tp.person_id AND cp.locale IS NOT NULL
+                    ORDER BY (cp.purpose = 'core_education_service') DESC,
+                             cp.updated_at DESC
+                    LIMIT 1) AS locale,
                   COALESCE(json_agg(json_build_object(
                     'id', rg.id, 'role', rg.role,
                     'scope_type', rg.scope_type, 'scope_id', rg.scope_id,

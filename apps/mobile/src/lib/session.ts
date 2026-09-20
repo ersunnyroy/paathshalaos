@@ -18,6 +18,8 @@ import {
 import { resolveApiUrl } from './api-url.ts';
 import { CachedReader } from './cache.ts';
 import { SchoolStore, apiUrlForHost, type School } from './school.ts';
+import { LocaleStore, readerChain } from './locale.ts';
+import { translator, english, type Translator } from './i18n.ts';
 
 /**
  * Read from the build, not hard-coded.
@@ -158,6 +160,66 @@ export async function queue(): Promise<OfflineAttendanceQueue> {
     },
   );
   return _queue;
+}
+
+/**
+ * The language to render in, and the language the server says to render in.
+ *
+ * `readerLocale()` is synchronous and never waits, because it is called from a
+ * render: the first frame after launch draws in whatever the phone remembered
+ * last time, and `refreshLocale()` corrects it once the server answers. The
+ * alternative — awaiting the chain before drawing anything — is a blank screen
+ * on a train, in aid of a language the phone already knew.
+ */
+let _chain: string[] = ['en-IN'];
+let _t: Translator = english;
+
+export function readerLocale(): Translator { return _t; }
+
+function useChain(chain: readonly string[]): Translator {
+  _chain = [...chain];
+  _t = translator(_chain);
+  return _t;
+}
+
+async function localeStore(): Promise<LocaleStore> {
+  const { default: AsyncStorage } = await import(
+    '@react-native-async-storage/async-storage');
+  return new LocaleStore(AsyncStorage);
+}
+
+/** What this phone remembered. Called on launch, before any request. */
+export async function loadLocale(deviceLocale?: string | null): Promise<Translator> {
+  const store = await localeStore();
+  return useChain(readerChain({
+    remembered: await store.remembered(),
+    device: deviceLocale ?? null,
+  }));
+}
+
+/**
+ * Asks the server, and remembers the answer.
+ *
+ * A failure is not an error: the phone keeps the language it had. Losing a
+ * parent's language because the network was down would be a worse outcome than
+ * any staleness it prevents — the chain does not go wrong with age.
+ */
+export async function refreshLocale(): Promise<Translator> {
+  try {
+    const answer = await api().get<{ chain?: string[] }>('/v1/locale');
+    if (!answer.chain?.length) return _t;
+    const next = useChain(readerChain({ fromServer: answer.chain }));
+    await (await localeStore()).remember(_chain);
+    return next;
+  } catch {
+    return _t;
+  }
+}
+
+/** Sets this family's own language, then re-reads it from the server. */
+export async function setMyLocale(locale: string): Promise<Translator> {
+  await api().post('/v1/locale/me', { locale });
+  return refreshLocale();
 }
 
 /**

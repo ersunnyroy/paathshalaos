@@ -24,6 +24,7 @@
 import { withTenant, type TenantScope, type TenantClient } from '../../db/tenant.ts';
 import { ApiError } from '../../common/errors.ts';
 import { auditService } from '../audit/audit.service.ts';
+import { localeService } from '../i18n/locale.service.ts';
 import { outboxService } from '../events/outbox.service.ts';
 import { templateService, render, type Channel, type Purpose } from './template.service.ts';
 
@@ -144,12 +145,18 @@ export const dispatchService = {
         [request.id],
       );
 
+      // Once per run, not once per recipient: the school's language does not
+      // change between the fourth parent and the fifth, and this loop runs to
+      // eight hundred.
+      const organizationLocale = await localeService.forOrganization(db);
+
       const results: DispatchOutcome[] = [];
       for (const member of input.audience) {
         await db.query('SAVEPOINT recipient_row');
         try {
           const result = await dispatchOne(db, {
             request, member, provider: input.provider, now: input.now ?? new Date(),
+            organizationLocale,
           });
           await db.query('RELEASE SAVEPOINT recipient_row');
           results.push(result);
@@ -325,6 +332,8 @@ async function dispatchOne(
     member: Audience;
     provider: SendProvider;
     now: Date;
+    /** Resolved once for the whole run; see `dispatch`. */
+    organizationLocale: string;
   },
 ): Promise<DispatchOutcome> {
   const { request, member, provider } = ctx;
@@ -347,14 +356,25 @@ async function dispatchOne(
   }
 
   const preference = await db.query<{
-    preferred_channel: Channel | null; locale: string | null;
+    preferred_channel: Channel | null;
   }>(
-    `SELECT preferred_channel, locale FROM communication_preference
+    `SELECT preferred_channel FROM communication_preference
       WHERE person_id = $1::uuid AND purpose = $2`,
     [member.personId, request.purpose],
   );
   const preferred = preference.rows[0]?.preferred_channel ?? 'whatsapp';
-  const locale = preference.rows[0]?.locale ?? 'en-IN';
+
+  // What they asked for, then what the school teaches in, then English. The
+  // middle link is new in M29.1 and is the one that makes this product usable
+  // by a school that does not operate in English: the old code read only the
+  // preference row and fell straight to a hard-coded `'en-IN'`, so a
+  // Tamil-medium school with Tamil templates and no per-parent preferences on
+  // file suppressed every message as `no_approved_template`.
+  const locales = await localeService.chainFor(
+    db, member.personId, request.purpose, ctx.organizationLocale);
+  // The recipient row records what they were actually written to in, which is
+  // the head of the chain, not the whole of it.
+  const locale = locales[0]!;
 
   const contacts = await db.query<{ id: string; kind: string; value: string; opt_in_state: string }>(
     `SELECT id, kind, value, opt_in_state FROM contact_method
@@ -391,7 +411,7 @@ async function dispatchOne(
 
   for (const channel of FALLBACK_ORDER[preferred]) {
     const version = await templateService.approvedVersion(
-      db, request.message_template_id, channel, locale,
+      db, request.message_template_id, channel, locales,
     );
     if (!version) { lastError = 'no_approved_template'; continue; }
 
@@ -446,11 +466,16 @@ async function dispatchOne(
          attemptNo > 1 ? preferred : null, provider.name, sent.providerMessageId],
       );
       await db.query(
+        // `locale` is corrected here to the language actually sent, which is
+        // not always the head of the chain: a parent who asked for Hindi at a
+        // school whose Hindi template is still in draft receives the school's
+        // Tamil one, and a record claiming Hindi would be a record nobody can
+        // use to answer "what did we actually say to them".
         `UPDATE message_recipient
             SET status = 'sent', channel = $2, contact_method_id = $3::uuid,
-                rendered_body = $4, updated_at = now()
+                rendered_body = $4, locale = $5, updated_at = now()
           WHERE id = $1::uuid`,
-        [recipientId, channel, contact?.id ?? null, body],
+        [recipientId, channel, contact?.id ?? null, body, version.locale],
       );
 
       return {

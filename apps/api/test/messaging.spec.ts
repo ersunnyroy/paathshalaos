@@ -227,7 +227,7 @@ describe('templates', () => {
     // The DLT registration is against a specific body; editing it means the
     // registration no longer describes what is sent.
     const version = await withTenant(admin_(), (db) =>
-      templateService.approvedVersion(db, attendanceTemplateId, 'sms'));
+      templateService.approvedVersion(db, attendanceTemplateId, 'sms', ['en-IN']));
     await expect(
       asOwner((c) => c.query(
         `UPDATE message_template_version SET body = 'Something else' WHERE id = $1`,
@@ -239,9 +239,9 @@ describe('templates', () => {
     ).rejects.toThrow(/cannot be deleted/i);
   });
 
-  it('falls back to en-IN when the preferred locale has no approved version', async () => {
+  it('falls back down the chain when the preferred locale has no approved version', async () => {
     const version = await withTenant(admin_(), (db) =>
-      templateService.approvedVersion(db, attendanceTemplateId, 'sms', 'hi-IN'));
+      templateService.approvedVersion(db, attendanceTemplateId, 'sms', ['hi-IN', 'en-IN']));
     // A parent who set Hindi should still learn their child was absent.
     expect(version).toBeDefined();
     expect(version!.locale).toBe('en-IN');

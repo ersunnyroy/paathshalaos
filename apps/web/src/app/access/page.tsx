@@ -26,9 +26,12 @@ interface Account {
   given_name: string | null; family_name: string | null;
   employee_code: string | null; designation: string | null;
   left_on: string | null;
+  /** What they have stated, or null — see `languageCell`. */
+  locale: string | null;
   grants: Grant[];
 }
 interface Campus { id: string; name: string }
+interface LocaleOption { tag: string; english: string; endonym?: string }
 interface Section { id: string; section_name: string; class_name: string | null }
 
 const SCOPE_LABEL: Record<string, string> = {
@@ -47,6 +50,9 @@ export default function AccessPage() {
   const [accounts, setAccounts] = useState<Account[] | null>(null);
   const [delegatable, setDelegatable] = useState<string[]>([]);
   const [campuses, setCampuses] = useState<Campus[]>([]);
+  const [locales, setLocales] = useState<LocaleOption[]>([]);
+  /** Local echo of a change, so the select does not snap back while it saves. */
+  const [spoken, setSpoken] = useState<Record<string, string>>({});
   const [sections, setSections] = useState<Section[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [said, setSaid] = useState<string | null>(null);
@@ -61,6 +67,8 @@ export default function AccessPage() {
     apiGet<Account[]>('/v1/access/accounts').then(setAccounts)
       .catch((e: Error) => { setAccounts([]); setError(e.message); });
     apiGet<Campus[]>('/v1/campuses').then(setCampuses).catch(() => setCampuses([]));
+    apiGet<{ options: LocaleOption[] }>('/v1/locale')
+      .then((v) => setLocales(v.options)).catch(() => setLocales([]));
     apiGet<Section[]>('/v1/sections').then(setSections).catch(() => setSections([]));
   }, []);
   useEffect(() => { load(); }, [load]);
@@ -87,6 +95,48 @@ export default function AccessPage() {
     (a) => a.grants.some((g) => g.role === 'ORG_OWNER' && g.scope_type === 'organization'));
 
   const needsScope = form.scopeType !== 'organization' && form.scopeType !== 'self';
+
+  /**
+   * The language this person is written to in (M29.3).
+   *
+   * Here, on the account list, because a language is a property of a reader
+   * and this is the screen that says who the readers are. It is also the only
+   * place the office can set it for somebody else — and that is not a
+   * workaround: a parent who cannot read the app cannot reach the screen that
+   * changes its language, which is the whole problem. The admissions desk
+   * setting it while the family is standing there is the only version of this
+   * that reaches the families who need it most.
+   *
+   * Blank means they have stated nothing, and the school's own language
+   * answers for them. That is shown as an empty choice rather than the
+   * school's tag, because "unset" and "chose the same as the school" are
+   * different facts and the first one changes when the school's does.
+   */
+  function languageCell(a: Account) {
+    if (!a.person_id) return <span className="sub">—</span>;
+    const personId = a.person_id;
+    return (
+      <select value={spoken[personId] ?? a.locale ?? ''} disabled={busy}
+              onChange={(e) => {
+                const locale = e.target.value;
+                // Blank is "they have stated nothing", which is a state the
+                // API has no way to return to — there is no un-say. Offering
+                // it as a choice that silently fails would be worse than
+                // offering it as the label for a person who has not chosen.
+                if (!locale) return;
+                setSpoken((m) => ({ ...m, [personId]: locale }));
+                void act(() => apiPost(`/v1/locale/people/${personId}`, { locale }),
+                  'Language set.');
+              }}>
+        <option value="">Whatever the school uses</option>
+        {locales.map((l) => (
+          <option key={l.tag} value={l.tag}>
+            {l.endonym ? `${l.english} (${l.endonym})` : l.english}
+          </option>
+        ))}
+      </select>
+    );
+  }
 
   return (
     <Shell>
@@ -194,9 +244,10 @@ export default function AccessPage() {
       <Panel title="Accounts" hint="One row per login, not per person on file">
         <table>
           <thead>
-            <tr><th>Who</th><th>Role</th><th>Over</th><th>Since</th><th /></tr>
+            <tr><th>Who</th><th>Role</th><th>Over</th><th>Since</th>
+                <th>Reads</th><th /></tr>
           </thead>
-          {accounts === null ? <SkeletonRows rows={4} cols={5} /> : (
+          {accounts === null ? <SkeletonRows rows={4} cols={6} /> : (
             <tbody>
               {accounts.flatMap((a) => (
                 a.grants.length === 0
@@ -211,6 +262,7 @@ export default function AccessPage() {
                       <td colSpan={3}>
                         <span className="sub">No role — signs in and sees nothing</span>
                       </td>
+                      <td>{languageCell(a)}</td>
                       <td />
                     </tr>
                   )]
@@ -239,6 +291,7 @@ export default function AccessPage() {
                       </td>
                       <td className="sub">{SCOPE_LABEL[g.scope_type] ?? g.scope_type}</td>
                       <td className="sub">{g.granted_at.slice(0, 10)}</td>
+                      <td>{i === 0 ? languageCell(a) : null}</td>
                       <td className="n">
                         <button className="ghost" disabled={busy}
                                 onClick={() => void act(

@@ -140,6 +140,93 @@ function Rollover() {
   );
 }
 
+
+interface LocaleView {
+  chain: string[];
+  organization: string;
+  stated: Array<{ purpose: string; locale: string }>;
+  personId: string | null;
+  options: Array<{ tag: string; english: string; endonym?: string }>;
+}
+
+/**
+ * The language this school works in (M29.3).
+ *
+ * `organization.locale` has existed since the first tenancy migration and,
+ * until M29, nothing had ever read it. The consequence was not cosmetic: a
+ * school that does not operate in English could not send messages at all — its
+ * templates were approved in its own language, the dispatcher looked for
+ * English ones, and every parent came back as `no_approved_template`.
+ *
+ * So this panel is on Getting started rather than in a settings drawer. It is
+ * the difference between a product that works for the school and one that
+ * silently does not, and it belongs beside the other things that have to be
+ * true before a school can run.
+ *
+ * Only an owner can change it — the refusal comes from the policy in 0079, and
+ * this screen shows it rather than hiding the control, because a button that
+ * is missing teaches nothing and a refusal that explains itself does.
+ */
+function LanguagePanel() {
+  const [view, setView] = useState<LocaleView | null>(null);
+  const [choice, setChoice] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [said, setSaid] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
+
+  const load = () => {
+    apiGet<LocaleView>('/v1/locale')
+      .then((v) => { setView(v); setChoice(v.organization); })
+      .catch((e: Error) => setError(e.message));
+  };
+  useEffect(load, []);
+
+  if (!view) return <div className="skel" style={{ height: 120 }} />;
+
+  const name = (tag: string) => {
+    const found = view.options.find((o) => o.tag === tag);
+    if (!found) return tag;
+    return found.endonym ? `${found.english} (${found.endonym})` : found.english;
+  };
+
+  return (
+    <Panel
+      title="The language this school works in"
+      hint="What a family is written to in, unless they have said otherwise themselves"
+    >
+      {error ? <div className="note bad">{error}</div> : null}
+      {said ? <div className="note ok">{said}</div> : null}
+
+      <div className="row-form">
+        <select value={choice} onChange={(e) => setChoice(e.target.value)}>
+          {view.options.map((o) => (
+            <option key={o.tag} value={o.tag}>{name(o.tag)}</option>
+          ))}
+        </select>
+        <button disabled={busy || choice === view.organization}
+                onClick={() => {
+                  setBusy(true); setError(null); setSaid(null);
+                  apiPost('/v1/locale/organization', { locale: choice })
+                    .then(() => { setSaid(`Now working in ${name(choice)}.`); load(); })
+                    .catch((e: Error) => setError(e.message))
+                    .finally(() => setBusy(false));
+                }}>
+          Change
+        </button>
+      </div>
+
+      <p className="sub" style={{ marginTop: 10 }}>
+        Messages are looked up in the family&rsquo;s own language first, then in
+        this one, then in English. A template approved in{' '}
+        <strong>{name(view.organization)}</strong> reaches every family who has
+        not asked for something else — which is why a school that teaches in a
+        language other than English should change this before writing any
+        templates, not after wondering why nothing sent.
+      </p>
+    </Panel>
+  );
+}
+
 export default function SetupPage() {
   const [setup, setSetup] = useState<Setup | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -193,6 +280,8 @@ export default function SetupPage() {
           </div>
 
           <PlanPanel />
+
+          <LanguagePanel />
 
           <Panel
             title="All steps"

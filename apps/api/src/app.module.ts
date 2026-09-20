@@ -37,6 +37,7 @@ import { AccessController } from './modules/authz/access.controller.ts';
 import { ConsentController } from './modules/people/consent.controller.ts';
 import { AcademicsController } from './modules/academics/academics.controller.ts';
 import { FamilyController } from './modules/family/family.controller.ts';
+import { LocaleController } from './modules/i18n/locale.controller.ts';
 
 @Module({
   controllers: [
@@ -50,7 +51,7 @@ import { FamilyController } from './modules/family/family.controller.ts';
     MessagingController, ImportController,
     AssessmentController, ResultRunController,
     AccessController, ConsentController, AcademicsController,
-    FamilyController, MetricsController,
+    FamilyController, LocaleController, MetricsController,
   ],
   providers: [
     // Every failure gets the contract's shape, including a bare throw.

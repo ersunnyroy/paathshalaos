@@ -19,7 +19,8 @@ import type { INestApplication } from '@nestjs/common';
 import pg from 'pg';
 import { randomUUID } from 'node:crypto';
 import {
-  createTenant, destroyTenants, createUser, destroyUsers, grantRole, purgeTestData,
+  createTenant, destroyTenants, createUser, destroyUsers, grantRole, revokeGrant,
+  purgeTestData,
   createAcademicYear, createAcademicStructure, createClassGroupRaw, createSectionFor,
   makeTeacher, createLearnerRaw, createPersonRaw, linkGuardianRaw,
   OWNER_URL, type TenantFixture, type UserFixture,
@@ -40,13 +41,17 @@ let tenant: TenantFixture;
 let officeUser: UserFixture;
 let teacherUser: UserFixture;
 let platformUser: UserFixture;
+let guardianUser: UserFixture;
 
 let officeToken = '';
 let teacherToken = '';
+let guardianToken = '';
+let parentAccountPersonId = '';
 
 let teacherStaffId = '';
 let coverStaffId = '';
 let officeStaffId = '';
+let officeStaffPersonId = '';
 let sectionA = '';
 let sectionB = '';
 let programmeId = '';
@@ -99,9 +104,11 @@ beforeAll(async () => {
   officeUser = await createUser('office@ws-test.example', PASSWORD);
   teacherUser = await createUser('teacher@ws-test.example', PASSWORD);
   platformUser = await createUser('platform@ws-test.example', PASSWORD);
+  guardianUser = await createUser('parent@ws-test.example', PASSWORD);
 
   await grantRole(tenant.orgId, officeUser.userId, 'ORG_OWNER', 'organization', null);
   await grantRole(tenant.orgId, teacherUser.userId, 'TEACHER', 'campus', tenant.campusId);
+  await grantRole(tenant.orgId, guardianUser.userId, 'GUARDIAN', 'self', tenant.campusId);
 
   const struct = await createAcademicStructure(tenant.orgId, tenant.unitId, tenant.campusId);
   const year = await createAcademicYear(tenant.orgId, tenant.unitId, '2026-27', 2026,
@@ -123,13 +130,15 @@ beforeAll(async () => {
   const office = await makeTeacher(tenant.orgId, tenant.campusId, officeUser.userId,
     { givenName: 'Anjali', employeeCode: 'WS-OFF' });
   officeStaffId = office.staffId;
+  officeStaffPersonId = office.personId;
 
   // A learner in IX-A with a guardian, so the messaging audience is somebody.
   // Without this the send refuses with `empty_audience` — correctly, which is
   // itself asserted below, and uselessly as a test of sending.
   const child = await createLearnerRaw(tenant.orgId, 'Nisha', 'WS-MSG-1');
   const parentPersonId = await createPersonRaw(tenant.orgId, 'Sunita',
-    { familyName: 'Rao' });
+    { familyName: 'Rao', userAccountId: guardianUser.userId });
+  parentAccountPersonId = parentPersonId;
   await linkGuardianRaw(tenant.orgId, child.studentId, parentPersonId);
   await owner((c) => c.query(
     `INSERT INTO enrollment (tenant_id, student_id, section_id, academic_year_id)
@@ -156,6 +165,7 @@ beforeAll(async () => {
 
   officeToken = await tokenFor(officeUser, ['ORG_OWNER']);
   teacherToken = await tokenFor(teacherUser, ['TEACHER']);
+  guardianToken = await tokenFor(guardianUser, ['GUARDIAN']);
 
   const moduleRef = await Test.createTestingModule({ imports: [AppModule] }).compile();
   app = moduleRef.createNestApplication({ logger: false });
@@ -169,7 +179,8 @@ afterAll(async () => {
   await owner((c) => c.query('DELETE FROM platform_admin WHERE user_account_id = $1',
     [platformUser.userId]));
   await destroyTenants([tenant.orgId]);
-  await destroyUsers([officeUser.userId, teacherUser.userId, platformUser.userId]);
+  await destroyUsers([officeUser.userId, teacherUser.userId, platformUser.userId,
+                     guardianUser.userId]);
   await pool.end();
   await authPool.end();
 }, 180_000);
@@ -1313,5 +1324,192 @@ describe('the hr flag now guards something', () => {
 
     // And the rest of the product is untouched by it.
     expect((await GET('/v1/me', officeToken)).status).toBe(200);
+  });
+});
+
+/**
+ * M29.3 — a language somebody can actually change.
+ *
+ * M29.1 built the chain and nothing could set either end of it:
+ * `organization.locale` was whatever 0002's default left it, and
+ * `communication_preference.locale` could only be written by a test. A
+ * resolution chain nobody can set resolves the same way forever.
+ */
+describe('setting a language', () => {
+  it('tells a caller what they read, and why', async () => {
+    const res = await GET('/v1/locale', officeToken);
+    expect(res.status).toBe(200);
+    // The whole chain, not a winner: a settings screen has to tell "Hindi,
+    // because you asked" apart from "Hindi, because the school does".
+    expect(res.body.data.chain).toEqual(['en-IN']);
+    expect(res.body.data.organization).toBe('en-IN');
+    expect(res.body.data.options.map((o: any) => o.tag)).toContain('hi-IN');
+  });
+
+  it('lets an owner set the school language, and the chain moves', async () => {
+    expect((await POST('/v1/locale/organization', officeToken,
+      { locale: 'hi-IN' })).status).toBe(201);
+
+    const after = await GET('/v1/locale', guardianToken);
+    expect(after.body.data.organization).toBe('hi-IN');
+    // The parent stated nothing, so the school's answer is theirs.
+    expect(after.body.data.chain).toEqual(['hi-IN', 'en-IN']);
+  });
+
+  it('refuses a parent changing the school language', async () => {
+    // Not a check in the controller — the policy from 0079. Every principal of
+    // a tenant could UPDATE `organization` from 0003 onwards; the grant was
+    // there and only the absence of an endpoint hid it.
+    const res = await POST('/v1/locale/organization', guardianToken, { locale: 'ta-IN' });
+    expect(res.status).toBe(403);
+    expect(res.body.error.code).toBe('not_yours_to_change');
+    expect((await GET('/v1/locale', officeToken)).body.data.organization).toBe('hi-IN');
+  });
+
+  it('refuses a teacher changing it either', async () => {
+    // A TEACHER satisfies `app_actor_has_staff_scope()`, which is what every
+    // other write in this system leans on. The school's language needs more
+    // than that, which is why 0079 added a narrower function rather than
+    // reusing the one that was already there.
+    expect((await POST('/v1/locale/organization', teacherToken,
+      { locale: 'ta-IN' })).status).toBe(403);
+  });
+
+  it('reads the grant, not the token: scope, revocation and expiry', async () => {
+    // Every clause in 0079's function, one at a time. Found by a mutation
+    // pass: with only an organisation-wide CAMPUS_ADMIN in the suite, dropping
+    // `scope_type = 'organization'` broke nothing, and with only a
+    // campus-scoped grant revoked, dropping `revoked_at IS NULL` broke nothing
+    // either — the scope clause was refusing it for the other reason.
+    const admin = await createUser('campus@ws-test.example', PASSWORD);
+    const attempt = async (locale: string) => {
+      const token = await tokenFor(admin, ['CAMPUS_ADMIN']);
+      return (await POST('/v1/locale/organization', token, { locale })).status;
+    };
+    try {
+      // An admin of one campus changing what every campus writes in is a
+      // scope escalation wearing a settings screen.
+      const campusWide = await grantRole(tenant.orgId, admin.userId,
+        'CAMPUS_ADMIN', 'campus', tenant.campusId);
+      expect(await attempt('ta-IN'), 'one campus is not the school').toBe(403);
+      await revokeGrant(campusWide);
+
+      const schoolWide = await grantRole(tenant.orgId, admin.userId,
+        'CAMPUS_ADMIN', 'organization', null);
+      expect(await attempt('hi-IN'), 'school-wide admin may').toBe(201);
+
+      await revokeGrant(schoolWide);
+      expect(await attempt('ta-IN'), 'a revoked grant is not a grant').toBe(403);
+
+      // An org-wide grant written as ALREADY expired, rather than expired
+      // afterwards. Changing a grant row bumps `grants_version` and kills every
+      // token issued before it, so expiring one in place answers 401 and never
+      // reaches the policy. That version bump is the first line of defence;
+      // this clause is the second, for the grant that lapses by the passage of
+      // time with no row touched and no token invalidated.
+      const lapsed = await owner(async (c) => (await c.query<{ id: string }>(
+        `INSERT INTO role_grant
+           (tenant_id, user_account_id, role, scope_type, scope_id, expires_at)
+         VALUES ($1, $2, 'CAMPUS_ADMIN', 'organization', NULL,
+                 now() - interval '1 hour') RETURNING id`,
+        [tenant.orgId, admin.userId])).rows[0]!.id);
+      expect(await attempt('ta-IN'), 'an expired grant is not a grant').toBe(403);
+
+      await owner((c) => c.query(
+        'UPDATE role_grant SET expires_at = NULL WHERE id = $1', [lapsed]));
+      expect(await attempt('hi-IN')).toBe(201);
+    } finally {
+      await destroyUsers([admin.userId]);
+    }
+  });
+
+  it('a family sets their own, and it outranks the school', async () => {
+    expect((await POST('/v1/locale/me', guardianToken, { locale: 'bn-IN' })).status).toBe(201);
+    const mine = await GET('/v1/locale', guardianToken);
+    expect(mine.body.data.chain).toEqual(['bn-IN', 'hi-IN', 'en-IN']);
+    expect(mine.body.data.stated).toEqual([
+      { purpose: 'core_education_service', locale: 'bn-IN' },
+    ]);
+  });
+
+  it('leaves one stated language behind, not a row per purpose', async () => {
+    // The table is keyed per purpose, so "my language" has no single row. The
+    // alternative — writing one row per purpose — manufactures exactly the
+    // disagreeing-rows case the chain then has to arbitrate.
+    await owner((c) => c.query(
+      `INSERT INTO communication_preference (tenant_id, person_id, purpose, locale)
+       VALUES ($1, $2, 'fee_notifications', 'ta-IN')`,
+      [tenant.orgId, parentAccountPersonId]));
+
+    expect((await POST('/v1/locale/me', guardianToken, { locale: 'mr-IN' })).status).toBe(201);
+    const after = await GET('/v1/locale', guardianToken);
+    expect(new Set(after.body.data.stated.map((s: any) => s.locale))).toEqual(new Set(['mr-IN']));
+    expect(after.body.data.chain).toEqual(['mr-IN', 'hi-IN', 'en-IN']);
+  });
+
+  it('lets the office set it on a family’s behalf', async () => {
+    // Not a workaround. A parent who cannot read the app cannot reach the
+    // screen that changes the language, which is the whole problem — the
+    // admissions desk is the only place this reaches those families.
+    expect((await POST(`/v1/locale/people/${parentAccountPersonId}`, officeToken,
+      { locale: 'ta-IN' })).status).toBe(201);
+    expect((await GET('/v1/locale', guardianToken)).body.data.chain[0]).toBe('ta-IN');
+  });
+
+  it('refuses a parent setting somebody else’s', async () => {
+    const other = await createPersonRaw(tenant.orgId, 'Ramesh', { familyName: 'Iyer' });
+    const res = await POST(`/v1/locale/people/${other}`, guardianToken, { locale: 'ta-IN' });
+    // 404 rather than 403: whether that person exists is not a parent's
+    // business, and the two answers are indistinguishable on purpose.
+    expect(res.status).toBe(404);
+    expect(res.body.error.code).toBe('person_not_found');
+  });
+
+  it('refuses a language that is not on the list', async () => {
+    // Writing is restricted where reading is not. A picker that accepts free
+    // text is how `en_US`, `English` and `hindi` end up in one column, none of
+    // which match a template row and all of which look like a setting that
+    // worked.
+    for (const locale of ['en_US', 'klingon', 'zz-ZZ']) {
+      const res = await POST('/v1/locale/organization', officeToken, { locale });
+      expect(res.status, locale).toBe(422);
+      expect(res.body.error.code).toBe('unknown_locale');
+    }
+    // ...and the message says what IS allowed, because a refusal that does not
+    // is a support call.
+    expect((await POST('/v1/locale/me', guardianToken, { locale: 'zz-ZZ' }))
+      .body.error.message).toMatch(/hi-IN/);
+  });
+
+  it('shows a stated language on the account list', async () => {
+    // The screen that sets it is the account list, so the list has to say what
+    // it is set to. A select that always renders blank is a screen telling the
+    // office nobody has chosen anything.
+    // Written straight to the table rather than through the endpoint, because
+    // the endpoint harmonises every row — so after any change made through the
+    // product the rows agree and the ordering below cannot be wrong. Rows that
+    // disagree come from an import or an older path, and they are exactly the
+    // case the ordering exists for. Found by a surviving mutation: with the
+    // rows in agreement, reading the WRONG one passed.
+    await owner((c) => c.query(
+      `UPDATE communication_preference SET locale = 'bn-IN', updated_at = now()
+        WHERE person_id = $1 AND purpose = 'fee_notifications'`,
+      [parentAccountPersonId]));
+
+    const accounts = await GET('/v1/access/accounts', officeToken);
+    const parent = accounts.body.data.find(
+      (a: any) => a.person_id === parentAccountPersonId);
+    // The canonical row, not whichever was touched last.
+    expect(parent.locale).toBe('ta-IN');
+    // ...and somebody who has stated nothing reads as nothing, not as the
+    // school's tag: "unset" and "chose what the school uses" are different
+    // facts, and the first one moves when the school's does.
+    const office = accounts.body.data.find((a: any) => a.person_id === officeStaffPersonId);
+    expect(office?.locale ?? null).toBeNull();
+  });
+
+  it('accepts a tag in any reasonable spelling and stores one', async () => {
+    expect((await POST('/v1/locale/me', guardianToken, { locale: 'HI_in' })).status).toBe(201);
+    expect((await GET('/v1/locale', guardianToken)).body.data.stated[0].locale).toBe('hi-IN');
   });
 });
