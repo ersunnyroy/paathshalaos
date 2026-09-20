@@ -662,6 +662,62 @@ that `-1 + 1` is `0`, so the wrap it described had never been possible. The guar
 A line that cannot be shown to do anything is not defence in depth — it is something untrue
 that the next reader believes.
 
+## M21 — the parent app
+
+The mobile app stops being one screen. A parent has no section and no date range —
+they have Aarav and four questions about him — so this is a read surface shaped like a
+family rather than like a school.
+
+| ID | Part | Status | What it is |
+| --- | --- | --- | --- |
+| M21.1 | What a parent asks | Done | `/v1/family/*`: whose children, was he in school, what do I owe, how did he do, which bus, what has the school told me. Days rather than sessions, one total owed rather than a ledger, and the day reported by its **worst** mark |
+| M21.2 | Reads that survive no signal | Done | `CachedReader`: the server's last answer, held per screen, with an age bound and a stamp. Cached is never drawn as live |
+| M21.3 | The screens | Done | One screen, a child at the top, a tab underneath. Tabs follow the school's per-link permissions, so a parent who may not see the fees gets no fees tab rather than an empty one — an empty list reads as "you owe nothing", which is the worse lie |
+| M21.4 | A parent who can sign in | Done | The demo had guardian records and no guardian account, which made the whole app undemonstrable |
+
+### The recursion, and four mutations that survived
+
+0068 made `result_run` readable to a family with a child in a published run — the marks
+were already scoped by `result_line`, but the row saying which **term** they were for was
+staff-only, so a parent app could show a column of percentages with no heading.
+
+0068's policy read `result_line`. `result_line`'s policy reads `result_run`. Postgres
+answers *infinite recursion detected in policy for relation "result_line"* — and not only
+for families: the recursion is in the pair, so it fired for any read reaching both tables,
+the office's own results screen included. One migration opened a door and jammed every
+other one. 0069 moves the membership test into a `SECURITY DEFINER` function with a pinned
+`search_path`, which is what 0045 did for the same reason. There is a test asserting the
+office path specifically, rather than trusting the comment.
+
+Eleven mutations on the family surface. Four survived, and each named a different way a
+test can be weaker than it looks:
+
+- Weakening `result_run`'s policy changed nothing, because the service inner-joins
+  `result_line`, whose policy already demands publication. The guarantee was being proved
+  by the query that happened to be written.
+- Dropping the tenant clause inside the `SECURITY DEFINER` function changed nothing, because
+  every path to it already had a tenant check in front. A guard on a definer function is
+  exactly the guard that must be asserted rather than assumed.
+- Deleting the person filter from the messages query, and the link filter from the permission
+  flags, both passed: the policies cover a guardian. They do not cover **staff**, and both
+  endpoints are reachable by anyone with a session.
+- An ended guardian link still counting passed, because no fixture had one. A school
+  withdraws access by ending a link and writing a narrower one, so both rows exist for the
+  same adult.
+
+### And one comment that was borrowing a hazard
+
+`rupees()` said it keeps money as a string because "12500.10 as a JSON double is
+12500.099999999999". True of a *number* arriving in JSON, and nothing to do with a function
+whose input is already exact integer paise: routing those through `Number(p) / 100` and
+`toFixed(2)` gives the same answer for every value below 2^53 paise. Breaking the string
+handling failed no test. The comment now says what is actually true — the string path has
+no rounding step, the float path is exact until it silently is not — and the boundary,
+9007199254740993 paise, is in the tests so the claim that remains is checkable.
+
+Second milestone running in which a comment described a bug that could not happen. Both were
+found the same way.
+
 ## The rest of the plan (M20–M31)
 
 The first nineteen milestones were a plan that ran out rather than a plan that finished.
@@ -691,7 +747,7 @@ follow real usage instead of guesses.
 
 | ID | Milestone | Definition of done |
 | --- | --- | --- |
-| M21 | The parent app | The mobile app stops being one screen. Attendance, fees, results and messages for a guardian's own children, readable offline. This is where parents actually live, and today they have nothing |
+| M21 | The parent app — **done, see above** | The mobile app stops being one screen. Attendance, fees, results and messages for a guardian's own children, readable offline. This is where parents actually live, and today they have nothing |
 | M22 | Deployed, reproducibly | Infrastructure as code for the AWS India region, two environments, secrets that are not in a repository, migrations that run as part of a deploy, and a rollback that has been performed rather than described |
 | M23 | Observability | Structured logs with a request id that survives across services, metrics, traces, and alerts that fire on the things that would actually hurt — failed migrations, auth error rates, webhook backlog, queue depth |
 | M24 | Backup and restore | Point-in-time recovery, and a **restore drill that has actually been run** with the time it took written down. A backup nobody has restored is a belief, not a backup |
@@ -758,6 +814,7 @@ left to the end.
 | M15 Super admin console | Done | 33 | 12 mutations verified; 2 real defects found (the console had no login; a read-only session could write) |
 | M16 Plans and entitlements | Done | 40 | 20 mutations verified; 4 real defects found, plus a parallel implementation reconciled |
 | M20 Transport | Done | 111 | 27 mutations verified; 1 severe visibility defect, 1 test passing for the wrong reason, 3 defects outside transport, 1 comment describing an impossible bug |
+| M21 Parent app | Done | 84 | 26 mutations verified; a policy pair that recursed for everyone, 4 tests weaker than they looked, 1 comment borrowing a hazard |
 
 Two design decisions were made during M2 that are worth carrying forward:
 

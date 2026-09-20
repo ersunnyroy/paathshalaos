@@ -97,6 +97,7 @@ function Gate() {
       <Stack.Screen name="sign-in" options={{ title: 'paathshalaOS' }} />
       <Stack.Screen name="index" options={{ title: 'Attendance' }} />
       <Stack.Screen name="bus" options={{ title: 'Bus run' }} />
+      <Stack.Screen name="family" options={{ title: 'My children' }} />
     </Stack>
   );
 }

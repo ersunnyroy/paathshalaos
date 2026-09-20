@@ -13,9 +13,10 @@ import {
   OfflineAttendanceQueue, OfflineBoardingQueue,
 } from '@paathshala/offline-queue';
 import {
-  SecureTokenStore, AsyncQueueStorage, AsyncBoardingStorage,
+  SecureTokenStore, AsyncQueueStorage, AsyncBoardingStorage, AsyncCacheStorage,
 } from './storage.ts';
 import { resolveApiUrl } from './api-url.ts';
+import { CachedReader } from './cache.ts';
 import { SchoolStore, apiUrlForHost, type School } from './school.ts';
 
 /**
@@ -191,6 +192,21 @@ export async function boardingQueue(): Promise<OfflineBoardingQueue> {
     },
   );
   return _boarding;
+}
+
+let _cache: CachedReader | undefined;
+/**
+ * The parent app's read-through cache.
+ *
+ * Reads, not writes: the register's queue holds work that has not reached the
+ * server, and this holds the server's last answer so a screen is not blank on
+ * a train. Merging them would give reads a retry loop and writes an expiry.
+ */
+export async function cache(): Promise<CachedReader> {
+  const { default: AsyncStorage } = await import(
+    '@react-native-async-storage/async-storage');
+  _cache ??= new CachedReader(new AsyncCacheStorage(AsyncStorage));
+  return _cache;
 }
 
 /**

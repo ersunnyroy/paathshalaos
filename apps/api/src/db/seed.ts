@@ -300,8 +300,13 @@ async function main(): Promise<void> {
       // the children on their route and nothing else. A demo that cannot sign
       // in as the driver cannot show it.
       ['driver@demo.school', 'TRANSPORT', 'campus', campus.id],
+      // And a parent, for the same reason. M21 built a whole app for an
+      // account type that had no way to sign in to the demo, which is a
+      // feature nobody can look at.
+      ['parent@demo.school', 'GUARDIAN', 'self', campus.id],
     ];
     let driverUserId = '';
+    let parentUserId = '';
     let ownerUserId = '';
     for (const [email, role, scopeType, scopeId] of users) {
       const user = await one<{ id: string }>(c,
@@ -309,10 +314,18 @@ async function main(): Promise<void> {
          VALUES ($1, $2, 'active') RETURNING id`, [email, passwordHash]);
       if (role === 'ORG_OWNER') ownerUserId = user.id;
       if (role === 'TRANSPORT') driverUserId = user.id;
+      if (role === 'GUARDIAN') parentUserId = user.id;
       await c.query(
         `INSERT INTO role_grant (tenant_id, user_account_id, role, scope_type, scope_id)
          VALUES ($1, $2, $3, $4, $5)`,
         [tenantId, user.id, role, scopeType, scopeId]);
+
+      // A parent is not staff, so the person and the links are made further
+      // down with the guardian links, not here. The grant above still happens:
+      // skipping it — which the first version of this did — produced an
+      // account that existed and could not sign in, because login resolves a
+      // role in the tenant and there was none.
+      if (role === 'GUARDIAN') continue;
 
       // Every login is a PERSON as well as an account.
       //
@@ -340,6 +353,37 @@ async function main(): Promise<void> {
            : role === 'TRANSPORT' ? '04' : '03'}`,
          role === 'ORG_OWNER' ? 'Principal' : role === 'TEACHER' ? 'Teacher'
            : role === 'TRANSPORT' ? 'Driver' : 'Accountant']);
+    }
+
+    // The demo parent becomes the guardian of the first two learners, so the
+    // parent app has a family with more than one child in it.
+    //
+    // Here rather than further down, and that ordering is load-bearing: the
+    // message seeding below reads guardian_link to pick recipients, so a
+    // parent created after it is a parent nothing was ever sent to — and the
+    // parent app's messages tab is then permanently empty in the one place
+    // anybody looks at it.
+    const demoParentPerson = await one<{ id: string }>(c,
+      `INSERT INTO person (tenant_id, given_name, family_name, user_account_id)
+       VALUES ($1, 'Kavita', 'Kumar', $2) RETURNING id`,
+      [tenantId, parentUserId]);
+    await c.query(
+      `INSERT INTO contact_method (tenant_id, person_id, kind, value, is_primary,
+                                   opt_in_state)
+       VALUES ($1, $2, 'phone', '+919845000100', true, 'opted_in')`,
+      [tenantId, demoParentPerson.id]);
+    for (const [i, studentId] of studentIds.slice(0, 2).entries()) {
+      await c.query(
+        `INSERT INTO guardian_link (tenant_id, student_id, guardian_person_id,
+                                    relationship, is_primary, can_view_academics,
+                                    can_view_finance, can_pay)
+         VALUES ($1, $2, $3, 'mother', false, true, $4, $4)`,
+        // Not primary: each child already has a primary guardian from the loop
+        // above, and a child has one. This is the second parent — which is the
+        // more interesting account anyway, because finance is on for the first
+        // child and off for the second. The permission is per link, and a demo
+        // where both are the same proves nothing about that.
+        [tenantId, studentId, demoParentPerson.id, i === 0]);
     }
 
     // --- an integration, so the Integrations screen has something real on it ---
@@ -523,10 +567,27 @@ async function main(): Promise<void> {
                now() - interval '5 hours')
        RETURNING id`, [tenantId, campus.id, template.id, ownerStaff.id]);
 
+    // The demo parent first, deliberately. They are the only guardian who can
+    // sign in, so a list that happened to exclude them would leave the parent
+    // app's messages tab permanently empty in the one place anybody looks at
+    // it — a screen that is only ever seen blank is a screen nobody reviews.
+    // DISTINCT on the person, not on the link. The demo parent is guardian to
+    // two children, so the un-distinct version returned them twice and the
+    // second insert collided on message_recipient_one_per_subject — a
+    // constraint doing exactly its job, which is to stop one announcement
+    // reaching one person twice.
     const guardianPeople = await c.query<{ id: string; given_name: string }>(
-      `SELECT gl.guardian_person_id AS id, p.given_name
+      `SELECT DISTINCT ON (p.id) p.id, p.given_name,
+              (p.user_account_id IS NOT NULL) AS signs_in, p.created_at
          FROM guardian_link gl JOIN person p ON p.id = gl.guardian_person_id
-        WHERE gl.tenant_id = $1 LIMIT 6`, [tenantId]);
+        WHERE gl.tenant_id = $1
+        ORDER BY p.id`, [tenantId]);
+    // The parent who can actually sign in goes first, so the app's messages
+    // tab has something on it in the one place anybody reviews it.
+    guardianPeople.rows.sort((a, b) =>
+      Number((b as unknown as { signs_in: boolean }).signs_in)
+      - Number((a as unknown as { signs_in: boolean }).signs_in));
+    guardianPeople.rows = guardianPeople.rows.slice(0, 6);
 
     // A spread that shows the screen's point: most delivered, one failed, and
     // two withheld for different reasons — which is what AC-8 is about.
@@ -701,7 +762,8 @@ async function main(): Promise<void> {
 async function printLogins(c: pg.Client, tenantId: string): Promise<void> {
   console.log('  Sign in with:');
   for (const email of ['principal@demo.school', 'teacher@demo.school',
-                       'accounts@demo.school', 'driver@demo.school']) {
+                       'accounts@demo.school', 'driver@demo.school',
+                       'parent@demo.school']) {
     console.log(`    ${email.padEnd(24)} ${PASSWORD}`);
   }
   console.log(`\n  The web app finds the school by host. For local work, put this in`);

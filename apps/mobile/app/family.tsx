@@ -1,0 +1,337 @@
+import { useCallback, useEffect, useState } from 'react';
+import {
+  View, Text, ScrollView, Pressable, StyleSheet, RefreshControl,
+  ActivityIndicator,
+} from 'react-native';
+import { router } from 'expo-router';
+import {
+  tabsFor, rupees, attendanceRate, feeState, childName, childClass,
+  ATTENDANCE_LABEL, type Child, type Tab, type Fees, type AttendanceSummary,
+} from '@/lib/family.ts';
+import { asOfLabel } from '@/lib/cache.ts';
+import { theme } from '@/lib/theme.ts';
+
+/* Loaded here, not imported at the top: expo-router evaluates every file under
+ * `app/` at startup, so a top-level import of anything native runs before
+ * React exists, outside any error boundary. */
+const session = () => import('@/lib/session.ts');
+
+interface ResultRun {
+  result_run_id: string; term_label: string | null; published_at: string | null;
+  lines: Array<{
+    subject: string | null; percentage: string | null; grade_label: string | null;
+    is_pass: boolean | null; not_graded_reason: string | null;
+  }>;
+}
+interface Bus {
+  route_code: string; route_name: string; stop_name: string;
+  pickup_time: string | null; drop_time: string | null;
+  vehicle_registration: string | null; direction: string;
+}
+
+const TAB_LABEL: Record<Tab, string> = {
+  attendance: 'Attendance', fees: 'Fees', results: 'Results', bus: 'Bus',
+};
+
+/**
+ * The parent app.
+ *
+ * One screen, a child at the top and a tab underneath, because a parent opens
+ * this to answer one question and then closes it. A navigation tree would be
+ * three taps to a number they wanted in one.
+ *
+ * Every panel says when it was last told. A cached answer is never drawn as a
+ * live one — see `cache.ts`, where that rule is enforced and tested. A parent
+ * looking at "you owe ₹10,000" the day after they paid has been told something
+ * false, and the stamp is the whole defence.
+ */
+export default function Family() {
+  const [children, setChildren] = useState<Child[] | null>(null);
+  const [childId, setChildId] = useState('');
+  const [tab, setTab] = useState<Tab>('attendance');
+  const [panel, setPanel] = useState<{
+    data: unknown; asOf: string; live: boolean;
+  } | null>(null);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const child = children?.find((c) => c.id === childId) ?? null;
+  const tabs = child ? tabsFor(child) : [];
+
+  useEffect(() => {
+    void (async () => {
+      try {
+        const s = await session();
+        const held = await (await s.cache()).read('children',
+          () => s.api().get<Child[]>('/v1/family/children'));
+        if (!held) { setChildren([]); return; }
+        setChildren(held.data);
+        setChildId((current) => current || held.data[0]?.id || '');
+      } catch (e) {
+        setError(e instanceof Error ? e.message : 'Could not load your children.');
+        setChildren([]);
+      }
+    })();
+  }, []);
+
+  // A tab the current child does not have — the other child's fees, say — is
+  // not a blank panel. It is the first tab they do have.
+  useEffect(() => {
+    if (tabs.length > 0 && !tabs.includes(tab)) setTab(tabs[0]!);
+  }, [tabs, tab]);
+
+  const load = useCallback(async () => {
+    if (!childId || !tabs.includes(tab)) return;
+    setLoading(true);
+    setError(null);
+    setPanel(null);
+    try {
+      const s = await session();
+      const path = tab === 'attendance' ? `children/${childId}/attendance`
+        : tab === 'fees' ? `children/${childId}/fees`
+        : tab === 'results' ? `children/${childId}/results`
+        : `children/${childId}/transport`;
+      const held = await (await s.cache()).read(`${tab}:${childId}`,
+        () => s.api().get<unknown>(`/v1/family/${path}`));
+      if (!held) {
+        setError('No signal, and nothing saved on this phone for this yet.');
+      } else {
+        setPanel(held);
+      }
+    } catch (e) {
+      // A refusal reaches here rather than being papered over with the cache.
+      setError(e instanceof Error ? e.message : 'Could not load that.');
+    } finally {
+      setLoading(false);
+    }
+  }, [childId, tab, tabs]);
+
+  useEffect(() => { void load(); }, [load]);
+
+  if (children === null) {
+    return <View style={styles.centre}><ActivityIndicator color={theme.teal} /></View>;
+  }
+
+  return (
+    <ScrollView
+      style={styles.page}
+      contentContainerStyle={{ padding: 16 }}
+      refreshControl={<RefreshControl refreshing={false} onRefresh={() => void load()} />}
+    >
+      {children.length === 0 ? (
+        <Text style={styles.empty}>
+          This account is not linked to any child yet. The school office can do
+          that for you.
+        </Text>
+      ) : null}
+
+      {children.length > 1 ? (
+        <View style={styles.switcher}>
+          {children.map((c) => (
+            <Pressable key={c.id} onPress={() => setChildId(c.id)}
+                       style={[styles.chip, c.id === childId && styles.chipOn]}>
+              <Text style={[styles.chipText, c.id === childId && styles.chipTextOn]}>
+                {c.given_name}
+              </Text>
+            </Pressable>
+          ))}
+        </View>
+      ) : null}
+
+      {child ? (
+        <>
+          <Text style={styles.title}>{childName(child)}</Text>
+          <Text style={styles.sub}>
+            {childClass(child) ?? 'Not in a class yet'} · {child.admission_no}
+          </Text>
+
+          <View style={styles.switcher}>
+            {tabs.map((t) => (
+              <Pressable key={t} onPress={() => setTab(t)}
+                         style={[styles.chip, t === tab && styles.chipOn]}>
+                <Text style={[styles.chipText, t === tab && styles.chipTextOn]}>
+                  {TAB_LABEL[t]}
+                </Text>
+              </Pressable>
+            ))}
+          </View>
+
+          {error ? <Text style={styles.error}>{error}</Text> : null}
+          {loading ? <ActivityIndicator color={theme.teal} style={{ marginTop: 20 }} /> : null}
+
+          {panel ? (
+            <>
+              {/* Not a footnote. A parent reading a balance has to know
+                  whether it is this morning's or Tuesday's. */}
+              {!panel.live ? (
+                <View style={styles.stale}>
+                  <Text style={styles.staleText}>
+                    No signal. This is what the school said {asOfLabel(panel.asOf)}.
+                  </Text>
+                </View>
+              ) : null}
+
+              {tab === 'attendance'
+                ? <Attendance summary={panel.data as AttendanceSummary} />
+                : tab === 'fees' ? <FeesPanel fees={panel.data as Fees} />
+                : tab === 'results' ? <Results runs={panel.data as ResultRun[]} />
+                : <BusPanel bus={panel.data as Bus | null} />}
+            </>
+          ) : null}
+        </>
+      ) : null}
+
+      <Pressable onPress={() => {
+        void (async () => {
+          await (await session()).signOut();
+          router.replace('/sign-in');
+        })();
+      }}>
+        <Text style={styles.signOut}>Sign out</Text>
+      </Pressable>
+    </ScrollView>
+  );
+}
+
+function Attendance({ summary }: { summary: AttendanceSummary }) {
+  const rate = attendanceRate(summary);
+  return (
+    <View>
+      <Text style={styles.big}>
+        {rate === null ? 'Nothing recorded yet' : `${rate}%`}
+      </Text>
+      <Text style={styles.sub}>
+        {summary.recorded === 0
+          ? 'The school has not marked a register in this period.'
+          : `${summary.present + summary.late} of ${summary.recorded} days in school`}
+      </Text>
+      {summary.days.map((d) => (
+        <View key={d.on_date} style={styles.row}>
+          <Text style={styles.rowKey}>{d.on_date}</Text>
+          <Text style={[styles.rowValue,
+            d.state === 'absent' ? { color: theme.critical } : null]}>
+            {ATTENDANCE_LABEL[d.state] ?? d.state}
+          </Text>
+        </View>
+      ))}
+    </View>
+  );
+}
+
+function FeesPanel({ fees }: { fees: Fees }) {
+  const state = feeState(fees);
+  return (
+    <View>
+      <Text style={styles.big}>{rupees(fees.outstanding_paise)}</Text>
+      <Text style={styles.sub}>
+        {state.kind === 'clear' ? 'Nothing outstanding'
+          : state.kind === 'overdue'
+            ? `Due ${state.days} ${state.days === 1 ? 'day' : 'days'} ago`
+            : state.days === 0 ? 'Due today'
+              : `Due in ${state.days} ${state.days === 1 ? 'day' : 'days'}`}
+      </Text>
+      {fees.invoices.map((i) => (
+        <View key={i.id} style={styles.row}>
+          <View style={{ flex: 1 }}>
+            <Text style={styles.rowKey}>{i.invoice_no}</Text>
+            <Text style={styles.tiny}>Due {i.due_on}</Text>
+          </View>
+          <Text style={styles.rowValue}>{rupees(i.outstanding_paise)}</Text>
+        </View>
+      ))}
+    </View>
+  );
+}
+
+function Results({ runs }: { runs: ResultRun[] }) {
+  if (runs.length === 0) {
+    return (
+      <Text style={styles.empty}>
+        Nothing published yet. Results appear here once the school releases them.
+      </Text>
+    );
+  }
+  return (
+    <View>
+      {runs.map((run) => (
+        <View key={run.result_run_id} style={{ marginBottom: 18 }}>
+          <Text style={styles.heading}>{run.term_label ?? 'Results'}</Text>
+          {run.lines.map((line, i) => (
+            <View key={`${run.result_run_id}-${i}`} style={styles.row}>
+              <Text style={styles.rowKey}>{line.subject ?? 'Overall'}</Text>
+              <Text style={styles.rowValue}>
+                {line.not_graded_reason
+                  ? line.not_graded_reason
+                  : line.grade_label ?? (line.percentage
+                    ? `${Number(line.percentage).toFixed(1)}%` : '—')}
+              </Text>
+            </View>
+          ))}
+        </View>
+      ))}
+    </View>
+  );
+}
+
+function BusPanel({ bus }: { bus: Bus | null }) {
+  if (!bus) {
+    return <Text style={styles.empty}>This child does not travel by school bus.</Text>;
+  }
+  return (
+    <View>
+      <Text style={styles.big}>{bus.route_code}</Text>
+      <Text style={styles.sub}>{bus.route_name}</Text>
+      <View style={styles.row}>
+        <Text style={styles.rowKey}>Stop</Text>
+        <Text style={styles.rowValue}>{bus.stop_name}</Text>
+      </View>
+      <View style={styles.row}>
+        <Text style={styles.rowKey}>Pickup</Text>
+        <Text style={styles.rowValue}>{bus.pickup_time?.slice(0, 5) ?? '—'}</Text>
+      </View>
+      <View style={styles.row}>
+        <Text style={styles.rowKey}>Drop</Text>
+        <Text style={styles.rowValue}>{bus.drop_time?.slice(0, 5) ?? '—'}</Text>
+      </View>
+      {bus.vehicle_registration ? (
+        <View style={styles.row}>
+          <Text style={styles.rowKey}>Bus</Text>
+          <Text style={styles.rowValue}>{bus.vehicle_registration}</Text>
+        </View>
+      ) : null}
+    </View>
+  );
+}
+
+const styles = StyleSheet.create({
+  page: { flex: 1 },
+  centre: { flex: 1, alignItems: 'center', justifyContent: 'center' },
+  title: { fontSize: 22, fontWeight: '700', color: theme.navy },
+  sub: { color: theme.slate, marginTop: 3, fontSize: 13 },
+  heading: { fontSize: 15, fontWeight: '700', color: theme.navy, marginBottom: 6 },
+  big: { fontSize: 32, fontWeight: '700', color: theme.navy, marginTop: 6 },
+  switcher: { flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginVertical: 12 },
+  chip: {
+    paddingHorizontal: 14, paddingVertical: 8, borderRadius: 999,
+    borderWidth: 1, borderColor: theme.line,
+  },
+  chipOn: { backgroundColor: theme.navy, borderColor: theme.navy },
+  chipText: { color: theme.slate, fontWeight: '600', fontSize: 13 },
+  chipTextOn: { color: '#fff' },
+  stale: {
+    backgroundColor: '#FEF3C7', borderRadius: 8, padding: 12, marginTop: 12,
+  },
+  staleText: { color: '#713F12', fontSize: 13 },
+  row: {
+    flexDirection: 'row', alignItems: 'center', gap: 12,
+    paddingVertical: 13, borderBottomWidth: 1, borderBottomColor: theme.line,
+  },
+  rowKey: { flex: 1, color: theme.navy, fontSize: 15 },
+  rowValue: { color: theme.slate, fontSize: 15, fontWeight: '600' },
+  tiny: { color: theme.slate, fontSize: 12, marginTop: 2 },
+  empty: { color: theme.slate, paddingVertical: 24, fontSize: 14 },
+  error: { color: theme.critical, marginTop: 12 },
+  signOut: {
+    textAlign: 'center', color: theme.slate, paddingVertical: 22, fontSize: 13,
+  },
+});

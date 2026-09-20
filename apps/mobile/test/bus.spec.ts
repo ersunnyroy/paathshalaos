@@ -226,10 +226,23 @@ describe('where a person lands', () => {
     expect(homeFor(['TEACHER', 'TRANSPORT'])).toBe('/');
   });
 
+  it('sends a guardian to their own children', () => {
+    expect(homeFor(['GUARDIAN'])).toBe('/family');
+  });
+
+  it('sends a learner with an account to the same screen', () => {
+    // Their own record, not the school's. The policies already decide that a
+    // learner sees themselves and a guardian sees their children, so one
+    // screen serves both and neither is told the other's shape.
+    expect(homeFor(['STUDENT'])).toBe('/family');
+  });
+
   it('does not strand a role it has never heard of', () => {
-    // A guardian signing in today has no screen of their own — that is M21.
-    // What they must not get is a blank route.
-    expect(homeFor(['GUARDIAN'])).toBe('/');
+    expect(homeFor(['SUPPORT_AGENT'])).toBe('/');
     expect(homeFor([])).toBe('/');
+  });
+
+  it('still sends staff to the register, however many hats they wear', () => {
+    expect(homeFor(['TEACHER', 'GUARDIAN', 'TRANSPORT'])).toBe('/');
   });
 });

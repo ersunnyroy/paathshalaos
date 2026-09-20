@@ -152,3 +152,20 @@ export class AsyncBoardingStorage implements BoardingStorage {
     await this.store.setItem(BOARDING_KEY, JSON.stringify(events));
   }
 }
+
+/**
+ * The parent app's read cache, in its own AsyncStorage key space.
+ *
+ * `CachedReader` namespaces per screen already; this adapter exists so the
+ * cache uses the same injected-module shape as everything else that touches a
+ * device, and so a storage failure here is a cache miss rather than a crash.
+ */
+export class AsyncCacheStorage {
+  constructor(private readonly store: AsyncStorageModule) {}
+  async getItem(key: string): Promise<string | null> {
+    return this.store.getItem(key);
+  }
+  async setItem(key: string, value: string): Promise<void> {
+    await this.store.setItem(key, value);
+  }
+}
