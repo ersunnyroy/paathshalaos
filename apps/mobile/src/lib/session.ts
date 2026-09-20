@@ -12,17 +12,19 @@ import Constants from 'expo-constants';
 import { createClient, type Client, type Tokens } from '@paathshala/api-client';
 import { OfflineAttendanceQueue } from '@paathshala/offline-queue';
 import { SecureTokenStore, AsyncQueueStorage } from './storage.ts';
+import { resolveApiUrl } from './api-url.ts';
 
 /**
  * Read from the build, not hard-coded.
  *
  * A school's API lives wherever their deployment is, and a bundle with a URL
- * baked into it is a bundle per school.
+ * baked into it is a bundle per school. In development the address is derived
+ * from the dev server the phone already connected to — see resolveApiUrl.
  */
 const extra = (Constants.expoConfig?.extra ?? {}) as {
   apiUrl?: string; tenantId?: string;
 };
-export const API_URL = extra.apiUrl ?? 'http://localhost:3001';
+export const API_URL = resolveApiUrl(extra.apiUrl, Constants.expoConfig?.hostUri);
 export const TENANT_ID = extra.tenantId ?? '';
 
 export const tokenStore = new SecureTokenStore(SecureStore);

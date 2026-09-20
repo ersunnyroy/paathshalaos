@@ -515,6 +515,14 @@ the awkwardest of them is gone entirely — SDK 52 required React 18 while the w
 `useRef` during prerender. Both apps are on React 19 now. Each removal was verified by
 taking the workaround out and bundling again.
 
+**Setup steps that go wrong.** The app derives the API's address from
+`Constants.expoConfig.hostUri` — the host the phone already reached Metro on — rather than
+asking anybody to find their own LAN IP and keep it in sync with whatever the router hands
+out. An explicit `apiUrl` still wins, because a real deployment is not somebody's laptop,
+and the sign-in screen prints the address it resolved, because "which machine is this
+talking to" is the first question when a request fails and the hardest to answer from a
+phone.
+
 The lesson is about verification rather than about Expo: `expo export` proves a bundle
 builds, and cannot prove the SDK it targets is one that any installed client will load.
 That is a check against the outside world, and it belongs at the start of choosing a

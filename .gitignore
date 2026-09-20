@@ -19,3 +19,6 @@ Claude outputs/
 # Expo
 apps/mobile/.expo/
 apps/mobile/dist/
+
+# pnpm store (kept in-repo by this machine's pnpm config)
+.pnpm-store/

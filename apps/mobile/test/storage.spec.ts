@@ -21,6 +21,7 @@ import {
   initialMarks, nextState, recordsFor, summarise, type Learner,
 } from '../src/lib/register.ts';
 import type { AttendanceState } from '@paathshala/offline-queue';
+import { resolveApiUrl } from '../src/lib/api-url.ts';
 
 function fakeSecureStore(options: {
   initial?: Record<string, string>;
@@ -191,5 +192,37 @@ describe('the register, without a screen', () => {
     // A conflict outranks everything else: it is the only one needing a decision.
     expect(summarise({ synced: 1, conflicted: 1, corrections: 1, failed: 1 }, 0, 32)
       .message).toMatch(/clash/);
+  });
+});
+
+describe('finding the API without anybody typing an IP', () => {
+  it('takes the host from the dev server the phone already reached', () => {
+    // The phone connected to Metro over the network it is on; that host is the
+    // machine running the API too. Asking a person to find their own LAN IP and
+    // keep it in sync with their router is a setup step that mostly goes wrong.
+    expect(resolveApiUrl(undefined, '192.168.1.14:8081')).toBe('http://192.168.1.14:3001');
+  });
+
+  it('copes with a scheme, a path, and no port', () => {
+    expect(resolveApiUrl(undefined, 'http://192.168.1.14:8081')).toBe('http://192.168.1.14:3001');
+    expect(resolveApiUrl(undefined, '192.168.1.14:8081/_expo')).toBe('http://192.168.1.14:3001');
+    expect(resolveApiUrl(undefined, 'chatty-otter.tunnel.dev')).toBe('http://chatty-otter.tunnel.dev:3001');
+  });
+
+  it('never turns localhost into an address a phone would believe', () => {
+    // On a device, localhost is the device. Rewriting it to http://localhost is
+    // no worse than the alternative and is correct on a simulator, which is the
+    // only place hostUri says localhost.
+    expect(resolveApiUrl(undefined, 'localhost:8081')).toBe('http://localhost:3001');
+    expect(resolveApiUrl(undefined, '127.0.0.1:8081')).toBe('http://localhost:3001');
+    expect(resolveApiUrl(undefined, undefined)).toBe('http://localhost:3001');
+  });
+
+  it('lets an explicit setting win, because production is not a laptop', () => {
+    expect(resolveApiUrl('https://api.school.example', '192.168.1.14:8081'))
+      .toBe('https://api.school.example');
+    // And a trailing slash does not become a double slash in every path.
+    expect(resolveApiUrl('https://api.school.example/', '192.168.1.14:8081'))
+      .toBe('https://api.school.example');
   });
 });

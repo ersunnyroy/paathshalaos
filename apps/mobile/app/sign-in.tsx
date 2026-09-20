@@ -3,7 +3,7 @@ import {
   View, Text, TextInput, Pressable, StyleSheet, ActivityIndicator,
 } from 'react-native';
 import { router } from 'expo-router';
-import { signIn, TENANT_ID } from '@/lib/session.ts';
+import { signIn, TENANT_ID, API_URL } from '@/lib/session.ts';
 import { theme } from '@/lib/theme.ts';
 
 export default function SignIn() {
@@ -57,9 +57,14 @@ export default function SignIn() {
       {error ? <Text style={styles.error}>{error}</Text> : null}
       {!TENANT_ID ? (
         <Text style={styles.error}>
-          No school is configured in this build. Set `tenantId` in app.json.
+          No school is configured yet. Put the tenant id the seed printed into
+          `expo.extra.tenantId` in apps/mobile/app.json, then reload.
         </Text>
       ) : null}
+      {/* Shown always, because "which machine is this app talking to" is the
+          first question when a request fails and the hardest to answer from a
+          phone. */}
+      <Text style={styles.hint}>API: {API_URL}</Text>
 
       <Pressable
         style={[styles.button, busy && styles.buttonBusy]}
@@ -85,6 +90,7 @@ const styles = StyleSheet.create({
     fontSize: 16,
   },
   error: { marginTop: 14, color: theme.critical },
+  hint: { marginTop: 10, fontSize: 12, color: theme.slate, textAlign: 'center' },
   button: {
     marginTop: 24, backgroundColor: theme.teal, borderRadius: 10,
     paddingVertical: 14, alignItems: 'center',
