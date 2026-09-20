@@ -66,12 +66,12 @@ intended. Do not "fix" it by relaxing the assertion.
 - **Money is an exact decimal string**, never a JSON number. Paise, formatted by string
   surgery — never divided.
 - **Pagination is keyset**, never OFFSET.
-- **Do not set `node-linker=hoisted`.** It is the obvious fix for Metro and it was tried
-  and reverted: this workspace holds two React majors on purpose (React Native 0.76 needs
-  React 18, the web app is on 19), and one hoisted root gives one of them the wrong copy —
-  the web build dies with a null `useRef` during prerender. `apps/mobile/metro.config.js`
-  teaches Metro about the workspace instead, which affects only the app that needs it.
-  The web tsconfig points the `react` type specifier at its own copy for the same reason.
+- **Check the SDK against what Expo Go actually runs, before writing the app.** Expo Go
+  loads the current SDK and nothing older. The app was first pinned to SDK 52, bundled
+  perfectly, and could not be opened on a phone at all. `expo export` proves a bundle
+  builds; it cannot prove anyone can load it. Both apps are on React 19 now (SDK 57 /
+  React Native 0.86), so a single React major covers the workspace — do not reintroduce a
+  second one, and do not set `node-linker=hoisted` to paper over it.
 - **Refresh is single-flight, and must stay that way.** The server rotates refresh tokens
   and revokes the whole family when a spent one is presented — that is what a stolen token
   looks like. So two concurrent refreshes sign the user out and write an audit row saying

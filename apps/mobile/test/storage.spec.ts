@@ -131,8 +131,13 @@ describe('the register queue survives the app being killed', () => {
     // Deliberate: a register is a class list, not a credential, and secure
     // storage is size-limited in a way a register would hit. The test is here
     // so that "just put it all in SecureStore" fails rather than ships.
-    const source = await import('node:fs').then((fs) => fs.readFileSync(
-      new URL('../src/lib/storage.ts', import.meta.url), 'utf8'));
+    // A plain path, not a URL: this app's tsconfig pulls in the DOM lib, so
+    // `URL` here is the DOM's rather than Node's, and the two are structurally
+    // different enough that neither readFileSync nor fileURLToPath accepts it.
+    const { readFileSync } = await import('node:fs');
+    const { dirname, join } = await import('node:path');
+    const here = dirname(import.meta.url.replace('file://', ''));
+    const source = readFileSync(join(here, '..', 'src', 'lib', 'storage.ts'), 'utf8');
     const queueSection = source.slice(source.indexOf('class AsyncQueueStorage'));
     expect(queueSection).not.toContain('SecureStore');
     expect(queueSection).not.toContain('secure.');

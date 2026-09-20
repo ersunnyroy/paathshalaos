@@ -462,7 +462,7 @@ asserts the registration is gone.
 | ID | Milestone | Status | What shipped |
 | --- | --- | --- | --- |
 | M18.1 | A session that survives | Done | `packages/api-client`: rotation-aware refresh with a **single-flight latch**, storage injected, tested in Node. The web app is on it; the mobile app will be |
-| M18.2 | The Expo app | Built, unrun | `apps/mobile`: sign-in and the register, on the shared client and the shared queue. It typechecks and it **bundles** — `expo export` builds the full graph — but nothing has launched it |
+| M18.2 | The Expo app | Built, unrun | `apps/mobile` on **SDK 57**: sign-in and the register, on the shared client and the shared queue. It typechecks and it **bundles** — `expo export` builds the full graph — but nothing has launched it |
 
 **Why this came before the app.** The server has rotated refresh tokens with reuse
 detection since M2.2, and the web client never refreshed at all: when the ten-minute
@@ -500,16 +500,25 @@ device, and it found three things a typecheck could not: `@babel/runtime` and
 isolated linking, and the two shared packages needed a `main` field because Metro reads it
 before `exports`.
 
-**The linker, and a change that was reverted.** The obvious fix for Metro is
-`node-linker=hoisted`, and it was tried and taken back out. This workspace holds two React
-majors deliberately — React Native 0.76 requires React 18, the web app is on 19 — and a
-single hoisted root gives one of them the wrong copy: the web build died with a null
-`useRef` during prerender, which is a duplicate React by another name. Configuring Metro
-instead (`apps/mobile/metro.config.js`) is the contained change: only the app that needs
-it is affected, and every other package keeps the strict linking that stops it importing
-what it never declared. Two React majors still need one narrow accommodation — the web
-app's tsconfig points the `react` type specifier at its own copy, because a package's
-`/// <reference types="react" />` reaches past `typeRoots`.
+**Pinned to the wrong SDK, and what that cost.** The app was first written against Expo
+SDK 52 — the version this environment's knowledge predated the replacement of — and that
+was wrong in a way only a phone could reveal: current Expo Go runs SDK 57 and nothing
+older, so the app could not be opened at all. Bundling proved the code was sound and said
+nothing about whether anybody could run it.
+
+The upgrade to SDK 57 (React Native 0.86, React 19.2) removed three earlier workarounds
+rather than adding to them. `@babel/runtime` and `query-string` no longer need declaring;
+`metro.config.js` is down from a hand-written resolver configuration to one line that
+watches the workspace, because the default config now handles pnpm's isolated store; and
+the awkwardest of them is gone entirely — SDK 52 required React 18 while the web app is on
+19, so a hoisted root handed one of them the wrong copy and the web build died with a null
+`useRef` during prerender. Both apps are on React 19 now. Each removal was verified by
+taking the workaround out and bundling again.
+
+The lesson is about verification rather than about Expo: `expo export` proves a bundle
+builds, and cannot prove the SDK it targets is one that any installed client will load.
+That is a check against the outside world, and it belongs at the start of choosing a
+version rather than after somebody's phone shows an empty screen.
 
 ### Deliberately out of scope
 

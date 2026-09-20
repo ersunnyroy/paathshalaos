@@ -11,13 +11,29 @@
       "backgroundColor": "#0F172A",
       "resizeMode": "contain"
     },
-    "assetBundlePatterns": ["**/*"],
-    "ios": { "supportsTablet": true, "bundleIdentifier": "os.paathshala.app" },
+    "assetBundlePatterns": [
+      "**/*"
+    ],
+    "ios": {
+      "supportsTablet": true,
+      "bundleIdentifier": "os.paathshala.app"
+    },
     "android": {
       "package": "os.paathshala.app",
-      "adaptiveIcon": { "backgroundColor": "#0F172A" }
+      "adaptiveIcon": {
+        "backgroundColor": "#0F172A"
+      }
     },
-    "plugins": ["expo-router", "expo-secure-store"],
-    "experiments": { "typedRoutes": false }
+    "plugins": [
+      "expo-router",
+      "expo-secure-store"
+    ],
+    "experiments": {
+      "typedRoutes": false
+    },
+    "extra": {
+      "apiUrl": "http://192.168.1.10:3001",
+      "tenantId": ""
+    }
   }
 }
