@@ -81,6 +81,7 @@ async function main(): Promise<void> {
     // Two class groups, two sections each — enough for a dashboard to look like
     // a school rather than a unit test.
     const sections: Array<{ id: string; label: string }> = [];
+    const offerings: Array<{ id: string; className: string; termId: string }> = [];
     for (const className of ['Class IX', 'Class X']) {
       const cg = await one<{ id: string }>(c,
         `INSERT INTO class_group (tenant_id, programme_id, academic_year_id, name, level_sequence)
@@ -94,10 +95,12 @@ async function main(): Promise<void> {
           [tenantId, cg.id, sectionName]);
         sections.push({ id: sec.id, label: `${className} ${sectionName}` });
       }
-      await c.query(
+      const offering = await one<{ id: string }>(c,
         `INSERT INTO course_offering
-           (tenant_id, class_group_id, subject_id, term_id) VALUES ($1, $2, $3, $4)`,
+           (tenant_id, class_group_id, subject_id, term_id) VALUES ($1, $2, $3, $4)
+         RETURNING id`,
         [tenantId, cg.id, subject.id, term1.id]);
+      offerings.push({ id: offering.id, className, termId: term1.id });
     }
 
     // Staff.
@@ -308,6 +311,11 @@ async function main(): Promise<void> {
     let driverUserId = '';
     let parentUserId = '';
     let ownerUserId = '';
+    // The staff row behind teacher@demo.school, not Meera's. M28's screens all
+    // key on `app_current_staff_id()`, so classwork seeded against a teacher
+    // nobody can sign in as is classwork nobody can look at — the same mistake
+    // the driver login was added to fix in M20.
+    let signedInTeacherStaffId = '';
     for (const [email, role, scopeType, scopeId] of users) {
       const user = await one<{ id: string }>(c,
         `INSERT INTO user_account (login_email, password_hash, status)
@@ -344,15 +352,16 @@ async function main(): Promise<void> {
          role === 'ORG_OWNER' ? 'Menon' : role === 'TEACHER' ? 'Iyer'
            : role === 'TRANSPORT' ? 'Yadav' : 'Desai',
          user.id]);
-      await c.query(
+      const staffRow = await one<{ id: string }>(c,
         `INSERT INTO staff (tenant_id, person_id, campus_id, employee_code,
                             designation, joined_on)
-         VALUES ($1, $2, $3, $4, $5, '2021-04-01')`,
+         VALUES ($1, $2, $3, $4, $5, '2021-04-01') RETURNING id`,
         [tenantId, person.id, campus.id,
          `EMP-1${role === 'ORG_OWNER' ? '01' : role === 'TEACHER' ? '02'
            : role === 'TRANSPORT' ? '04' : '03'}`,
          role === 'ORG_OWNER' ? 'Principal' : role === 'TEACHER' ? 'Teacher'
            : role === 'TRANSPORT' ? 'Driver' : 'Accountant']);
+      if (role === 'TEACHER') signedInTeacherStaffId = staffRow.id;
     }
 
     // The demo parent becomes the guardian of the first two learners, so the
@@ -743,13 +752,123 @@ async function main(): Promise<void> {
          i === 6 ? 'no_show' : 'boarded', randomUUID(), driverUserId]);
     }
 
+    // ------------------------------------------------------------ classwork
+    //
+    // M28, in the demo, for the reason the driver and the parent logins exist:
+    // a feature nobody can sign in and look at is a feature nobody checks.
+    //
+    // Three assignments, deliberately not three of a kind, because the
+    // difference between them IS the design: one graded and marked, one graded
+    // and still waiting, one that carries no marks at all. The first two have
+    // an `assessment` behind them and their marks are in `mark`, where the
+    // result run can see them; the third has neither and never will.
+    const ninth = offerings.find((o) => o.className === 'Class IX');
+    if (ninth && signedInTeacherStaffId) {
+      await c.query(
+        `UPDATE course_offering SET primary_teacher_staff_id = $2 WHERE id = $1`,
+        [ninth.id, signedInTeacherStaffId]);
+
+      for (const [i, [title, summary]] of ([
+        ['Forces and motion', 'Newton\u2019s three laws, with the trolley demonstration'],
+        ['Work, energy and power', 'Where the joule comes from'],
+      ] as Array<[string, string]>).entries()) {
+        await c.query(
+          `INSERT INTO lesson (tenant_id, course_offering_id, academic_year_id,
+                               title, summary, sequence_no, taught_on,
+                               status, published_at, created_by_staff_id)
+           VALUES ($1, $2, '00000000-0000-0000-0000-000000000000'::uuid,
+                   $3, $4, $5, CURRENT_DATE - $6::int, 'published', now(), $7)`,
+          [tenantId, ninth.id, title, summary, i + 1, (2 - i) * 7,
+           signedInTeacherStaffId]);
+      }
+
+      // Class IX only. `enrollments` runs across all four sections, so taking
+      // the first ten of it put Class X learners in a Class IX assignment —
+      // rows the teacher of that class cannot see, which showed up on screen
+      // as "4 handed in" under an assignment seeded with eight.
+      const ninthSectionIds = new Set(
+        sections.filter((sec) => sec.label.startsWith('Class IX')).map((sec) => sec.id));
+      const ninthEnrolments = enrollments
+        .filter((e) => ninthSectionIds.has(e.sectionId))
+        .slice(0, 10);
+
+      const assignmentsToSeed: Array<{
+        title: string; instructions: string; dueDays: number;
+        maxMarks: number | null; marked: boolean;
+      }> = [
+        { title: 'Newton II problem set', instructions: 'Questions 1 to 8, page 74.',
+          dueDays: -6, maxMarks: 20, marked: true },
+        { title: 'Energy conversions worksheet', instructions: 'One worked example each.',
+          dueDays: 2, maxMarks: 15, marked: false },
+        { title: 'Read chapter 5 before Friday', instructions: 'No submission needed.',
+          dueDays: 4, maxMarks: null, marked: false },
+      ];
+
+      for (const spec of assignmentsToSeed) {
+        let assessmentId: string | null = null;
+        if (spec.maxMarks !== null) {
+          const assessment = await one<{ id: string }>(c,
+            `INSERT INTO assessment
+               (tenant_id, course_offering_id, term_id, academic_year_id, name,
+                kind, max_marks, weight_percent, status)
+             VALUES ($1, $2, $3, '00000000-0000-0000-0000-000000000000'::uuid,
+                     $4, 'assignment', $5, 5, 'open') RETURNING id`,
+            [tenantId, ninth.id, ninth.termId, spec.title, spec.maxMarks]);
+          assessmentId = assessment.id;
+        }
+
+        const assignment = await one<{ id: string }>(c,
+          `INSERT INTO assignment
+             (tenant_id, course_offering_id, academic_year_id, assessment_id,
+              title, instructions, due_at, submission_kind, status, published_at,
+              created_by_staff_id)
+           VALUES ($1, $2, '00000000-0000-0000-0000-000000000000'::uuid, $3,
+                   $4, $5, now() + ($6 || ' days')::interval, 'either',
+                   'published', now(), $7) RETURNING id`,
+          [tenantId, ninth.id, assessmentId, spec.title, spec.instructions,
+           String(spec.dueDays), signedInTeacherStaffId]);
+
+        if (spec.maxMarks === null) continue;
+
+        // Eight of ten have handed it in. The two who have not are the whole
+        // point of the parent's screen and of the teacher's waiting count.
+        for (const [i, enrolment] of ninthEnrolments.slice(0, 8).entries()) {
+          if (spec.marked) {
+            await c.query(
+              `INSERT INTO mark (tenant_id, assessment_id, enrollment_id,
+                                 marks_obtained, entered_by_staff_id)
+               VALUES ($1, $2, $3, $4::numeric, $5)`,
+              [tenantId, assessmentId, enrolment.id,
+               (spec.maxMarks - (i % 5)).toFixed(2), signedInTeacherStaffId]);
+          }
+          await c.query(
+            `INSERT INTO submission
+               (tenant_id, assignment_id, enrollment_id, student_id,
+                course_offering_id, body_text, submitted_at, status,
+                feedback, returned_at, returned_by_staff_id)
+             VALUES ($1, $2, $3,
+                     '00000000-0000-0000-0000-000000000000'::uuid,
+                     '00000000-0000-0000-0000-000000000000'::uuid,
+                     $4, now() - ($5 || ' days')::interval, $6, $7,
+                     CASE WHEN $6 = 'returned' THEN now() END,
+                     CASE WHEN $6 = 'returned' THEN $8::uuid END)`,
+            [tenantId, assignment.id, enrolment.id,
+             'Submitted through the parent app.', String(spec.marked ? 7 : 1),
+             spec.marked ? 'returned' : 'submitted',
+             spec.marked ? 'Show your working for question 6.' : null,
+             signedInTeacherStaffId]);
+        }
+      }
+    }
+
     await c.query('COMMIT');
 
     console.log('\nSeeded a demo school.\n');
     console.log(`  API key (test, shown once): ${demoCredential}`);
     console.log(`  tenantId: ${tenantId}`);
     console.log(`  40 learners, 4 sections, 24 invoices, today's attendance for one section`);
-    console.log(`  2 bus routes, 12 riders, this morning's run recorded\n`);
+    console.log(`  2 bus routes, 12 riders, this morning's run recorded`);
+    console.log(`  2 lessons and 3 assignments in Class IX, one already marked\n`);
     await printLogins(c, tenantId);
   } catch (error) {
     await c.query('ROLLBACK');

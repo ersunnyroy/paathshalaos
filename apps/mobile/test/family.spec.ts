@@ -17,19 +17,26 @@ const child = (over: Partial<Child> = {}): Child => ({
 
 describe('which tabs a parent gets', () => {
   it('gives a parent with full access all of them', () => {
-    expect(tabsFor(child())).toEqual(['attendance', 'fees', 'results', 'bus']);
+    expect(tabsFor(child())).toEqual(['attendance', 'fees', 'work', 'results', 'bus']);
   });
 
   it('leaves out the fees tab rather than showing an empty one', () => {
     // An empty fees list reads as "you owe nothing", which is a different and
     // worse lie than "this is not yours to see".
     expect(tabsFor(child({ can_view_finance: false })))
-      .toEqual(['attendance', 'results', 'bus']);
+      .toEqual(['attendance', 'work', 'results', 'bus']);
   });
 
   it('leaves out the results tab the same way', () => {
     expect(tabsFor(child({ can_view_academics: false })))
       .toEqual(['attendance', 'fees', 'bus']);
+  });
+
+  it('takes homework away with the same permission as results', () => {
+    // Homework carries marks and feedback on a child. A parent barred from
+    // academics being shown "17.5 / 20" through a different tab would make the
+    // permission decorative.
+    expect(tabsFor(child({ can_view_academics: false }))).not.toContain('work');
   });
 
   it('always keeps attendance and the bus', () => {

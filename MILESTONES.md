@@ -946,6 +946,74 @@ prerequisite.
 **Nothing in M22.2 or M22.3 has been built or run.** The first `docker build` will find
 something; that is what a first build is for.
 
+## M28 — learning, and the second gradebook that did not get built
+
+The last of the three flags M16 sold with nothing behind it. `transport` was paid off in
+M20, `hr` in M27, and this is `lms`.
+
+**One decision shapes every table.** An assignment that carries marks IS an assessment.
+There is no score column on `submission` and there is not going to be one.
+
+The obvious schema gives a submission a `marks_obtained` and a `graded_at`, and the bug it
+produces is invisible until March: those marks are unknown to M8's weighting, to the result
+run and to the report card, so a term of homework the teacher graded every week contributes
+nothing to the learner's result and nobody finds out until results are computed. A second
+scoring system beside the first is not a feature.
+
+So an assignment that counts points back to an `assessment` row — created for it on the
+spot, from nothing more than the teacher saying "out of 20" — and grading a submission
+means entering a mark through the machinery M8 already has: the same lock, the same
+corrections, the same absent/exempt rule, the same per-row savepoint. An assignment with no
+assessment is practice, which is a real thing teachers set and should not have to pollute a
+gradebook. There is deliberately no third state.
+
+That is enforced three ways rather than described once: there is no column to write a score
+to; a graded assignment's submission cannot be marked returned until a `mark` exists; and
+grading an ungraded assignment with a number is refused rather than dropped.
+
+| ID | Sub-milestone | Status | What shipped |
+| --- | --- | --- | --- |
+| M28.1 | Lessons, assignments, submissions | Done | Five tables, RLS on every one. Drafts are the teacher's until published — the rule 0068 established for a result run, for the same reason |
+| M28.2 | Marks flow into M8 | Done | `assignment.assessment_id`, created on the create path. `gradeAndReturn` calls `assessmentService.enterMarks` and returns only the rows whose mark landed |
+| M28.3 | The two surfaces | Done | A teacher's Classwork page built around one number — how much is waiting to be marked — and a Homework tab in the parent app, under the same permission as results |
+
+### Three findings, one of them outside this milestone
+
+**A teacher of IX-B was a teacher of IX-A** (fixed in 0077). `app_actor_section_ids()` had,
+since 0045, granted a staff member every section of a class group whenever they were primary
+teacher of ANY offering in it. `course_offering.section_id` exists precisely to say which
+section an offering is taught to, and the branch ignored it — along with `deleted_at`, so
+withdrawing a teacher from a class left their access exactly where it was.
+
+The blast radius is larger than this milestone. That function is what `app_may_see_student`
+is built on, which is what `app_student_visible` is built on, which is the single rule 0049
+put under the policies on `student` — including the health role's, so the RESTRICTED medical
+columns — and on marks, attendance and transport. A Class IX with four sections and four
+subject teachers gave each of them all four sections' children.
+
+Found by a test that expected a teacher with no connection to a class to see none of its
+homework, and watched them see all of it. **No existing test broke when it was narrowed**,
+which is the part worth recording: nothing in 779 tests had ever exercised that branch.
+
+**A submission could be born already marked.** The column-ownership guard — the family owns
+the work, the teacher owns the verdict — was written `BEFORE UPDATE`, on the assumption that
+work is handed in and then marked. Nothing enforced the order. One INSERT carrying
+`status = 'returned'`, a timestamp and a compliment passed the policy and skipped every
+check. The guard now covers INSERT, and so does the requirement that a mark stands behind a
+returned piece of work — including for the teacher recording paper homework, which is the
+realistic version of that path and was the last mutation to survive.
+
+**A test that proved the wrong policy.** "A parent cannot submit for another family's
+child" passed with `submission`'s entire write rule deleted, because that caller cannot see
+the other child's *enrolment* — 0019's policy refused it before this table was consulted.
+The same shape M16 found. The assertion now uses the class teacher of the section, who can
+see both the assignment and the enrolments and is stopped by nothing else.
+
+**Deliberately not built.** File downloads. 0017 says nothing may be served until a scan has
+cleared it, and there is no endpoint here that hands out a URL — bytes are referenced, never
+served — so there is nothing to gate. The migration says where the gate goes when one is
+added, rather than leaving it implicit.
+
 ## The rest of the plan (M20–M31)
 
 The first nineteen milestones were a plan that ran out rather than a plan that finished.
@@ -966,7 +1034,7 @@ a promise on a pricing page — so it is paid off before anything new is added.
 | --- | --- | --- |
 | M20 | Transport — **done, see above** | Routes, stops, vehicles, drivers, and which child is on which bus today. A driver sees the children on **their** route and nothing else; a guardian sees their own child's bus and no other family's. Boarding is attendance, with the same offline queue and the same conflict rules |
 | M27 | HR — **done, see above** | Staff lifecycle beyond a `staff` row: contracts, leave balances, and the **relief cover** that attendance has never been able to express. Payroll *inputs*, not payroll — running payroll is a compliance surface of its own and guessing at it would be worse than omitting it |
-| M28 | Learning | Lessons, assignments, submissions, and marks that flow into the assessment module rather than beside it |
+| M28 | Learning — **done, see above** | Lessons, assignments, submissions, and marks that flow into the assessment module rather than beside it |
 
 ### The pilot set
 
@@ -1047,7 +1115,8 @@ left to the end.
 | M24 Backup and restore | Partly | drill | 4 damaged restores tried, 3 caught — the 4th found a drill that could not fail. PITR still missing |
 | M25 Invoicing schools | Mostly | 41 | 8 mutations verified; unequal tax halves caught by a CHECK constraint, three tables caught by the M1 RLS invariant, one float right almost always. Payment provider not done |
 | M27 HR and relief cover | Done | 28 | 8 mutations verified; closed a limitation attendance had carried since M6. 2 survivors: a check whose value is its message, and an untested half day |
-| M22 Deploy safety | Partly | 14 | 5 mutations verified. Dockerfile and compose written but never built — no reachable Docker daemon, no AWS account |
+| M22 Deploy safety | Partly | 16 | 5 mutations verified. The container stack has now been BUILT AND RUN on a real Docker daemon — .dockerignore was in the wrong directory, and the migration runner blamed a migration for a database whose history did not match it. AWS still absent |
+| M28 Learning | Done | 38 | 14 mutations verified, no survivors. Closed the last M16 flag that guarded nothing. 1 finding outside the milestone (0077: section scope ignored `section_id`, reaching student records, marks, attendance and transport), 1 guard that covered only UPDATE, 1 test proving a different policy than it named |
 
 Two design decisions were made during M2 that are worth carrying forward:
 

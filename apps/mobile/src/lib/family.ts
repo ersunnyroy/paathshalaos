@@ -16,7 +16,7 @@ export interface Child {
   can_view_finance: boolean;
 }
 
-export type Tab = 'attendance' | 'fees' | 'results' | 'bus';
+export type Tab = 'attendance' | 'fees' | 'work' | 'results' | 'bus';
 
 /**
  * Which tabs this parent gets.
@@ -29,7 +29,10 @@ export type Tab = 'attendance' | 'fees' | 'results' | 'bus';
 export function tabsFor(child: Child): Tab[] {
   const tabs: Tab[] = ['attendance'];
   if (child.can_view_finance) tabs.push('fees');
-  if (child.can_view_academics) tabs.push('results');
+  // Homework sits under the same permission as results, and before it: a
+  // parent opens this app on a weekday evening to find out what is due, and
+  // once a term to look at a report card.
+  if (child.can_view_academics) tabs.push('work', 'results');
   tabs.push('bus');
   return tabs;
 }

@@ -8,6 +8,7 @@ import {
   tabsFor, rupees, attendanceRate, feeState, childName, childClass,
   ATTENDANCE_LABEL, type Child, type Tab, type Fees, type AttendanceSummary,
 } from '@/lib/family.ts';
+import { sortWork, outstanding, workLine, bucketOf, type Work } from '@/lib/learning.ts';
 import { asOfLabel } from '@/lib/cache.ts';
 import { theme } from '@/lib/theme.ts';
 
@@ -30,7 +31,8 @@ interface Bus {
 }
 
 const TAB_LABEL: Record<Tab, string> = {
-  attendance: 'Attendance', fees: 'Fees', results: 'Results', bus: 'Bus',
+  attendance: 'Attendance', fees: 'Fees', work: 'Homework',
+  results: 'Results', bus: 'Bus',
 };
 
 /**
@@ -87,12 +89,19 @@ export default function Family() {
     setPanel(null);
     try {
       const s = await session();
-      const path = tab === 'attendance' ? `children/${childId}/attendance`
-        : tab === 'fees' ? `children/${childId}/fees`
-        : tab === 'results' ? `children/${childId}/results`
-        : `children/${childId}/transport`;
+      // Homework is the one panel that is not served by the family module.
+      // It is the learning module's own endpoint, behind the `lms` flag, and
+      // giving it a second route under /v1/family would have meant two places
+      // deciding who may see a child's marks.
+      const url = tab === 'work'
+        ? `/v1/learning/students/${childId}/work?includeReturned=true`
+        : `/v1/family/${
+            tab === 'attendance' ? `children/${childId}/attendance`
+            : tab === 'fees' ? `children/${childId}/fees`
+            : tab === 'results' ? `children/${childId}/results`
+            : `children/${childId}/transport`}`;
       const held = await (await s.cache()).read(`${tab}:${childId}`,
-        () => s.api().get<unknown>(`/v1/family/${path}`));
+        () => s.api().get<unknown>(url));
       if (!held) {
         setError('No signal, and nothing saved on this phone for this yet.');
       } else {
@@ -174,6 +183,7 @@ export default function Family() {
               {tab === 'attendance'
                 ? <Attendance summary={panel.data as AttendanceSummary} />
                 : tab === 'fees' ? <FeesPanel fees={panel.data as Fees} />
+                : tab === 'work' ? <WorkPanel rows={panel.data as Work[]} />
                 : tab === 'results' ? <Results runs={panel.data as ResultRun[]} />
                 : <BusPanel bus={panel.data as Bus | null} />}
             </>
@@ -239,6 +249,52 @@ function FeesPanel({ fees }: { fees: Fees }) {
           <Text style={styles.rowValue}>{rupees(i.outstanding_paise)}</Text>
         </View>
       ))}
+    </View>
+  );
+}
+
+/**
+ * What is set, and what has come back.
+ *
+ * The count at the top is the answer to the question the parent opened the app
+ * with, so it is the first thing on the screen and it is a count of what is
+ * WAITING — not of what exists. A list headed "8 pieces of homework" when six
+ * are finished is a number that makes somebody scroll to find out it was
+ * nothing.
+ */
+function WorkPanel({ rows }: { rows: Work[] }) {
+  if (rows.length === 0) {
+    return (
+      <Text style={styles.empty}>
+        Nothing set at the moment. Homework appears here once a teacher
+        publishes it.
+      </Text>
+    );
+  }
+  const waiting = outstanding(rows);
+  return (
+    <View>
+      <Text style={styles.big}>{waiting}</Text>
+      <Text style={styles.sub}>
+        {waiting === 0 ? 'Nothing outstanding'
+          : waiting === 1 ? 'piece of work still to hand in'
+          : 'pieces of work still to hand in'}
+      </Text>
+      {sortWork(rows).map((w) => {
+        const bucket = bucketOf(w);
+        return (
+          <View key={w.assignment_id} style={styles.row}>
+            <View style={{ flex: 1, paddingRight: 12 }}>
+              <Text style={styles.rowKey}>{w.title}</Text>
+              <Text style={styles.sub}>{w.subject_name}</Text>
+              {w.feedback ? <Text style={styles.sub}>“{w.feedback}”</Text> : null}
+            </View>
+            <Text style={[styles.rowValue, bucket === 'overdue' && styles.overdue]}>
+              {workLine(w)}
+            </Text>
+          </View>
+        );
+      })}
     </View>
   );
 }
@@ -328,6 +384,7 @@ const styles = StyleSheet.create({
   },
   rowKey: { flex: 1, color: theme.navy, fontSize: 15 },
   rowValue: { color: theme.slate, fontSize: 15, fontWeight: '600' },
+  overdue: { color: theme.critical, fontWeight: '600' },
   tiny: { color: theme.slate, fontSize: 12, marginTop: 2 },
   empty: { color: theme.slate, paddingVertical: 24, fontSize: 14 },
   error: { color: theme.critical, marginTop: 12 },

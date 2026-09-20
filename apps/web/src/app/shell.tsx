@@ -37,7 +37,10 @@ const GROUPS: Array<{ title: string; items: Array<{ href: string; label: string;
   },
   {
     title: 'Academics',
-    items: [{ href: '/results', label: 'Results', icon: Icon.award }],
+    items: [
+      { href: '/learning', label: 'Classwork', icon: Icon.book },
+      { href: '/results', label: 'Results', icon: Icon.award },
+    ],
   },
   {
     title: 'Money',

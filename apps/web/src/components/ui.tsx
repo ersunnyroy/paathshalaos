@@ -35,6 +35,9 @@ export const Icon = {
   fees: (p: IconProps) => (
     <svg {...base} {...p}><rect x="2.5" y="5.5" width="19" height="13" rx="2.5" /><path d="M2.5 10h19M6 15h4" /></svg>
   ),
+  book: (p: IconProps) => (
+    <svg {...base} {...p}><path d="M4 5.5A2.5 2.5 0 0 1 6.5 3H19v15H6.5A2.5 2.5 0 0 0 4 20.5z" /><path d="M4 20.5A2.5 2.5 0 0 1 6.5 18H19v3H6.5A2.5 2.5 0 0 1 4 20.5z" /></svg>
+  ),
   search: (p: IconProps) => (
     <svg {...base} {...p}><circle cx="11" cy="11" r="6.5" /><path d="M20 20l-3.6-3.6" /></svg>
   ),

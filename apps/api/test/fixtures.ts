@@ -69,6 +69,10 @@ const TABLE_TEARDOWN_ORDER = [
   'delivery_receipt', 'message_attempt', 'message_recipient', 'message_request',
   'message_template_version', 'message_template', 'communication_preference',
   'whatsapp_session',
+  // Before `assessment`: a graded assignment references the assessment its
+  // marks live in, so deleting assessments first fails the FK — which is how
+  // this list is meant to be read, dependants above their dependencies.
+  'submission_file', 'submission', 'assignment', 'lesson_resource', 'lesson',
   'report_card', 'report_card_template', 'result_line', 'result_run',
   'mark_correction', 'mark', 'assessment', 'grade_band', 'grading_scale',
   'settlement_line', 'settlement_batch', 'ledger_entry',
@@ -575,6 +579,8 @@ export async function purgeTestData(emailDomain = '%-test.example'): Promise<voi
                        'delivery_receipt', 'message_attempt', 'message_recipient',
                        'message_request', 'message_template_version', 'message_template',
                        'communication_preference', 'whatsapp_session',
+                       'submission_file', 'submission', 'assignment',
+                       'lesson_resource', 'lesson',
                        'report_card', 'report_card_template', 'result_line', 'result_run',
                        'mark_correction', 'mark', 'assessment', 'grade_band', 'grading_scale',
                        'settlement_line', 'settlement_batch', 'ledger_entry',
@@ -798,7 +804,9 @@ export async function destroyAcademics(tenantIds: string[]): Promise<void> {
   const client = new pg.Client({ connectionString: OWNER_URL });
   await client.connect();
   try {
-    for (const t of ['schedule_slot', 'course_offering', 'section', 'class_group',
+    for (const t of ['submission_file', 'submission', 'assignment',
+                     'lesson_resource', 'lesson',
+                     'schedule_slot', 'course_offering', 'section', 'class_group',
                      'room', 'subject', 'term', 'programme']) {
       await client.query(`DELETE FROM ${t} WHERE tenant_id = ANY($1)`, [tenantIds]);
     }
