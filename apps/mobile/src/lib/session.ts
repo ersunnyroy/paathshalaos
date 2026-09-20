@@ -21,13 +21,35 @@ import { resolveApiUrl } from './api-url.ts';
  * baked into it is a bundle per school. In development the address is derived
  * from the dev server the phone already connected to — see resolveApiUrl.
  */
-const extra = (Constants.expoConfig?.extra ?? {}) as {
-  apiUrl?: string; tenantId?: string;
-};
-export const API_URL = resolveApiUrl(extra.apiUrl, Constants.expoConfig?.hostUri);
-export const TENANT_ID = extra.tenantId ?? '';
+function extra(): { apiUrl?: string; tenantId?: string } {
+  return (Constants.expoConfig?.extra ?? {}) as { apiUrl?: string; tenantId?: string };
+}
+/**
+ * Everything below is built on FIRST USE, not on import.
+ *
+ * It used to run at module scope, and that was wrong in a way that cost an
+ * evening: constructing a keychain-backed store, an HTTP client and a queue as
+ * a side effect of importing a file means any failure in any of them happens
+ * before React exists. What the phone shows then is
+ * `[runtime not ready]: TypeError: Object is not a function` with no file, no
+ * line and no stack — the app is dead before anything can catch it.
+ *
+ * Built lazily, the same failure happens inside a screen, inside an error
+ * boundary, with a message somebody can act on.
+ */
+export function apiUrl(): string {
+  return resolveApiUrl(extra().apiUrl, Constants.expoConfig?.hostUri);
+}
 
-export const tokenStore = new SecureTokenStore(SecureStore);
+export function tenantId(): string {
+  return extra().tenantId ?? '';
+}
+
+let _tokenStore: SecureTokenStore | undefined;
+export function tokenStore(): SecureTokenStore {
+  _tokenStore ??= new SecureTokenStore(SecureStore);
+  return _tokenStore;
+}
 
 let signedOut: (reason: string) => void = () => undefined;
 
@@ -36,24 +58,32 @@ export function onSignedOut(handler: (reason: string) => void): void {
   signedOut = handler;
 }
 
-export const api: Client = createClient({
-  baseUrl: API_URL,
-  tenantId: TENANT_ID,
-  store: tokenStore,
-  onSignedOut: (reason) => signedOut(reason),
-});
+let _api: Client | undefined;
+export function api(): Client {
+  _api ??= createClient({
+    baseUrl: apiUrl(),
+    tenantId: tenantId(),
+    store: tokenStore(),
+    onSignedOut: (reason) => signedOut(reason),
+  });
+  return _api;
+}
 
-export const queue = new OfflineAttendanceQueue(
-  new AsyncQueueStorage(AsyncStorage),
-  {
-    async sync(input) {
-      return api.post(`/v1/attendance/sessions/${input.sessionId}/marks`, {
-        records: input.records,
-        deviceClock: input.deviceClock,
-      });
+let _queue: OfflineAttendanceQueue | undefined;
+export function queue(): OfflineAttendanceQueue {
+  _queue ??= new OfflineAttendanceQueue(
+    new AsyncQueueStorage(AsyncStorage),
+    {
+      async sync(input) {
+        return api().post(`/v1/attendance/sessions/${input.sessionId}/marks`, {
+          records: input.records,
+          deviceClock: input.deviceClock,
+        });
+      },
     },
-  },
-);
+  );
+  return _queue;
+}
 
 /**
  * Signs in and stores the pair.
@@ -63,10 +93,10 @@ export const queue = new OfflineAttendanceQueue(
  * was wrong, not that a token went stale.
  */
 export async function signIn(email: string, password: string): Promise<void> {
-  const response = await fetch(`${API_URL}/v1/auth/login`, {
+  const response = await fetch(`${apiUrl()}/v1/auth/login`, {
     method: 'POST',
     headers: { 'content-type': 'application/json' },
-    body: JSON.stringify({ email, password, tenantId: TENANT_ID }),
+    body: JSON.stringify({ email, password, tenantId: tenantId() }),
   });
   const body = await response.json().catch(() => undefined) as
     { data?: Tokens; error?: { message: string } } | undefined;
@@ -76,9 +106,9 @@ export async function signIn(email: string, password: string): Promise<void> {
     // and so does this. Distinguishing them is an account-existence oracle.
     throw new Error(body?.error?.message ?? 'Those details were not accepted.');
   }
-  await tokenStore.write(body.data);
+  await tokenStore().write(body.data);
 }
 
 export async function signOut(): Promise<void> {
-  await tokenStore.clear();
+  await tokenStore().clear();
 }

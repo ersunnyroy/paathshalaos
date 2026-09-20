@@ -36,11 +36,11 @@ export default function Register() {
   const load = useCallback(async () => {
     setLoadError(null);
     try {
-      const sections = await api.get<Section[]>('/v1/sections');
+      const sections = await api().get<Section[]>('/v1/sections');
       const first = sections[0] ?? null;
       setSection(first);
       if (!first) return;
-      const learners = await api.get<Learner[]>(`/v1/students?sectionId=${first.id}`);
+      const learners = await api().get<Learner[]>(`/v1/students?sectionId=${first.id}`);
       setRoll(learners);
       setMarks(initialMarks(learners));
     } catch (e) {
@@ -48,7 +48,7 @@ export default function Register() {
       // cached weeks ago silently omits every child who joined since.
       setLoadError(e instanceof Error ? e.message : 'Could not load the class list.');
     } finally {
-      setPending(await queue.pendingCount());
+      setPending(await queue().pendingCount());
     }
   }, []);
 
@@ -58,7 +58,7 @@ export default function Register() {
     if (!section || !roll) return;
     setBusy(true);
     try {
-      const opened = await api.post<{ id: string }>('/v1/attendance/sessions', {
+      const opened = await api().post<{ id: string }>('/v1/attendance/sessions', {
         sectionId: section.id,
         academicYearId: section.academic_year_id,
         sessionDate: today(),
@@ -66,7 +66,7 @@ export default function Register() {
       });
 
       const records = recordsFor(roll, marks, () => globalThis.crypto.randomUUID());
-      await queue.enqueue({
+      await queue().enqueue({
         localId: `${opened.id}:${today()}`,
         serverSessionId: opened.id,
         sectionId: section.id,
@@ -74,8 +74,8 @@ export default function Register() {
         records,
       });
 
-      const result = await queue.flush();
-      const left = await queue.pendingCount();
+      const result = await queue().flush();
+      const left = await queue().pendingCount();
       setPending(left);
       setNote(summarise(result, left, records.length));
     } catch (e) {

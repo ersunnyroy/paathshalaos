@@ -3,7 +3,7 @@ import {
   View, Text, TextInput, Pressable, StyleSheet, ActivityIndicator,
 } from 'react-native';
 import { router } from 'expo-router';
-import { signIn, TENANT_ID, API_URL } from '@/lib/session.ts';
+import { signIn, tenantId, apiUrl } from '@/lib/session.ts';
 import { theme } from '@/lib/theme.ts';
 
 export default function SignIn() {
@@ -55,7 +55,7 @@ export default function SignIn() {
       />
 
       {error ? <Text style={styles.error}>{error}</Text> : null}
-      {!TENANT_ID ? (
+      {!tenantId() ? (
         <Text style={styles.error}>
           No school is configured yet. Put the tenant id the seed printed into
           `expo.extra.tenantId` in apps/mobile/app.json, then reload.
@@ -64,7 +64,7 @@ export default function SignIn() {
       {/* Shown always, because "which machine is this app talking to" is the
           first question when a request fails and the hardest to answer from a
           phone. */}
-      <Text style={styles.hint}>API: {API_URL}</Text>
+      <Text style={styles.hint}>API: {apiUrl()}</Text>
 
       <Pressable
         style={[styles.button, busy && styles.buttonBusy]}
