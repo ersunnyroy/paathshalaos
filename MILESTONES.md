@@ -852,6 +852,51 @@ between the exact path and `Number(q) * Number(p)` — they first diverge at 0.2
 in the tests now. Third time this project has found a claim that no test could tell from
 its opposite.
 
+## M27 — HR, and the teacher who could not mark the register
+
+`hr` has been a plan flag since M16 with nothing behind it — the second of the three
+modules M16 sold ahead of building.
+
+The load-bearing part is not contracts or leave balances. It is **relief cover**, which
+`attendance.spec.ts` has carried as a written-down limitation since M6: *"Cover assigned
+on the morning, for a teacher who is in no timetable slot at all, has no representation in
+this schema."* That is a teacher standing in front of a class they cannot mark a register
+for, so somebody in the office marks it from what they were told — and the attendance
+module's whole argument is that a register is not second-hand.
+
+| ID | Part | Status | What it is |
+| --- | --- | --- | --- |
+| M27.1 | Employment | Done | `staff_contract`. Deliberately no salary column: pay would need its own access control, its own audit and its own answer to "who may read it", and M27 produces payroll *inputs* |
+| M27.2 | Leave | Done | Types defined per school rather than by this schema, balances as a running figure, and `staff_absence` — named for the absence rather than the request, because somebody sick on the morning is an absence before it is a form |
+| M27.3 | Relief cover | Done | Dated to a day, named to a section, attributed to whoever granted it. `app_actor_section_ids()` includes cover **today** |
+| M27.4 | Payroll inputs | Done | Days employed, days of paid leave, days unpaid. Not payroll |
+
+### Cover is a permission change with a friendly name
+
+It is the only thing in this schema that widens somebody's reach, so it carries the same
+three rules transport used for a bus manifest. **Today, not ever** — the date bound is
+inside `app_actor_section_ids()` and reads `CURRENT_DATE`, not a date the caller passes,
+because a grant that follows the date being viewed can be pointed at any day. **A named
+section**, not "this person is covering today". **Written down**, as a `RESTRICTED` audit
+entry, in the same class as a platform console entry rather than the same class as a leave
+request.
+
+Three refusals fall out of that: cover cannot be backdated (backdating cover is backdating
+access; a past register is corrected through the attendance correction path, which is
+attributed), cover against a *named* absence that does not cover the day is refused (access
+granted for a reason that is not true, with a trail that reads perfectly), and cover cannot
+be assigned by the person who benefits.
+
+### Two mutations that survived
+
+Deleting the service's refusal-note check failed nothing — the schema constraint catches it
+either way. But the constraint's message is `staff_absence_refusal_has_note`, and a person
+told that has learned nothing. The test asserts the *message* now, which is what the
+service check is actually for.
+
+And breaking the half-day arithmetic failed nothing, because no test approved a half-day
+absence. Half days are the smallest unit any school here tracks.
+
 ## The rest of the plan (M20–M31)
 
 The first nineteen milestones were a plan that ran out rather than a plan that finished.
@@ -871,7 +916,7 @@ a promise on a pricing page — so it is paid off before anything new is added.
 | ID | Milestone | Definition of done |
 | --- | --- | --- |
 | M20 | Transport — **done, see above** | Routes, stops, vehicles, drivers, and which child is on which bus today. A driver sees the children on **their** route and nothing else; a guardian sees their own child's bus and no other family's. Boarding is attendance, with the same offline queue and the same conflict rules |
-| M27 | HR | Staff lifecycle beyond a `staff` row: contracts, leave balances, and the **relief cover** that attendance has never been able to express. Payroll *inputs*, not payroll — running payroll is a compliance surface of its own and guessing at it would be worse than omitting it |
+| M27 | HR — **done, see above** | Staff lifecycle beyond a `staff` row: contracts, leave balances, and the **relief cover** that attendance has never been able to express. Payroll *inputs*, not payroll — running payroll is a compliance surface of its own and guessing at it would be worse than omitting it |
 | M28 | Learning | Lessons, assignments, submissions, and marks that flow into the assessment module rather than beside it |
 
 ### The pilot set
@@ -952,6 +997,7 @@ left to the end.
 | M23 Observability | Done | 39 | 12 mutations verified; an interceptor blind to guard refusals, and a backlog gauge reporting a confident zero |
 | M24 Backup and restore | Partly | drill | 4 damaged restores tried, 3 caught — the 4th found a drill that could not fail. PITR still missing |
 | M25 Invoicing schools | Mostly | 41 | 8 mutations verified; unequal tax halves caught by a CHECK constraint, three tables caught by the M1 RLS invariant, one float right almost always. Payment provider not done |
+| M27 HR and relief cover | Done | 28 | 8 mutations verified; closed a limitation attendance had carried since M6. 2 survivors: a check whose value is its message, and an untested half day |
 
 Two design decisions were made during M2 that are worth carrying forward:
 

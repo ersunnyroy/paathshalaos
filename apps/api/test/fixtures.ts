@@ -78,6 +78,8 @@ const TABLE_TEARDOWN_ORDER = [
   'fee_component', 'fee_plan',
   'boarding_event', 'transport_enrolment', 'route_assignment', 'route_stop',
   'route', 'driver', 'vehicle',
+  'cover_assignment', 'staff_absence', 'leave_balance', 'leave_type',
+  'staff_contract',
   'attendance_correction', 'attendance_record', 'attendance_session',
   'leave_request', 'outbox_event',
   'subject_election', 'enrollment_event', 'enrollment',
@@ -280,6 +282,17 @@ export async function destroyUsers(userIds: string[]): Promise<void> {
         await client.query(`ALTER TABLE ${table} ENABLE TRIGGER ${trigger}`);
       }
     }
+    // staff_absence.decided_by and cover_assignment.assigned_by point at the
+    // account. Same story as boarding_event below: a run that aborted before
+    // its tenant sweep leaves rows nothing can reach, and they block every
+    // later account delete.
+    await client.query(
+      'DELETE FROM cover_assignment WHERE assigned_by = ANY($1)', [userIds]);
+    await client.query(
+      'DELETE FROM staff_absence WHERE decided_by = ANY($1)', [userIds]);
+    await client.query(
+      'DELETE FROM staff_contract WHERE created_by = ANY($1)', [userIds]);
+
     // platform_admin references the account too, and a suite whose teardown was
     // interrupted leaves rows that block every later purge. Cleared here so one
     // aborted run cannot wedge the whole suite.
@@ -571,6 +584,8 @@ export async function purgeTestData(emailDomain = '%-test.example'): Promise<voi
                        'fee_component', 'fee_plan',
                        'boarding_event', 'transport_enrolment', 'route_assignment',
                        'route_stop', 'route', 'driver', 'vehicle',
+                       'cover_assignment', 'staff_absence', 'leave_balance',
+                       'leave_type', 'staff_contract',
                        'attendance_correction', 'attendance_record', 'attendance_session',
                        'leave_request', 'outbox_event',
                        'subject_election', 'enrollment_event', 'enrollment',
@@ -629,6 +644,16 @@ export async function purgeTestData(emailDomain = '%-test.example'): Promise<voi
     await client.query('DELETE FROM api_client WHERE created_by = ANY($1)', [userIds]);
     await client.query('DELETE FROM form_submission WHERE submitted_by = ANY($1)', [userIds]);
     await client.query('DELETE FROM form_definition WHERE created_by = ANY($1)', [userIds]);
+    // The same three as in destroyUsers. purgeTestData deletes accounts too,
+    // and a suite that aborted before its tenant sweep leaves rows that wedge
+    // every later purge — which then presents as an unrelated suite failing.
+    await client.query(
+      'DELETE FROM cover_assignment WHERE assigned_by = ANY($1)', [userIds]);
+    await client.query(
+      'DELETE FROM staff_absence WHERE decided_by = ANY($1)', [userIds]);
+    await client.query(
+      'DELETE FROM staff_contract WHERE created_by = ANY($1)', [userIds]);
+
     // platform_admin references the account too, and a suite whose teardown was
     // interrupted leaves rows that block every later purge. Cleared here so one
     // aborted run cannot wedge the whole suite.
