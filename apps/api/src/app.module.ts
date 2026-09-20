@@ -19,6 +19,7 @@ import { PlanController } from './modules/billing-plans/plan.controller.ts';
 import { BrandController, BrandingSettingsController }
   from './modules/branding/brand.controller.ts';
 import { TransportController } from './modules/transport/transport.controller.ts';
+import { FamilyController } from './modules/family/family.controller.ts';
 
 @Module({
   controllers: [
@@ -27,6 +28,7 @@ import { TransportController } from './modules/transport/transport.controller.ts
     IntegrationsController, PublicApiController, SupportController,
     OpenApiController, PlatformController, AccessLogController, PlanController,
     BrandController, BrandingSettingsController, TransportController,
+    FamilyController,
   ],
   providers: [
     // Registered globally, so a new controller is authenticated by default and
