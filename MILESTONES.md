@@ -642,7 +642,25 @@ from a clause present for *idempotency*, not for authority. A plain `INSERT` wal
 through. The assertion is now made against the table with a bare insert, and the mutation dies.
 
 A mutation that changes nothing is a finding, not a pass. This is the second time that rule
-has earned its place.
+has earned its place — and it earned it twice more in the same milestone.
+
+Building the transport screen found three defects with nothing to do with transport. The
+seed had every learner in `lifecycle_status 'enquiry'`, so the demo school metered as zero
+billable learners (M16) and the driver's manifest came back empty (M20). The seed also
+predated M19, so a fresh clone reached a sign-in screen saying "no school is registered at
+this address" and stopped there — the whole demo unreachable because the school existed and
+its address did not. And white-labelling only ever repainted the logo: the stylesheet has
+six brand tokens and M19 set one, so a school picked a colour and the buttons, the active
+navigation item and every pill stayed our teal. The palette is derived now — the school's
+colour kept exactly as the mark, the roles that carry text darkened until they clear 4.5:1
+against white, because setting all six to one hex is how a palette ends up with buttons
+nobody can read.
+
+The fourth was a comment. `nextKind` in the mobile app had a guard against an index of -1
+"wrapping to the end of the cycle"; deleting the guard failed no test, and the reason is
+that `-1 + 1` is `0`, so the wrap it described had never been possible. The guard is gone.
+A line that cannot be shown to do anything is not defence in depth — it is something untrue
+that the next reader believes.
 
 ## The rest of the plan (M20–M31)
 
@@ -739,7 +757,7 @@ left to the end.
 | M14 Platform and provisioning | Done | 16 | 7 mutations verified; a school can be onboarded without a DBA, by a role that cannot read inside one |
 | M15 Super admin console | Done | 33 | 12 mutations verified; 2 real defects found (the console had no login; a read-only session could write) |
 | M16 Plans and entitlements | Done | 40 | 20 mutations verified; 4 real defects found, plus a parallel implementation reconciled |
-| M20 Transport | Done | 19 | 13 mutations verified; 1 severe visibility defect and 1 test passing for the wrong reason |
+| M20 Transport | Done | 111 | 27 mutations verified; 1 severe visibility defect, 1 test passing for the wrong reason, 3 defects outside transport, 1 comment describing an impossible bug |
 
 Two design decisions were made during M2 that are worth carrying forward:
 

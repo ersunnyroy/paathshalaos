@@ -13,7 +13,9 @@
  * only happen on a device.
  */
 import type { TokenStore, Tokens } from '@paathshala/api-client';
-import type { QueueStorage, QueuedSession } from '@paathshala/offline-queue';
+import type {
+  QueueStorage, QueuedSession, BoardingStorage, QueuedBoarding,
+} from '@paathshala/offline-queue';
 
 /** The slice of `expo-secure-store` used here. */
 export interface SecureStoreModule {
@@ -119,5 +121,34 @@ export class AsyncQueueStorage implements QueueStorage {
 
   async write(sessions: QueuedSession[]): Promise<void> {
     await this.store.setItem(QUEUE_KEY, JSON.stringify(sessions));
+  }
+}
+
+const BOARDING_KEY = 'paathshala.boarding.queue';
+
+/**
+ * The bus run's queue, in its own AsyncStorage key.
+ *
+ * Separate from the register's, not merged with it. A phone in a classroom and
+ * a phone on a bus are usually different phones, but when they are the same
+ * one, a single document means a driver's flush rewrites the teacher's queue —
+ * and the reader that came back empty after a bad write would empty both.
+ */
+export class AsyncBoardingStorage implements BoardingStorage {
+  constructor(private readonly store: AsyncStorageModule) {}
+
+  async read(): Promise<QueuedBoarding[]> {
+    try {
+      const raw = await this.store.getItem(BOARDING_KEY);
+      if (!raw) return [];
+      const parsed: unknown = JSON.parse(raw);
+      return Array.isArray(parsed) ? (parsed as QueuedBoarding[]) : [];
+    } catch {
+      return [];
+    }
+  }
+
+  async write(events: QueuedBoarding[]): Promise<void> {
+    await this.store.setItem(BOARDING_KEY, JSON.stringify(events));
   }
 }

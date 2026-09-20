@@ -9,8 +9,12 @@
 import * as SecureStore from 'expo-secure-store';
 import Constants from 'expo-constants';
 import { createClient, type Client, type Tokens } from '@paathshala/api-client';
-import { OfflineAttendanceQueue } from '@paathshala/offline-queue';
-import { SecureTokenStore, AsyncQueueStorage } from './storage.ts';
+import {
+  OfflineAttendanceQueue, OfflineBoardingQueue,
+} from '@paathshala/offline-queue';
+import {
+  SecureTokenStore, AsyncQueueStorage, AsyncBoardingStorage,
+} from './storage.ts';
 import { resolveApiUrl } from './api-url.ts';
 import { SchoolStore, apiUrlForHost, type School } from './school.ts';
 
@@ -153,6 +157,40 @@ export async function queue(): Promise<OfflineAttendanceQueue> {
     },
   );
   return _queue;
+}
+
+/**
+ * The roles this account holds in this school, from the server.
+ *
+ * Asked rather than read out of the token: the token's claims are what the
+ * client was given, and a client that decides what it can do from its own
+ * copy of them is a client that decides. Every answer here is still checked
+ * again by the API on every request — this only picks a screen.
+ */
+export async function myRoles(): Promise<string[]> {
+  const me = await api().get<{ roles?: string[] }>('/v1/me');
+  return me.roles ?? [];
+}
+
+let _boarding: OfflineBoardingQueue | undefined;
+/**
+ * The bus run's queue. Async for the same reason as the register's.
+ *
+ * One request per flush rather than one per child, because the shape that
+ * survives a tunnel is "here is everything I have not managed to send yet".
+ */
+export async function boardingQueue(): Promise<OfflineBoardingQueue> {
+  const { default: AsyncStorage } = await import(
+    '@react-native-async-storage/async-storage');
+  _boarding ??= new OfflineBoardingQueue(
+    new AsyncBoardingStorage(AsyncStorage),
+    {
+      async send(events) {
+        return api().post('/v1/transport/boardings', { events });
+      },
+    },
+  );
+  return _boarding;
 }
 
 /**

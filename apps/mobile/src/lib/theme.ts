@@ -24,3 +24,20 @@ export const stateColour: Record<string, string> = {
   excused: theme.teal,
   half_day: theme.warning,
 };
+
+/**
+ * What each boarding state looks like.
+ *
+ * `no_show` is the loud one and the only one that is: a child the school
+ * expected at this corner who was not there is the row a driver must not
+ * scroll past. Absent is quiet because the office already knew.
+ */
+export function boardingColour(kind: string | null): string {
+  switch (kind) {
+    case 'boarded': return theme.good;
+    case 'alighted': return theme.good;
+    case 'absent': return theme.slate;
+    case 'no_show': return theme.critical;
+    default: return theme.line;
+  }
+}

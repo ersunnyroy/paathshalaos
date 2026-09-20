@@ -50,7 +50,10 @@ export default function SignIn() {
     try {
       const session = await import('@/lib/session.ts');
       await session.signIn(email.trim(), password);
-      router.replace('/');
+      // Where to land is a question about this person, so it is asked after
+      // the sign-in rather than guessed from the form.
+      const { homeFor } = await import('@/lib/home.ts');
+      router.replace(homeFor(await session.myRoles()));
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Sign in failed.');
     } finally {

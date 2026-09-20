@@ -59,7 +59,20 @@ function Gate() {
         if (!school) { router.replace('/school'); return; }
 
         const tokens = await session.tokenStore().read();
-        if (!cancelled && !tokens) router.replace('/sign-in');
+        if (cancelled) return;
+        if (!tokens) { router.replace('/sign-in'); return; }
+
+        // A live session lands where this person works, the same as a fresh
+        // sign-in. A driver reopening the app belongs on the bus screen, not
+        // on a register that reads "No class".
+        try {
+          const { homeFor } = await import('@/lib/home.ts');
+          const home = homeFor(await session.myRoles());
+          if (!cancelled && home !== '/') router.replace(home);
+        } catch {
+          // A failed lookup is not a reason to refuse entry. The default
+          // screen is the register, and it says what went wrong itself.
+        }
       } catch (e) {
         if (!cancelled) setError(e instanceof Error ? e : new Error(String(e)));
       } finally {
@@ -83,6 +96,7 @@ function Gate() {
     >
       <Stack.Screen name="sign-in" options={{ title: 'paathshalaOS' }} />
       <Stack.Screen name="index" options={{ title: 'Attendance' }} />
+      <Stack.Screen name="bus" options={{ title: 'Bus run' }} />
     </Stack>
   );
 }
