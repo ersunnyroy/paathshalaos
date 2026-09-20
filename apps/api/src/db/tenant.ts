@@ -44,14 +44,30 @@ export async function withTenant<T>(
   const client: PoolClient = await pool.connect();
   try {
     await client.query('BEGIN');
-    await client.query('SELECT set_config($1, $2, true)', ['app.tenant_id', scope.tenantId]);
-    if (scope.actorId) {
-      await client.query('SELECT set_config($1, $2, true)', ['app.actor_id', scope.actorId]);
-    }
-    if (scope.apiClientId) {
-      await client.query('SELECT set_config($1, $2, true)',
-        ['app.api_client_id', scope.apiClientId]);
-    }
+
+    // One round trip for the whole scope, not one per setting.
+    //
+    // This was three statements, and on the hot path that is three round trips
+    // before any real work. `set_config` composes in a single SELECT, and the
+    // empty string is what the reader functions already treat as absent —
+    // `NULLIF(current_setting('app.actor_id', true), '')` — so passing '' for
+    // a scope that has no actor means exactly what omitting the statement did.
+    //
+    // `application_name` rides along because it is the only field of a
+    // Postgres log line that this process controls. With the request id in it,
+    // a slow query in pg_stat_activity or the server log can be traced back to
+    // the request that caused it, which is otherwise guesswork. M23 calls that
+    // "a request id that survives across services"; the database is a service.
+    await client.query(
+      `SELECT set_config('app.tenant_id', $1, true),
+              set_config('app.actor_id', $2, true),
+              set_config('app.api_client_id', $3, true),
+              set_config('application_name', $4, true)`,
+      [scope.tenantId, scope.actorId ?? '', scope.apiClientId ?? '',
+       // Bounded: application_name is truncated by Postgres at NAMEDATALEN and
+       // a request id is already length-checked, but the prefix makes the
+       // total predictable rather than nearly-the-limit.
+       `paathshala/${getContext()?.requestId ?? 'none'}`.slice(0, 63)]);
 
     const result = await fn({
       query: async (text, params) => {

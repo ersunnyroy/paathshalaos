@@ -23,6 +23,7 @@ import { auditService } from '../audit/audit.service.ts';
 import { platformAdminService } from './platform-admin.service.ts';
 import { tokenService } from '../auth/token.service.ts';
 import { authService } from '../auth/auth.service.ts';
+import { schoolEntries } from '../../common/telemetry/metrics.ts';
 
 /** Shorter than the hour the database permits. Most look-ups take two minutes. */
 const DEFAULT_MINUTES = 30;
@@ -171,6 +172,12 @@ export const entryService = {
         expires_at: session.expires_at,
       },
     });
+
+    // Counted after the row is written, not before: a metric that counts
+    // attempts and a trail that records completions disagree by exactly the
+    // failures, and this is a number a school's security questionnaire asks
+    // about.
+    schoolEntries.inc({ write_enabled: String(wantsWrite) });
 
     const effectiveRoles = input.assumedRole ? [input.assumedRole] : roles;
 

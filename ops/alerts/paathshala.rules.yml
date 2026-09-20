@@ -1,0 +1,166 @@
+# Alerts (M23.4).
+#
+# Every rule here passed one test before it was written: a sentence saying what
+# a human DOES when it fires. A rule that fails that test is a rule somebody
+# silences, and one silenced rule teaches everybody that silencing is normal.
+#
+# So this file is short. There is no rule for CPU, none for memory, none for
+# "error rate above 1%" — those are conditions, not problems, and the problems
+# they stand in for have their own rules below.
+#
+# The thresholds are stated as what they mean rather than tuned, because
+# nothing here has run against real traffic yet. They are a starting point to
+# be corrected by a pilot, and that is written down rather than implied.
+# NOT VERIFIED AGAINST PRODUCTION TRAFFIC — no deployment exists yet (M22).
+
+groups:
+  - name: paathshala-availability
+    interval: 30s
+    rules:
+      - alert: ApiDown
+        expr: up{job="paathshala-api"} == 0
+        for: 2m
+        labels: { severity: page }
+        annotations:
+          summary: "The API has been unreachable for two minutes"
+          runbook: >
+            Check the task health in the cluster, then the database. Two
+            minutes rather than thirty seconds because a rolling deploy takes
+            about a minute and paging on every deploy is how paging stops
+            working.
+
+      - alert: MetricsBlind
+        expr: paathshala_gauge_sampling_ok == 0
+        for: 5m
+        labels: { severity: ticket }
+        annotations:
+          summary: "The scrape cannot read the database"
+          runbook: >
+            Every backlog number below is unknown while this is firing — the
+            gauges are removed rather than zeroed, so their panels will be
+            empty rather than showing a reassuring zero. Usually a permission
+            change on app_platform_backlogs(), or the platform pool exhausted.
+
+  - name: paathshala-the-things-that-hurt
+    interval: 30s
+    rules:
+      # A school's data is not reaching the system they actually work in, and
+      # nobody finds out from the school — they find out three weeks later.
+      - alert: WebhookBacklogStuck
+        expr: min_over_time(paathshala_webhook_backlog[15m]) > 50
+        for: 15m
+        labels: { severity: ticket }
+        annotations:
+          summary: "Webhook deliveries are queueing and not draining"
+          runbook: >
+            min_over_time, not the instantaneous value: a burst that drains is
+            the system working, and only a floor that stays high is a stuck
+            queue. Check the relay worker is running and the endpoint's last
+            error.
+
+      # Messages to parents are not going out — absence notices, fee
+      # reminders. Silence here looks exactly like a quiet day.
+      - alert: OutboxNotDraining
+        expr: min_over_time(paathshala_outbox_backlog[15m]) > 100
+        for: 15m
+        labels: { severity: ticket }
+        annotations:
+          summary: "Outbox events are not being dispatched"
+          runbook: >
+            Check the dispatcher. The failure this catches is silent by
+            nature: nothing errors, parents simply stop being told things.
+
+      # The failure mode that corrupts data rather than just breaking pages.
+      - alert: SchemaVersionSplit
+        expr: count(count by (paathshala_schema_migrations_applied) (paathshala_schema_migrations_applied)) > 1
+        for: 10m
+        labels: { severity: page }
+        annotations:
+          summary: "Instances are running against different schema versions"
+          runbook: >
+            A partial rollout against a changed schema. Finish the deploy or
+            roll all instances back to one version; do not leave it split. Ten
+            minutes because a rolling deploy is legitimately split for a few.
+
+      # A school that should not have been caught by the billing ladder, with
+      # every write failing while somebody investigates.
+      - alert: ReadOnlyRefusalSpike
+        expr: sum(rate(paathshala_read_only_refusals_total[10m])) > 0.5
+        for: 10m
+        labels: { severity: ticket }
+        annotations:
+          summary: "Writes are being refused for non-payment at an unusual rate"
+          runbook: >
+            Usually a payment that did not reconcile rather than a school that
+            stopped paying. Check the subscription's past_due_since against
+            the payment record before telling anybody they owe money.
+
+      # Devices holding a teacher's register, disagreeing with the server.
+      - alert: SyncConflictsAfterRelease
+        expr: sum(rate(paathshala_sync_outcomes_total{outcome="conflict"}[15m])) > 0.2
+        for: 15m
+        labels: { severity: ticket }
+        annotations:
+          summary: "Offline sync conflicts have risen"
+          runbook: >
+            Compare against the last release. A rise right after one means the
+            contract changed under devices that have not updated, and those
+            devices are holding attendance that has not reached the server.
+
+  - name: paathshala-security
+    interval: 30s
+    rules:
+      # A spike across many accounts is a password spray; the answer is to look
+      # at source addresses, not to lock anybody out.
+      - alert: AuthFailureSpike
+        expr: sum(rate(paathshala_auth_failures_total{reason="invalid_credentials"}[5m])) > 2
+        for: 5m
+        labels: { severity: ticket }
+        annotations:
+          summary: "Failed sign-ins are elevated"
+          runbook: >
+            Group the access log by source address for the same window. One
+            address across many accounts is a spray; many addresses against one
+            account is a targeted attempt and that account's owner should be
+            told.
+
+      # Not an outage signal. It is here because it is the number a school's
+      # security questionnaire asks about.
+      - alert: UnusualSchoolEntry
+        expr: sum(increase(paathshala_platform_entries_total{write_enabled="true"}[1h])) > 3
+        for: 5m
+        labels: { severity: ticket }
+        annotations:
+          summary: "Several write-enabled support sessions opened within an hour"
+          runbook: >
+            Read the entry reasons in the platform access log. Write-enabled
+            entry is rare by design; a cluster of them is either an incident
+            being worked or something to ask about.
+
+  - name: paathshala-latency
+    interval: 30s
+    rules:
+      - alert: SlowRequests
+        expr: >
+          histogram_quantile(0.95,
+            sum by (le) (rate(paathshala_http_request_duration_ms_bucket[10m]))) > 2500
+        for: 10m
+        labels: { severity: ticket }
+        annotations:
+          summary: "The 95th percentile request is over two and a half seconds"
+          runbook: >
+            Check paathshala_db_pool_waiting first. Almost every latency
+            problem in a monolith on one database is really connection
+            queueing, and the API looks slow while the database looks idle.
+
+      - alert: ConnectionsQueueing
+        expr: max by (role) (paathshala_db_pool_waiting) > 0
+        for: 5m
+        labels: { severity: ticket }
+        annotations:
+          summary: "Requests are waiting for a database connection"
+          runbook: >
+            Which role matters: `auth` saturating locks everybody out, `app`
+            saturating slows everybody down. Look for a long-running query
+            before raising the pool size — a bigger pool makes a slow query
+            slower for more people.

@@ -11,6 +11,7 @@
 import { withTenant, type TenantScope } from '../../db/tenant.ts';
 import { ApiError } from '../../common/errors.ts';
 import { auditService } from '../audit/audit.service.ts';
+import { syncOutcomes } from '../../common/telemetry/metrics.ts';
 
 export type Direction = 'pickup' | 'drop' | 'both';
 export type BoardingKind = 'boarded' | 'alighted' | 'absent' | 'no_show';
@@ -208,6 +209,10 @@ export const transportService = {
            event.kind, event.clientEventId, event.deviceRecordedAt ?? null,
            scope.actorId ?? null]);
         if (rowCount === 1) recorded += 1; else replayed += 1;
+        syncOutcomes.inc({
+          kind: 'boarding',
+          outcome: rowCount === 1 ? 'applied' : 'already_applied',
+        });
       }
       return { recorded, replayed };
     });

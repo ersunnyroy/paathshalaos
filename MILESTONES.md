@@ -718,6 +718,60 @@ no rounding step, the float path is exact until it silently is not — and the b
 Second milestone running in which a comment described a bug that could not happen. Both were
 found the same way.
 
+## M23 — observability
+
+Structured logs with a request id that survives, metrics somebody would alert on, and
+alerts with runbooks. Done before M22 and M24 because it is the only one of the three
+that can be built and verified without a deployment existing.
+
+| ID | Part | Status | What it is |
+| --- | --- | --- | --- |
+| M23.1 | A request id worth trusting | Done | Accepted from the caller, on terms: bounded, and restricted to characters that are safe in a response header, a log line and a URL. Anything else is replaced rather than refused |
+| M23.2 | One line per request | Done | Method, matched **route**, status, duration, tenant, actor, impersonation id. Never the raw path, never the body |
+| M23.3 | Metrics | Done | Eleven series, each with a sentence saying what a human would *do* about it. No tenant label anywhere |
+| M23.4 | Alerts | Done | `ops/alerts/paathshala.rules.yml` — eleven rules, eleven runbooks, and a test that every metric they name is one the service emits |
+| M23.5 | The id reaches Postgres | Done | `application_name` carries it, so a slow query in `pg_stat_activity` ties back to the request that caused it. The scope is set in one round trip instead of three |
+| M23.6 | One shape for every failure | Done | `errors.ts` had promised this since M1 and it was false of anything nobody wrote a handler for |
+
+### The interceptor that could not see the thing it was for
+
+The access log started as a global interceptor, with a comment saying it ran first so a
+request refused by a guard was still logged. Nest runs middleware, then guards, then
+interceptors — so a guard that throws produces no interceptor call, and every 401, every
+403 from the entitlement ladder, and every refusal inside an impersonation session would
+have gone unlogged. Which is to say: exactly the requests an access log exists for.
+
+It is `res.on('finish')` middleware now, which fires whatever produced the response, and
+there is a test that calls an endpoint a guard refuses and asserts a line was written.
+
+### And a gauge that reported a confident zero
+
+The backlog gauges asked the platform role for three counts. That role has no grant on
+`webhook_delivery`, `outbox_event` or `schema_migration` — deliberately, and a boot
+assertion proves it — so every query threw, the sampler caught the error, and the scrape
+reported `paathshala_webhook_backlog 0`.
+
+"Nothing is stuck" and "I cannot see" looked identical on a dashboard, and the second is
+the state an alert most needs to fire in. The comment directly above that code warned
+about a *different* route to the same lie.
+
+0070 gives the platform role a function returning three integers rather than the tables,
+which keeps the assertion true. And the sampler now **removes** the backlog series on
+failure rather than zeroing them — a missing series is a question, a zero is an answer —
+with `paathshala_gauge_sampling_ok` for an alert to watch.
+
+### Deliberately not traced
+
+M23's definition of done said traces. This is one process, one database, and a request
+that fans out to nothing: a trace would show a span for the request and a span for each
+query, which is what the access log and `application_name` already give, in exchange for
+a collector to run, a sampling rate to get wrong, and a dependency in the hot path.
+
+That changes the day anything becomes asynchronous across a boundary — the webhook relay
+and the outbox dispatcher are already separate processes, and when a parent asks why a
+message never arrived, the answer crosses them. Written down as the trigger rather than
+as a "later".
+
 ## The rest of the plan (M20–M31)
 
 The first nineteen milestones were a plan that ran out rather than a plan that finished.
@@ -749,7 +803,7 @@ follow real usage instead of guesses.
 | --- | --- | --- |
 | M21 | The parent app — **done, see above** | The mobile app stops being one screen. Attendance, fees, results and messages for a guardian's own children, readable offline. This is where parents actually live, and today they have nothing |
 | M22 | Deployed, reproducibly | Infrastructure as code for the AWS India region, two environments, secrets that are not in a repository, migrations that run as part of a deploy, and a rollback that has been performed rather than described |
-| M23 | Observability | Structured logs with a request id that survives across services, metrics, traces, and alerts that fire on the things that would actually hurt — failed migrations, auth error rates, webhook backlog, queue depth |
+| M23 | Observability — **done, see above** | Structured logs with a request id that survives across services, metrics, traces, and alerts that fire on the things that would actually hurt — failed migrations, auth error rates, webhook backlog, queue depth |
 | M24 | Backup and restore | Point-in-time recovery, and a **restore drill that has actually been run** with the time it took written down. A backup nobody has restored is a belief, not a backup |
 | M25 | Taking money from schools | Subscription invoicing against M16's plans, GST, and one payment provider. M16 deliberately stopped short of this; a metered plan nobody is billed for is a spreadsheet |
 | M26 | Taking money from parents | A real gateway behind M7's mandates and reconciliation — UPI AutoPay and cards. The ledger, the receipts and the settlement matching already exist and have never seen a live rupee |
@@ -815,6 +869,7 @@ left to the end.
 | M16 Plans and entitlements | Done | 40 | 20 mutations verified; 4 real defects found, plus a parallel implementation reconciled |
 | M20 Transport | Done | 111 | 27 mutations verified; 1 severe visibility defect, 1 test passing for the wrong reason, 3 defects outside transport, 1 comment describing an impossible bug |
 | M21 Parent app | Done | 84 | 26 mutations verified; a policy pair that recursed for everyone, 4 tests weaker than they looked, 1 comment borrowing a hazard |
+| M23 Observability | Done | 39 | 12 mutations verified; an interceptor blind to guard refusals, and a backlog gauge reporting a confident zero |
 
 Two design decisions were made during M2 that are worth carrying forward:
 

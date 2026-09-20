@@ -1,6 +1,9 @@
 import { Module, type MiddlewareConsumer, type NestModule } from '@nestjs/common';
-import { APP_GUARD } from '@nestjs/core';
+import { APP_GUARD, APP_FILTER } from '@nestjs/core';
 import { ContextMiddleware } from './common/context.middleware.ts';
+import { AccessLogMiddleware } from './common/telemetry/access-log.middleware.ts';
+import { ErrorFilter } from './common/error.filter.ts';
+import { MetricsController } from './common/telemetry/metrics.controller.ts';
 import { AuthGuard } from './modules/auth/auth.guard.ts';
 import { AuthController } from './modules/auth/auth.controller.ts';
 import { HealthController } from './modules/health/health.controller.ts';
@@ -28,9 +31,11 @@ import { FamilyController } from './modules/family/family.controller.ts';
     IntegrationsController, PublicApiController, SupportController,
     OpenApiController, PlatformController, AccessLogController, PlanController,
     BrandController, BrandingSettingsController, TransportController,
-    FamilyController,
+    FamilyController, MetricsController,
   ],
   providers: [
+    // Every failure gets the contract's shape, including a bare throw.
+    { provide: APP_FILTER, useClass: ErrorFilter },
     // Registered globally, so a new controller is authenticated by default and
     // has to opt out with @Public() rather than opt in. The failure mode of
     // forgetting is a locked door, not an open one.
@@ -45,6 +50,10 @@ import { FamilyController } from './modules/family/family.controller.ts';
 })
 export class AppModule implements NestModule {
   configure(consumer: MiddlewareConsumer): void {
-    consumer.apply(ContextMiddleware).forRoutes('*');
+    // Context first: the access log reads the request id out of it, and both
+    // must wrap the whole request so a guard's refusal is still timed and
+    // still logged. Middleware runs before guards; an interceptor does not,
+    // which is why this is not one.
+    consumer.apply(ContextMiddleware, AccessLogMiddleware).forRoutes('*');
   }
 }

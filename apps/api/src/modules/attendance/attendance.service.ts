@@ -1,5 +1,6 @@
 import { withTenant, type TenantScope, type TenantClient } from '../../db/tenant.ts';
 import { auditService } from '../audit/audit.service.ts';
+import { syncOutcomes } from '../../common/telemetry/metrics.ts';
 import { outboxService } from '../events/outbox.service.ts';
 import { ApiError } from '../../common/errors.ts';
 
@@ -278,6 +279,13 @@ export const attendanceService = {
             absentEnrollmentIds,
           },
         });
+      }
+
+      // Counted by outcome, once per record. A rise in `conflict` after a
+      // release means the sync contract changed under devices that have not
+      // updated — and those devices are holding a teacher's register.
+      for (const outcome of outcomes) {
+        syncOutcomes.inc({ kind: 'attendance', outcome: outcome.status });
       }
 
       return { sessionId: session.id, outcomes, absentEnrollmentIds, serverTime, clockIsImplausible };
