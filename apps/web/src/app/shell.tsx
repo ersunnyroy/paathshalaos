@@ -33,6 +33,7 @@ const GROUPS: Array<{ title: string; items: Array<{ href: string; label: string;
       { href: '/students', label: 'Learners', icon: Icon.learners },
       { href: '/attendance', label: 'Attendance', icon: Icon.attendance },
       { href: '/transport', label: 'Transport', icon: Icon.bus },
+      { href: '/staff', label: 'Staff', icon: Icon.staff },
     ],
   },
   {

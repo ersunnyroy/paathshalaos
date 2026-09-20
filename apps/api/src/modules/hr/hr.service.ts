@@ -21,6 +21,149 @@ export interface Absence {
 }
 
 export const hrService = {
+
+  /**
+   * The staff roster, with the two numbers a school actually asks about.
+   *
+   * Added with M32's controller rather than in M27, and that is the finding
+   * rather than a detail: M27 shipped a schema, a service and twenty-eight
+   * passing tests for a module with no way to list a single member of staff,
+   * because nothing that needed a list existed. A service written entirely
+   * against its own tests answers the questions the tests ask.
+   */
+  async roster(scope: TenantScope, opts: { on?: string | undefined } = {}): Promise<Array<{
+    staff_id: string; employee_code: string; given_name: string;
+    family_name: string | null; designation: string | null;
+    joined_on: string; left_on: string | null; status: string;
+    contract_kind: string | null; weekly_hours: string | null;
+    entitlement_days: string | null; taken_days: string | null;
+    away_today: boolean; pending_requests: number;
+  }>> {
+    const on = opts.on ?? new Date().toISOString().slice(0, 10);
+    return withTenant(scope, async (db) => {
+      const { rows } = await db.query<{
+        staff_id: string; employee_code: string; given_name: string;
+        family_name: string | null; designation: string | null;
+        joined_on: string; left_on: string | null; status: string;
+        contract_kind: string | null; weekly_hours: string | null;
+        entitlement_days: string | null; taken_days: string | null;
+        away_today: boolean; pending_requests: number;
+      }>(
+        `SELECT st.id AS staff_id, st.employee_code, p.given_name, p.family_name,
+                st.designation, st.joined_on::text, st.left_on::text, st.status,
+                ct.kind AS contract_kind, ct.weekly_hours::text,
+                bal.opening::text  AS entitlement_days,
+                bal.taken::text    AS taken_days,
+                EXISTS (SELECT 1 FROM staff_absence a
+                         WHERE a.staff_id = st.id AND a.status = 'approved'
+                           AND $1::date BETWEEN a.starts_on AND a.ends_on) AS away_today,
+                (SELECT count(*)::int FROM staff_absence a
+                  WHERE a.staff_id = st.id AND a.status = 'requested')
+                  AS pending_requests
+           FROM staff st
+           JOIN person p ON p.id = st.person_id
+           -- The contract in force on the day asked about, not the newest row:
+           -- a staff member whose next contract starts in April must not read
+           -- as part-time in February because that row already exists.
+           LEFT JOIN LATERAL (
+             SELECT c.kind, c.weekly_hours FROM staff_contract c
+              WHERE c.staff_id = st.id
+                AND c.starts_on <= $1::date
+                AND (c.ends_on IS NULL OR c.ends_on >= $1::date)
+              ORDER BY c.starts_on DESC LIMIT 1) ct ON true
+           LEFT JOIN LATERAL (
+             SELECT b.opening, b.taken FROM leave_balance b
+              WHERE b.staff_id = st.id
+              ORDER BY b.year_label DESC LIMIT 1) bal ON true
+          WHERE st.deleted_at IS NULL
+          ORDER BY p.given_name, p.family_name`, [on]);
+      return rows;
+    });
+  },
+
+  /** Leave types, for the picker on the absence form. */
+  async leaveTypes(scope: TenantScope): Promise<Array<{
+    id: string; code: string; name: string; is_paid: boolean;
+    annual_entitlement: string | null;
+  }>> {
+    return withTenant(scope, async (db) => {
+      const { rows } = await db.query<{
+        id: string; code: string; name: string; is_paid: boolean;
+        annual_entitlement: string | null;
+      }>(
+        `SELECT id, code, name, is_paid, annual_entitlement::text
+           FROM leave_type WHERE deleted_at IS NULL ORDER BY name`);
+      return rows;
+    });
+  },
+
+  /**
+   * Absences in a window, whatever their status.
+   *
+   * `absentOn` answers "who is away today" and filters to approved, which is
+   * right for assigning cover and wrong for the screen where somebody decides
+   * the requests — that screen needs to see the ones nobody has decided yet.
+   */
+  async absences(scope: TenantScope, input: {
+    from: string; to: string; status?: string | undefined;
+  }): Promise<Array<{
+    id: string; staff_id: string; given_name: string; family_name: string | null;
+    leave_type: string | null; is_paid: boolean | null;
+    starts_on: string; ends_on: string; half_day: boolean;
+    status: string; reason: string | null; decision_note: string | null;
+  }>> {
+    return withTenant(scope, async (db) => {
+      const { rows } = await db.query<{
+        id: string; staff_id: string; given_name: string; family_name: string | null;
+        leave_type: string | null; is_paid: boolean | null;
+        starts_on: string; ends_on: string; half_day: boolean;
+        status: string; reason: string | null; decision_note: string | null;
+      }>(
+        `SELECT a.id, a.staff_id, p.given_name, p.family_name,
+                lt.name AS leave_type, lt.is_paid,
+                a.starts_on::text, a.ends_on::text, a.half_day, a.status,
+                a.reason, a.decision_note
+           FROM staff_absence a
+           JOIN staff st ON st.id = a.staff_id
+           JOIN person p ON p.id = st.person_id
+           LEFT JOIN leave_type lt ON lt.id = a.leave_type_id
+          -- Overlap, not containment: a fortnight's leave that began last
+          -- month is still leave this week, and a screen that misses it sends
+          -- somebody looking for a teacher who is not in the building.
+          WHERE a.starts_on <= $2::date AND a.ends_on >= $1::date
+            AND ($3::text IS NULL OR a.status = $3)
+          ORDER BY a.starts_on DESC, p.given_name`,
+        [input.from, input.to, input.status ?? null]);
+      return rows;
+    });
+  },
+
+  /** Cover already assigned for a day, so a screen can show the gaps. */
+  async coverOn(scope: TenantScope, on: string): Promise<Array<{
+    id: string; section_id: string; section_name: string; class_name: string | null;
+    covering_staff_id: string; covering_name: string;
+    absent_staff_id: string | null; period_no: number | null;
+  }>> {
+    return withTenant(scope, async (db) => {
+      const { rows } = await db.query<{
+        id: string; section_id: string; section_name: string; class_name: string | null;
+        covering_staff_id: string; covering_name: string;
+        absent_staff_id: string | null; period_no: number | null;
+      }>(
+        `SELECT ca.id, ca.section_id, s.name AS section_name, cg.name AS class_name,
+                ca.covering_staff_id,
+                p.given_name || COALESCE(' ' || p.family_name, '') AS covering_name,
+                ca.absent_staff_id, ca.period_no
+           FROM cover_assignment ca
+           JOIN section s ON s.id = ca.section_id
+           LEFT JOIN class_group cg ON cg.id = s.class_group_id
+           JOIN staff st ON st.id = ca.covering_staff_id
+           JOIN person p ON p.id = st.person_id
+          WHERE ca.on_date = $1::date
+          ORDER BY cg.name, s.name`, [on]);
+      return rows;
+    });
+  },
   /**
    * Files an absence.
    *

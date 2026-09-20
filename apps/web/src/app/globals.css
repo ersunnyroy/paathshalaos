@@ -435,6 +435,20 @@ input, select {
 input::placeholder { color: var(--ink-3); }
 input:focus, select:focus { border-color: var(--brand); }
 
+/* An inline form inside a panel: a row of controls that becomes a column on a
+   phone rather than a horizontal scroll. Every field keeps a sensible minimum
+   so a date input is not squeezed to the point of being unusable. */
+.row-form {
+  display: flex; flex-wrap: wrap; align-items: center; gap: 8px;
+}
+.row-form > * { min-width: 140px; }
+.row-form > label { min-width: 0; display: inline-flex; align-items: center; gap: 5px; }
+.row-form > button { min-width: 0; }
+@media (max-width: 640px) {
+  .row-form { flex-direction: column; align-items: stretch; }
+  .row-form > * { min-width: 0; width: 100%; }
+}
+
 .search { position: relative; display: inline-flex; align-items: center; }
 .search svg { position: absolute; left: 9px; width: 15px; height: 15px; color: var(--ink-3); pointer-events: none; }
 .search input { padding-left: 30px; width: 250px; }

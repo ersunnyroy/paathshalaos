@@ -752,6 +752,76 @@ async function main(): Promise<void> {
          i === 6 ? 'no_show' : 'boarded', randomUUID(), driverUserId]);
     }
 
+    // ------------------------------------------------------------------- HR
+    //
+    // M27's tables, populated, because M32 gave them a screen and a screen
+    // with nothing on it demonstrates nothing. The shape is the one an office
+    // actually has on a Tuesday: a request nobody has decided, somebody
+    // already away, and one of those two with no cover — which is the number
+    // the Staff page is built around.
+    const leaveTypes: Array<{ id: string; code: string }> = [];
+    for (const [code, name, paid, days] of [
+      ['CL', 'Casual leave', true, 12],
+      ['SL', 'Sick leave', true, 10],
+      ['LWP', 'Leave without pay', false, 0],
+    ] as Array<[string, string, boolean, number]>) {
+      const lt = await one<{ id: string }>(c,
+        `INSERT INTO leave_type (tenant_id, code, name, is_paid, annual_entitlement)
+         VALUES ($1, $2, $3, $4, $5) RETURNING id`,
+        [tenantId, code, name, paid, days]);
+      leaveTypes.push({ id: lt.id, code });
+    }
+
+    const allStaff = await c.query<{ id: string }>(
+      `SELECT id FROM staff WHERE tenant_id = $1 ORDER BY employee_code`, [tenantId]);
+
+    for (const st of allStaff.rows) {
+      await c.query(
+        `INSERT INTO staff_contract (tenant_id, staff_id, kind, weekly_hours, starts_on)
+         VALUES ($1, $2, 'permanent', 40, '2021-04-01')`, [tenantId, st.id]);
+      for (const lt of leaveTypes.filter((l) => l.code !== 'LWP')) {
+        await c.query(
+          `INSERT INTO leave_balance
+             (tenant_id, staff_id, leave_type_id, year_label, opening, taken)
+           VALUES ($1, $2, $3, '2026-27', $4, 0)`,
+          [tenantId, st.id, lt.id, lt.code === 'CL' ? 12 : 10]);
+      }
+    }
+
+    if (signedInTeacherStaffId && allStaff.rows.length > 1) {
+      const casual = leaveTypes.find((l) => l.code === 'CL')!;
+      const sick = leaveTypes.find((l) => l.code === 'SL')!;
+
+      // Awaiting a decision.
+      await c.query(
+        `INSERT INTO staff_absence
+           (tenant_id, staff_id, leave_type_id, starts_on, ends_on, reason)
+         VALUES ($1, $2, $3, CURRENT_DATE + 9, CURRENT_DATE + 10,
+                 'Sister''s wedding in Trichy')`,
+        [tenantId, signedInTeacherStaffId, casual.id]);
+
+      // Already away, today, with nobody covering — the gap the screen shouts
+      // about. Approved directly because somebody rang in at eight; that is an
+      // absence before it is a form, which is why `fileAbsence` allows it.
+      const other = allStaff.rows.find((r) => r.id !== signedInTeacherStaffId)!;
+      await c.query(
+        `INSERT INTO staff_absence
+           (tenant_id, staff_id, leave_type_id, starts_on, ends_on, status,
+            decided_at, reason)
+         VALUES ($1, $2, $3, CURRENT_DATE, CURRENT_DATE, 'approved', now(),
+                 'Rang in with a fever')`,
+        [tenantId, other.id, sick.id]);
+      // And the balance, in the same breath — because that is what
+      // `decideAbsence` does, and a demo where an approved absence has not
+      // moved anybody's balance quietly contradicts the one promise that
+      // service makes. Inserting the row raw skips the service; it must not
+      // skip the consequence.
+      await c.query(
+        `UPDATE leave_balance SET taken = taken + 1, updated_at = now()
+          WHERE tenant_id = $1 AND staff_id = $2 AND leave_type_id = $3`,
+        [tenantId, other.id, sick.id]);
+    }
+
     // ------------------------------------------------------------ classwork
     //
     // M28, in the demo, for the reason the driver and the parent logins exist:
@@ -868,7 +938,8 @@ async function main(): Promise<void> {
     console.log(`  tenantId: ${tenantId}`);
     console.log(`  40 learners, 4 sections, 24 invoices, today's attendance for one section`);
     console.log(`  2 bus routes, 12 riders, this morning's run recorded`);
-    console.log(`  2 lessons and 3 assignments in Class IX, one already marked\n`);
+    console.log(`  2 lessons and 3 assignments in Class IX, one already marked`);
+    console.log(`  3 leave types, one request awaiting a decision, one teacher away\n`);
     await printLogins(c, tenantId);
   } catch (error) {
     await c.query('ROLLBACK');
