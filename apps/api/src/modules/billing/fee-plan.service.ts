@@ -24,11 +24,13 @@ export const feePlanService = {
   async createDraft(
     scope: TenantScope,
     input: {
-      academicUnitId: string; academicYearId: string; name: string; programmeId?: string;
+      academicUnitId: string; academicYearId: string; name: string;
+      programmeId?: string | undefined;
       components: Array<{
         code: string; name: string; amountPaise: bigint;
         frequency: 'one_time' | 'monthly' | 'term' | 'annual';
-        isRefundable?: boolean; isOptional?: boolean; taxRate?: number; glCode?: string;
+        isRefundable?: boolean | undefined; isOptional?: boolean | undefined;
+        taxRate?: number | undefined; glCode?: string | undefined;
       }>;
     },
   ): Promise<FeePlan> {
@@ -100,7 +102,8 @@ export const feePlanService = {
   /** Assigns a published plan to an enrollment. A draft is not billable. */
   async assign(
     scope: TenantScope,
-    input: { enrollmentId: string; feePlanId: string; effectiveFrom?: string },
+    input: { enrollmentId: string; feePlanId: string;
+             effectiveFrom?: string | undefined },
   ): Promise<{ id: string }> {
     return withTenant(scope, async (db) => {
       const plan = await db.query<{ status: string }>(
@@ -134,7 +137,7 @@ export const feePlanService = {
       value: number | bigint;
       reason: string;
       requestedByStaffId: string;
-      feeComponentId?: string;
+      feeComponentId?: string | undefined;
     },
   ): Promise<{ id: string }> {
     if (!input.reason.trim()) {

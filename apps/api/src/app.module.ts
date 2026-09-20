@@ -27,6 +27,9 @@ import { HrController } from './modules/hr/hr.controller.ts';
 import {
   AdmissionsController, EnrollmentController,
 } from './modules/admissions/admissions.controller.ts';
+import { BillingController } from './modules/billing/billing.controller.ts';
+import { MessagingController } from './modules/messaging/messaging.controller.ts';
+import { ImportController } from './modules/import/import.controller.ts';
 import { FamilyController } from './modules/family/family.controller.ts';
 
 @Module({
@@ -37,7 +40,8 @@ import { FamilyController } from './modules/family/family.controller.ts';
     OpenApiController, PlatformController, AccessLogController, PlanController,
     BrandController, BrandingSettingsController, TransportController,
     LearningController, HrController,
-    AdmissionsController, EnrollmentController,
+    AdmissionsController, EnrollmentController, BillingController,
+    MessagingController, ImportController,
     FamilyController, MetricsController,
   ],
   providers: [

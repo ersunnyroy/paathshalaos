@@ -407,12 +407,18 @@ export const paymentService = {
       const { rows } = await db.query<{ id: string }>(
         `INSERT INTO payment
            (tenant_id, campus_id, payer_person_id, method, amount, status, idempotency_key,
-            target_invoice_id)
-         VALUES (app_current_tenant_id(), $1, $2, $3, $4::numeric, 'succeeded', $5, $6::uuid)
+            target_invoice_id, received_by)
+         VALUES (app_current_tenant_id(), $1, $2, $3, $4::numeric, 'succeeded', $5, $6::uuid,
+                 $7::uuid)
          ON CONFLICT (tenant_id, idempotency_key) DO NOTHING
          RETURNING id`,
+        // `received_by` was accepted by this method and written nowhere until
+        // 0078 — every cash receipt was attributed to nobody. Cash at a
+        // counter is the one place money can quietly not arrive, and a named
+        // cashier is the control.
         [campusId, input.payerPersonId ?? null, input.method,
-         Money.toDecimalString(input.amountMinor), input.idempotencyKey, input.invoiceId],
+         Money.toDecimalString(input.amountMinor), input.idempotencyKey, input.invoiceId,
+         input.receivedByStaffId],
       );
       if (!rows[0]) {
         const existing = await db.query<{ id: string }>(

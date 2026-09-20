@@ -310,17 +310,33 @@ export class DirectoryController {
       amount: z.string().regex(/^\d+(\.\d{1,2})?$/),
       method: z.enum(['cash', 'cheque', 'dd', 'neft']),
       idempotencyKey: z.string().min(8).max(200),
-      receivedByStaffId: uuid,
+      // `receivedByStaffId` used to be here, taken from the body. A receipt is
+      // a document a family keeps and a cashier is answerable for, and a
+      // client-supplied cashier is an attribution anybody can change by
+      // editing one field — the same hole M32.2 closed on admission
+      // decisions, in the one place where money changes hands.
     }).safeParse(body);
     if (!parsed.success) throw ApiError.fromZod(parsed.error);
 
+    const scope = currentScope();
+    const staffId = await withTenant(scope, async (db) => {
+      const { rows } = await db.query<{ staff_id: string | null }>(
+        'SELECT app_current_staff_id() AS staff_id');
+      return rows[0]?.staff_id ?? undefined;
+    });
+    if (!staffId) {
+      throw ApiError.make('permission_error', 'not_staff',
+        'A receipt names the person who took the money, and this account is '
+        + 'not linked to a member of staff.');
+    }
+
     return {
-      data: await paymentService.recordOfflinePayment(currentScope(), {
+      data: await paymentService.recordOfflinePayment(scope, {
         invoiceId: invoiceId.data,
         amountMinor: Money.fromDecimalString(parsed.data.amount),
         method: parsed.data.method,
         idempotencyKey: parsed.data.idempotencyKey,
-        receivedByStaffId: parsed.data.receivedByStaffId,
+        receivedByStaffId: staffId,
       }),
     };
   }

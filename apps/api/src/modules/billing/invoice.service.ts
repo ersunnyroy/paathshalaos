@@ -59,7 +59,8 @@ export const invoiceService = {
    */
   async issueForInstallment(
     scope: TenantScope,
-    input: { installmentId: string; campusId: string; numberPrefix?: string; dueOn?: string },
+    input: { installmentId: string; campusId: string;
+             numberPrefix?: string | undefined; dueOn?: string | undefined },
   ): Promise<Invoice> {
     const issued = await withTenant(scope, async (db) => {
       const found = await db.query<{

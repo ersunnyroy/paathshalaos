@@ -34,9 +34,9 @@ export type Transform = 'trim' | 'upper' | 'lower' | 'date_dmy' | 'date_ymd'
 export interface Mapping {
   sourceColumn: string;
   targetField: string;
-  transform?: Transform;
-  isRequired?: boolean;
-  defaultValue?: string;
+  transform?: Transform | undefined;
+  isRequired?: boolean | undefined;
+  defaultValue?: string | undefined;
 }
 
 export interface RowError { field: string; code: string; message: string }
@@ -76,8 +76,9 @@ export const importService = {
   async createBatch(
     scope: TenantScope,
     input: {
-      entity: ImportEntity; originalFilename?: string; campusId?: string;
-      uploadedByStaffId?: string; sourceSha256?: string;
+      entity: ImportEntity; originalFilename?: string | undefined;
+      campusId?: string | undefined;
+      uploadedByStaffId?: string | undefined; sourceSha256?: string | undefined;
     },
   ): Promise<{ id: string }> {
     return withTenant(scope, async (db) => {

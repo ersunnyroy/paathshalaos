@@ -3,12 +3,46 @@
 import { useEffect, useState } from 'react';
 import { Shell, PageHead } from '../shell';
 import { Tile, Panel, Empty, SkeletonRows, Avatar, Pill } from '@/components/ui';
-import { apiGet, rupees, rupeesCompact } from '@/lib/api';
+import { apiGet, apiPost, rupees, rupeesCompact } from '@/lib/api';
 
 interface Invoice {
   id: string; invoice_no: string; status: string; due_on: string;
   total_paise: string; paid_paise: string; outstanding_paise: string;
   given_name: string | null; family_name: string | null; admission_no: string | null;
+}
+
+interface Plan {
+  id: string; name: string; status: string; academic_year: string | null;
+  programme_name: string | null; component_count: number;
+  total: string; assigned_count: number;
+}
+interface Installment {
+  id: string; sequence: number; due_on: string; status: string;
+  gross_amount: string; concession_amount: string; net_amount: string;
+  fee_assignment_id: string; enrollment_id: string;
+  given_name: string; family_name: string | null; admission_no: string;
+  section_name: string | null; class_name: string | null;
+  invoice_id: string | null; invoice_no: string | null;
+}
+interface Campus { id: string; name: string }
+
+/**
+ * A plan's amounts come back as exact decimal strings in rupees, not paise.
+ *
+ * `rupees()` on this page takes paise, because an invoice row is paise. A fee
+ * component is `numeric(14,2)` rupees, and running it through the paise
+ * formatter shows ₹420.00 for a ₹42,000 tuition fee — which is the kind of
+ * wrong that looks plausible on a screen and is caught by nothing.
+ */
+function rupeesFromDecimal(value: string): string {
+  const [whole = '0', frac = '00'] = value.split('.');
+  const digits = whole.replace(/^0+(?=\d)/, '');
+  const last3 = digits.slice(-3);
+  const rest = digits.slice(0, -3);
+  const grouped = rest
+    ? `${rest.replace(/\B(?=(\d{2})+(?!\d))/g, ',')},${last3}`
+    : last3;
+  return `₹${grouped}.${frac.padEnd(2, '0').slice(0, 2)}`;
 }
 
 const FILTERS = [
@@ -38,8 +72,16 @@ function verdict(i: Invoice, todayIso: string):
 
 export default function FeesPage() {
   const [invoices, setInvoices] = useState<Invoice[] | null>(null);
+  const [plans, setPlans] = useState<Plan[] | null>(null);
+  const [unbilled, setUnbilled] = useState<Installment[] | null>(null);
+  const [campuses, setCampuses] = useState<Campus[]>([]);
   const [status, setStatus] = useState('');
   const [error, setError] = useState<string | null>(null);
+  const [said, setSaid] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [take, setTake] = useState<Record<string, string>>({});
+
+  const [reload, setReload] = useState(0);
 
   useEffect(() => {
     setError(null);
@@ -47,7 +89,21 @@ export default function FeesPage() {
     apiGet<Invoice[]>(`/v1/invoices${status ? `?status=${status}` : ''}`)
       .then(setInvoices)
       .catch((e: Error) => setError(e.message));
-  }, [status]);
+  }, [status, reload]);
+
+  useEffect(() => {
+    apiGet<Plan[]>('/v1/fees/plans').then(setPlans).catch(() => setPlans([]));
+    apiGet<Installment[]>('/v1/fees/installments?unbilled=true')
+      .then(setUnbilled).catch(() => setUnbilled([]));
+    apiGet<Campus[]>('/v1/campuses').then(setCampuses).catch(() => setCampuses([]));
+  }, [reload]);
+
+  async function act(fn: () => Promise<unknown>, done: string) {
+    setBusy(true); setError(null); setSaid(null);
+    try { await fn(); setSaid(done); setReload((n) => n + 1); }
+    catch (e) { setError((e as Error).message); }
+    finally { setBusy(false); }
+  }
 
   // BigInt all the way: a running total of fees that has been through a JS
   // number is no longer the figure on the receipts.
@@ -78,6 +134,7 @@ export default function FeesPage() {
       </PageHead>
 
       {error ? <div className="note bad">{error}</div> : null}
+      {said ? <div className="note ok">{said}</div> : null}
 
       <div className="tiles">
         <Tile loading={!invoices} label="Outstanding"
@@ -96,6 +153,106 @@ export default function FeesPage() {
               tone={collected >= 0.75 ? 'good' : collected >= 0.4 ? 'warning' : 'critical'} />
       </div>
 
+      <Panel title="Ready to bill"
+             hint="Instalments that are due and have no invoice — a school
+                   decides when it bills, so nothing here happens on its own">
+        <table>
+          <thead>
+            <tr>
+              <th>Learner</th><th>Class</th><th>Due</th>
+              <th className="n">Amount</th><th />
+            </tr>
+          </thead>
+          {unbilled === null ? <SkeletonRows rows={3} cols={5} /> : (
+            <tbody>
+              {unbilled.map((i) => (
+                <tr key={i.id}>
+                  <td>
+                    <strong>
+                      {i.given_name}{i.family_name ? ` ${i.family_name}` : ''}
+                    </strong>
+                    <span className="sub" style={{ display: 'block' }}>
+                      {i.admission_no}
+                    </span>
+                  </td>
+                  <td>
+                    {i.class_name ? `${i.class_name} ` : ''}{i.section_name ?? '—'}
+                  </td>
+                  <td>{i.due_on}</td>
+                  <td className="n">{rupeesFromDecimal(i.net_amount)}</td>
+                  <td className="n">
+                    <button className="ghost"
+                            disabled={busy || campuses.length === 0}
+                            onClick={() => void act(() => apiPost('/v1/fees/invoices', {
+                              installmentId: i.id, campusId: campuses[0]!.id,
+                            }), 'Invoice raised.')}>
+                      Raise the invoice
+                    </button>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          )}
+        </table>
+        {unbilled?.length === 0 ? (
+          <Empty title="Nothing waiting to be billed">
+            Every instalment that is due has an invoice against it.
+          </Empty>
+        ) : null}
+      </Panel>
+
+      <Panel title="Fee plans" hint="A plan cannot be assigned until it is published">
+        <table>
+          <thead>
+            <tr>
+              <th>Plan</th><th>Year</th><th className="n">Components</th>
+              <th className="n">Per year</th><th className="n">Learners</th>
+              <th>Status</th><th />
+            </tr>
+          </thead>
+          {plans === null ? <SkeletonRows rows={3} cols={7} /> : (
+            <tbody>
+              {plans.map((p) => (
+                <tr key={p.id}>
+                  <td>
+                    <strong>{p.name}</strong>
+                    {p.programme_name
+                      ? <span className="sub" style={{ display: 'block' }}>{p.programme_name}</span>
+                      : null}
+                  </td>
+                  <td>{p.academic_year ?? '—'}</td>
+                  <td className="n">{p.component_count}</td>
+                  <td className="n">{rupeesFromDecimal(p.total)}</td>
+                  <td className="n">{p.assigned_count}</td>
+                  <td>
+                    {p.status === 'published'
+                      ? <Pill tone="good">published</Pill>
+                      : <Pill tone="warning">{p.status}</Pill>}
+                  </td>
+                  <td className="n">
+                    {p.status === 'draft' ? (
+                      <button className="ghost" disabled={busy}
+                              onClick={() => void act(
+                                () => apiPost(`/v1/fees/plans/${p.id}/publish`),
+                                'Plan published — the amounts are now frozen.')}>
+                        Publish
+                      </button>
+                    ) : null}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          )}
+        </table>
+        {plans?.length === 0 ? (
+          <Empty title="No fee plans yet">
+            A plan is a list of components — tuition, transport, laboratory —
+            and the amounts freeze when it is published, because by then it is
+            a price a family has been quoted.
+          </Empty>
+        ) : null}
+      </Panel>
+
       <Panel title="Invoices" hint={invoices ? `${invoices.length} shown` : undefined}>
         {invoices && invoices.length === 0 ? (
           <Empty title="Nothing to show">
@@ -113,6 +270,7 @@ export default function FeesPage() {
                   <th className="n opt">Total</th>
                   <th className="n">Outstanding</th>
                   <th className="w">Status</th>
+                  <th />
                 </tr>
               </thead>
               {invoices ? (
@@ -142,11 +300,36 @@ export default function FeesPage() {
                             return <Pill {...(v.tone ? { tone: v.tone } : {})}>{v.label}</Pill>;
                           })()}
                         </td>
+                        <td className="n">
+                          {i.status !== 'void' && BigInt(i.outstanding_paise) > 0n ? (
+                            <div className="row-form" style={{ justifyContent: 'flex-end' }}>
+                              <input type="text" inputMode="decimal"
+                                     placeholder="Amount"
+                                     style={{ width: 110, minWidth: 0 }}
+                                     value={take[i.id] ?? ''}
+                                     onChange={(e) => setTake(
+                                       (t) => ({ ...t, [i.id]: e.target.value }))} />
+                              <button className="ghost"
+                                      disabled={busy || !/^\d+(\.\d{1,2})?$/.test(take[i.id] ?? '')}
+                                      onClick={() => void act(() => apiPost(
+                                        `/v1/invoices/${i.id}/payments`, {
+                                          amount: take[i.id],
+                                          method: 'cash',
+                                          // The client's own id for this
+                                          // receipt: two taps at a counter
+                                          // are one payment.
+                                          idempotencyKey: `web-${i.id}-${take[i.id]}-${Date.now()}`,
+                                        }), 'Payment recorded, receipt issued.')}>
+                                Take cash
+                              </button>
+                            </div>
+                          ) : null}
+                        </td>
                       </tr>
                     );
                   })}
                 </tbody>
-              ) : <SkeletonRows rows={8} cols={6} />}
+              ) : <SkeletonRows rows={8} cols={7} />}
             </table>
           </div>
         )}

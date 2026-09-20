@@ -95,9 +95,10 @@ export const templateService = {
   async addVersion(
     scope: TenantScope,
     input: {
-      templateId: string; channel: Channel; locale?: string; body: string;
-      dltEntityId?: string; dltTemplateId?: string; senderHeader?: string;
-      waTemplateName?: string; waLanguage?: string;
+      templateId: string; channel: Channel; locale?: string | undefined; body: string;
+      dltEntityId?: string | undefined; dltTemplateId?: string | undefined;
+      senderHeader?: string | undefined;
+      waTemplateName?: string | undefined; waLanguage?: string | undefined;
     },
   ): Promise<TemplateVersion> {
     if (!input.body.trim()) {

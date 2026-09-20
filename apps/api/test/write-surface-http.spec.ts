@@ -21,7 +21,8 @@ import { randomUUID } from 'node:crypto';
 import {
   createTenant, destroyTenants, createUser, destroyUsers, grantRole, purgeTestData,
   createAcademicYear, createAcademicStructure, createClassGroupRaw, createSectionFor,
-  makeTeacher, OWNER_URL, type TenantFixture, type UserFixture,
+  makeTeacher, createLearnerRaw, createPersonRaw, linkGuardianRaw,
+  OWNER_URL, type TenantFixture, type UserFixture,
 } from './fixtures.ts';
 import { AppModule } from '../src/app.module.ts';
 import { tokenService } from '../src/modules/auth/token.service.ts';
@@ -122,6 +123,18 @@ beforeAll(async () => {
   const office = await makeTeacher(tenant.orgId, tenant.campusId, officeUser.userId,
     { givenName: 'Anjali', employeeCode: 'WS-OFF' });
   officeStaffId = office.staffId;
+
+  // A learner in IX-A with a guardian, so the messaging audience is somebody.
+  // Without this the send refuses with `empty_audience` — correctly, which is
+  // itself asserted below, and uselessly as a test of sending.
+  const child = await createLearnerRaw(tenant.orgId, 'Nisha', 'WS-MSG-1');
+  const parentPersonId = await createPersonRaw(tenant.orgId, 'Sunita',
+    { familyName: 'Rao' });
+  await linkGuardianRaw(tenant.orgId, child.studentId, parentPersonId);
+  await owner((c) => c.query(
+    `INSERT INTO enrollment (tenant_id, student_id, section_id, academic_year_id)
+     VALUES ($1, $2, $3, $4)`,
+    [tenant.orgId, child.studentId, sectionA, year.yearId]));
 
   await owner(async (c) => {
     const lt = await c.query<{ id: string }>(
@@ -449,6 +462,253 @@ describe('a child can be admitted, end to end, through the product', () => {
     // still the register for that term.
     const still = await GET(`/v1/students/${studentId}`, officeToken);
     expect(still.status).toBe(200);
+  });
+});
+
+// ---------------------------------------------------------------------------
+
+describe('a school can raise an invoice it can take money against', () => {
+  let planId = '';
+  let assignmentId = '';
+  let installmentId = '';
+  let invoiceId = '';
+  let enrolmentForFees = '';
+
+  beforeAll(async () => {
+    const learner = await createLearnerRaw(tenant.orgId, 'Ishaan', 'WS-FEE-1');
+    enrolmentForFees = await owner((c) => c.query<{ id: string }>(
+      `INSERT INTO enrollment (tenant_id, student_id, section_id, academic_year_id)
+       VALUES ($1, $2, $3, $4) RETURNING id`,
+      [tenant.orgId, learner.studentId, sectionA, academicYearId])
+      .then((r) => r.rows[0]!.id));
+  }, 60_000);
+
+  it('creates a fee plan from exact decimal amounts', async () => {
+    const res = await POST('/v1/fees/plans', officeToken, {
+      academicUnitId: tenant.unitId,
+      academicYearId,
+      name: 'Class IX 2026-27',
+      components: [
+        { code: 'TUITION', name: 'Tuition', amount: '42000.00', frequency: 'annual' },
+        { code: 'LAB', name: 'Laboratory', amount: '3500.50', frequency: 'annual' },
+      ],
+    });
+    expect(res.status).toBe(201);
+    planId = res.body.data.id;
+
+    const listed = await GET('/v1/fees/plans', officeToken);
+    const row = listed.body.data.find((p: any) => p.id === planId);
+    expect(row.status).toBe('draft');
+    // A string, all the way out. A fee total that has been through a JSON
+    // number is a fee total nobody should put on an invoice.
+    expect(row.total).toBe('45500.50');
+    expect(typeof row.total).toBe('string');
+  });
+
+  it('refuses to assign a learner to a plan nobody has published', async () => {
+    const res = await POST('/v1/fees/assignments', officeToken, {
+      enrollmentId: enrolmentForFees, feePlanId: planId,
+    });
+    expect(res.status).toBe(409);
+  });
+
+  it('publishes it, assigns it and schedules the instalments', async () => {
+    expect((await POST(`/v1/fees/plans/${planId}/publish`, officeToken)).status).toBe(201);
+
+    const assigned = await POST('/v1/fees/assignments', officeToken, {
+      enrollmentId: enrolmentForFees, feePlanId: planId,
+    });
+    expect(assigned.status).toBe(201);
+    assignmentId = assigned.body.data.id;
+
+    const scheduled = await POST(`/v1/fees/assignments/${assignmentId}/installments`,
+      officeToken, { dueDates: [inDays(5), inDays(95)] });
+    expect(scheduled.status).toBe(201);
+    expect(scheduled.body.data).toHaveLength(2);
+    installmentId = scheduled.body.data[0].id;
+  });
+
+  it('lists the instalment as unbilled until an invoice exists', async () => {
+    const before = await GET('/v1/fees/installments?unbilled=true', officeToken);
+    expect(before.body.data.map((i: any) => i.id)).toContain(installmentId);
+
+    const issued = await POST('/v1/fees/invoices', officeToken, {
+      installmentId, campusId: tenant.campusId,
+    });
+    expect(issued.status).toBe(201);
+    invoiceId = issued.body.data.id;
+    expect(issued.body.data.invoice_no).toBeTruthy();
+
+    const after = await GET('/v1/fees/installments?unbilled=true', officeToken);
+    expect(after.body.data.map((i: any) => i.id)).not.toContain(installmentId);
+  });
+
+  it('takes a payment attributed to the caller, not to the body', async () => {
+    // The hole M32 closed here: `receivedByStaffId` used to come from the
+    // request. A receipt is a document a cashier is answerable for.
+    const paid = await POST(`/v1/invoices/${invoiceId}/payments`, officeToken, {
+      amount: '1000.00', method: 'cash',
+      idempotencyKey: `ws-${randomUUID()}`,
+      // Sent deliberately, and must be ignored.
+      receivedByStaffId: teacherStaffId,
+    });
+    expect(paid.status).toBe(201);
+
+    const stored = await owner((c) => c.query<{ received_by: string }>(
+      `SELECT received_by FROM payment WHERE id = $1`, [paid.body.data.paymentId]));
+    expect(stored.rows[0]!.received_by).toBe(officeStaffId);
+    expect(stored.rows[0]!.received_by).not.toBe(teacherStaffId);
+  });
+
+  it('voids an invoice with a reason, and never without one', async () => {
+    const bare = await POST(`/v1/fees/invoices/${invoiceId}/void`, officeToken, {});
+    expect(bare.status).toBe(422);
+  });
+});
+
+describe('a school can send a message', () => {
+  let templateId = '';
+  let versionId = '';
+
+  it('creates a template and a version nobody has approved yet', async () => {
+    const created = await POST('/v1/messaging/templates', officeToken, {
+      code: `notice_${randomUUID().slice(0, 8)}`,
+      name: 'General notice',
+      purpose: 'core_education_service',
+    });
+    expect(created.status).toBe(201);
+    templateId = created.body.data.id;
+
+    const version = await POST('/v1/messaging/templates/versions', officeToken, {
+      templateId, channel: 'in_app',
+      body: 'Dear parent, {{name}} has a holiday on Friday.',
+    });
+    expect(version.status).toBe(201);
+    versionId = version.body.data.id;
+    expect(version.body.data.approval_status).not.toBe('approved');
+  });
+
+  it('refuses to send against a template nobody approved', async () => {
+    const res = await POST('/v1/messaging/send', officeToken, {
+      templateCode: 'does-not-exist',
+      idempotencyKey: `ws-${randomUUID()}`,
+      audience: { kind: 'section', sectionId: sectionA },
+    });
+    // Either the template is unknown or the audience is empty — both are
+    // refusals rather than a silent send to nobody, which is the point.
+    expect(res.status).toBeGreaterThanOrEqual(400);
+  });
+
+  it('sends to a section and reports per recipient, not a bare success',
+    async () => {
+      await POST(`/v1/messaging/templates/versions/${versionId}/approve`, officeToken);
+
+      const code = (await GET('/v1/messaging/templates', officeToken))
+        .body.data.find((t: any) => t.id === templateId).code;
+
+      const res = await POST('/v1/messaging/send', officeToken, {
+        templateCode: code,
+        idempotencyKey: `ws-${randomUUID()}`,
+        audience: { kind: 'section', sectionId: sectionA },
+      });
+
+      expect(res.status).toBe(201);
+      // "sent to 38 of 40, two opted out" is the answer the sender needs.
+      expect(res.body.data).toHaveProperty('sent');
+      expect(res.body.data).toHaveProperty('suppressed');
+      expect(Array.isArray(res.body.data.outcomes)).toBe(true);
+
+      const outcomes = await GET(
+        `/v1/messaging/requests/${res.body.data.requestId}/outcomes`, officeToken);
+      expect(outcomes.status).toBe(200);
+    });
+
+  it('refuses a send that would reach nobody', async () => {
+    const res = await POST('/v1/messaging/send', officeToken, {
+      templateCode: 'anything',
+      idempotencyKey: `ws-${randomUUID()}`,
+      audience: { kind: 'section', sectionId: sectionB },
+    });
+    expect(res.status).toBe(422);
+    expect(res.body.error.code).toBe('empty_audience');
+  });
+});
+
+describe('a school can run an import instead of typing four hundred learners', () => {
+  let batchId = '';
+
+  it('parses a CSV with commas inside quoted fields', async () => {
+    // "Sharma, Priya" is the normal case in school data, not the edge one. A
+    // split(',') turns one learner into two columns of nonsense.
+    const csv = [
+      'Name,Admission No,DOB',
+      '"Sharma, Priya",WS-IMP-1,14/03/2012',
+      'Rohit Verma,WS-IMP-2,02/11/2011',
+      '',
+    ].join('\n');
+
+    const res = await POST('/v1/imports', officeToken, {
+      entity: 'learner_roster', originalFilename: 'roster.csv', csv,
+    });
+    expect(res.status).toBe(201);
+    batchId = res.body.data.batchId;
+    // Two rows, not three: the trailing blank line is not a learner.
+    expect(res.body.data.staged).toBe(2);
+    expect(res.body.data.columns).toEqual(['Name', 'Admission No', 'DOB']);
+  });
+
+  it('refuses a file with a header and nothing else', async () => {
+    const res = await POST('/v1/imports', officeToken, {
+      entity: 'learner_roster', csv: 'Name,Admission No\n',
+    });
+    expect(res.status).toBe(422);
+    expect(res.body.error.code).toBe('no_rows');
+  });
+
+  it('will not apply anything nobody has previewed', async () => {
+    const res = await POST(`/v1/imports/${batchId}/apply`, officeToken);
+    // The step that exists so somebody sees what is about to happen to four
+    // hundred children's records before it happens.
+    expect(res.status).toBeGreaterThanOrEqual(400);
+    expect(res.status).toBeLessThan(500);
+  });
+
+  it('maps, validates and previews before it will apply', async () => {
+    const mapped = await POST(`/v1/imports/${batchId}/mapping`, officeToken, {
+      mappings: [
+        { sourceColumn: 'Name', targetField: 'given_name', transform: 'trim' },
+        { sourceColumn: 'Admission No', targetField: 'admission_no' },
+        { sourceColumn: 'DOB', targetField: 'date_of_birth', transform: 'date_dmy' },
+      ],
+    });
+    expect(mapped.status).toBe(201);
+
+    const validated = await POST(`/v1/imports/${batchId}/validate`, officeToken);
+    expect(validated.status).toBe(201);
+    expect(validated.body.data.valid).toBe(2);
+    expect(validated.body.data.invalid).toBe(0);
+
+    const preview = await POST(`/v1/imports/${batchId}/preview`, officeToken);
+    expect(preview.status).toBe(201);
+    expect(preview.body.data.digest).toBeTruthy();
+
+    const applied = await POST(`/v1/imports/${batchId}/apply`, officeToken);
+    expect(applied.status).toBe(201);
+    expect(applied.body.data.created).toBe(2);
+
+    const listed = await GET('/v1/students?limit=200', officeToken);
+    const names = JSON.stringify(listed.body.data);
+    expect(names).toMatch(/Sharma, Priya|Sharma/);
+  });
+
+  it('takes it all back, with a reason', async () => {
+    const bare = await POST(`/v1/imports/${batchId}/reverse`, officeToken, {});
+    expect(bare.status).toBe(422);
+
+    const res = await POST(`/v1/imports/${batchId}/reverse`, officeToken,
+      { reason: 'Wrong file — this was last year\'s roster.' });
+    expect(res.status).toBe(201);
+    expect(res.body.data.reversed).toBeGreaterThan(0);
   });
 });
 

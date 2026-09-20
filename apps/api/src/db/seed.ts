@@ -752,6 +752,24 @@ async function main(): Promise<void> {
          i === 6 ? 'no_show' : 'boarded', randomUUID(), driverUserId]);
     }
 
+    // -------------------------------------------------------- a notice to send
+    //
+    // M32.3 gave the messages screen a send button, and a picker with nothing
+    // approved in it demonstrates the empty state rather than the feature.
+    // in_app only, because that is the only channel this system can honestly
+    // deliver until M26 buys a gateway.
+    const noticeTemplate = await one<{ id: string }>(c,
+      `INSERT INTO message_template (tenant_id, code, name, purpose)
+       VALUES ($1, 'general_notice', 'General notice', 'core_education_service')
+       RETURNING id`, [tenantId]);
+    await c.query(
+      `INSERT INTO message_template_version
+         (tenant_id, message_template_id, version, channel, locale, body,
+          approval_status, approved_at)
+       VALUES ($1, $2, 1, 'in_app', 'en-IN',
+               'Dear parent, {{name}} has a holiday on Friday.', 'approved', now())`,
+      [tenantId, noticeTemplate.id]);
+
     // ---------------------------------------------------------- admissions
     //
     // M5's pipeline, populated, for the same reason as everything else in this

@@ -3,13 +3,22 @@
 import { useEffect, useMemo, useState } from 'react';
 import { Shell, PageHead } from '../shell';
 import { Panel, Pill, SkeletonRows, Empty, Icon } from '@/components/ui';
-import { apiGet } from '@/lib/api';
+import { apiGet, apiPost } from '@/lib/api';
 
 interface Recipient {
   id: string; status: string; channel: string | null;
   suppression_reason: string | null; rendered_body: string | null;
   created_at: string; given_name: string | null; family_name: string | null;
 }
+
+interface Template {
+  id: string; code: string; name: string; purpose: string;
+  versions: Array<{
+    id: string; channel: string; locale: string | null;
+    approval_status: string; body: string;
+  }>;
+}
+interface Section { id: string; section_name: string; class_name: string | null }
 
 const STATUS_TONE: Record<string, 'good' | 'warning' | 'critical' | undefined> = {
   sent: 'good', delivered: 'good', read: 'good',
@@ -41,10 +50,37 @@ export default function MessagesPage() {
   const [rows, setRows] = useState<Recipient[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [only, setOnly] = useState<'all' | 'suppressed' | 'failed'>('all');
+  const [templates, setTemplates] = useState<Template[] | null>(null);
+  const [sections, setSections] = useState<Section[]>([]);
+  const [send, setSend] = useState({ templateCode: '', sectionId: '' });
+  const [said, setSaid] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [reload, setReload] = useState(0);
 
   useEffect(() => {
     apiGet<Recipient[]>('/v1/messages').then(setRows).catch((e: Error) => setError(e.message));
-  }, []);
+    apiGet<Template[]>('/v1/messaging/templates').then(setTemplates)
+      .catch(() => setTemplates([]));
+    apiGet<Section[]>('/v1/sections').then(setSections).catch(() => setSections([]));
+  }, [reload]);
+
+  async function act(fn: () => Promise<unknown>, done: string) {
+    setBusy(true); setError(null); setSaid(null);
+    try { await fn(); setSaid(done); setReload((n) => n + 1); }
+    catch (e) { setError((e as Error).message); }
+    finally { setBusy(false); }
+  }
+
+  /**
+   * Only templates with an approved version can be sent.
+   *
+   * An unapproved template in the picker is an error a school discovers after
+   * pressing send to four hundred families. In India an SMS template is
+   * registered with DLT before it can go out at all, so "written" and "allowed
+   * to go out" are genuinely different states.
+   */
+  const sendable = (templates ?? []).filter(
+    (t) => t.versions.some((v) => v.approval_status === 'approved'));
 
   const shown = useMemo(() => {
     if (!rows) return null;
@@ -67,6 +103,59 @@ export default function MessagesPage() {
       />
 
       {error ? <div className="note bad">{error}</div> : null}
+      {said ? <div className="note ok">{said}</div> : null}
+
+      <div className="note" style={{ marginBottom: 16 }}>
+        <strong>There is no SMS or WhatsApp gateway yet.</strong>{' '}
+        Messages reach families in the parent app. That is a real delivery —
+        and a fabricated SMS receipt would not be, which is why nothing here
+        pretends to send one.
+      </div>
+
+      <Panel title="Send to a class"
+             hint="Consent is checked per family at the moment of sending, not
+                   when this list was built">
+        <div className="row-form">
+          <select value={send.templateCode}
+                  onChange={(e) => setSend((f) => ({ ...f, templateCode: e.target.value }))}>
+            <option value="">Template…</option>
+            {sendable.map((t) => (
+              <option key={t.id} value={t.code}>{t.name}</option>
+            ))}
+          </select>
+          <select value={send.sectionId}
+                  onChange={(e) => setSend((f) => ({ ...f, sectionId: e.target.value }))}>
+            <option value="">Class…</option>
+            {sections.map((sec) => (
+              <option key={sec.id} value={sec.id}>
+                {sec.class_name ? `${sec.class_name} ` : ''}{sec.section_name}
+              </option>
+            ))}
+          </select>
+          <button disabled={busy || !send.templateCode || !send.sectionId}
+                  onClick={() => void act(async () => {
+                    const out = await apiPost<{
+                      sent: number; suppressed: number; failed: number;
+                    }>('/v1/messaging/send', {
+                      templateCode: send.templateCode,
+                      idempotencyKey: `web-${send.templateCode}-${send.sectionId}-${Date.now()}`,
+                      audience: { kind: 'section', sectionId: send.sectionId },
+                    });
+                    // The count, not a tick. "Sent to 38, 2 withheld" is the
+                    // answer; "sent" is a screen that hides two families.
+                    setSaid(`Sent to ${out.sent}. ${out.suppressed} withheld, `
+                      + `${out.failed} failed.`);
+                    return out;
+                  }, 'Sent.')}>
+            Send
+          </button>
+          {templates !== null && sendable.length === 0 ? (
+            <span className="sub">
+              No template has an approved version yet.
+            </span>
+          ) : null}
+        </div>
+      </Panel>
 
       <Panel
         title="Recipients"
