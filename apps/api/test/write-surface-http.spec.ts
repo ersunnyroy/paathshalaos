@@ -407,6 +407,11 @@ describe('a child can be admitted, end to end, through the product', () => {
       officeToken, {
         outcome: 'offered', offeredSectionId: sectionA, offerValidDays: 14,
         conditions: 'Subject to the transfer certificate.',
+        // Sent deliberately, and must be ignored. Without this line the
+        // assertion below passes whether or not the controller reads the body,
+        // which is a test proving nothing — deleting the guard broke it not at
+        // all until this field was added.
+        decidedByStaffId: teacherStaffId,
       });
     expect(res.status).toBe(201);
     decisionId = res.body.data.id;
@@ -414,6 +419,7 @@ describe('a child can be admitted, end to end, through the product', () => {
     const stored = await owner((c) => c.query<{ decided_by: string }>(
       'SELECT decided_by FROM admission_decision WHERE id = $1', [decisionId]));
     expect(stored.rows[0]!.decided_by).toBe(officeStaffId);
+    expect(stored.rows[0]!.decided_by).not.toBe(teacherStaffId);
   });
 
   it('accepting the offer is what creates the learner', async () => {
@@ -503,6 +509,53 @@ describe('a school can raise an invoice it can take money against', () => {
     // number is a fee total nobody should put on an invoice.
     expect(row.total).toBe('45500.50');
     expect(typeof row.total).toBe('string');
+  });
+
+  it('refuses an amount that is not an exact decimal', async () => {
+    // "42,000" is how a person types a fee and is not a number; "42000.999"
+    // is a third of a paise. Both have to be refused at the edge with a named
+    // validation error rather than reaching Postgres, where the first is a
+    // syntax error and the second is silently rounded.
+    for (const amount of ['42,000', '42000.999', 'forty two thousand', '']) {
+      const res = await POST('/v1/fees/plans', officeToken, {
+        academicUnitId: tenant.unitId, academicYearId, name: 'Bad money',
+        components: [{ code: 'X', name: 'Bad', amount, frequency: 'annual' }],
+      });
+      expect(res.status).toBe(422);
+      expect(res.body.error.code).toBe('invalid_request');
+    }
+  });
+
+  it('keeps an amount exact at the largest figure the column can hold', async () => {
+    // The boundary that EXISTS. The float and string conversions first
+    // disagree around ₹94,575,592,174,780.41, and `fee_component.amount` is
+    // numeric(14,2) — Postgres refuses that value before either could be
+    // wrong about it. A test at the divergence point got a numeric overflow,
+    // not a mismatch, which is the finding: within this schema the two paths
+    // are indistinguishable, and the claim in the header had to be narrowed
+    // to say so.
+    const res = await POST('/v1/fees/plans', officeToken, {
+      academicUnitId: tenant.unitId, academicYearId,
+      name: 'Largest storable',
+      components: [{
+        code: 'X', name: 'Boundary', amount: '999999999999.99', frequency: 'annual',
+      }],
+    });
+    expect(res.status).toBe(201);
+
+    const stored = await owner((c) => c.query<{ amount: string }>(
+      `SELECT amount::text FROM fee_component WHERE fee_plan_id = $1`,
+      [res.body.data.id]));
+    expect(stored.rows[0]!.amount).toBe('999999999999.99');
+
+    // And one paise over it is refused rather than silently rounded.
+    const over = await POST('/v1/fees/plans', officeToken, {
+      academicUnitId: tenant.unitId, academicYearId, name: 'One too many',
+      components: [{
+        code: 'X', name: 'Over', amount: '9999999999999.99', frequency: 'annual',
+      }],
+    });
+    expect(over.status).toBeGreaterThanOrEqual(400);
   });
 
   it('refuses to assign a learner to a plan nobody has published', async () => {
@@ -655,6 +708,17 @@ describe('a school can run an import instead of typing four hundred learners', (
     // Two rows, not three: the trailing blank line is not a learner.
     expect(res.body.data.staged).toBe(2);
     expect(res.body.data.columns).toEqual(['Name', 'Admission No', 'DOB']);
+  });
+
+  it('does not import a line of stray commas as a nameless child', async () => {
+    // What a spreadsheet export leaves behind, and it parses into real empty
+    // columns rather than being swallowed by the trailing-newline handling.
+    const res = await POST('/v1/imports', officeToken, {
+      entity: 'learner_roster',
+      csv: 'Name,Admission No\nAsha Rao,WS-IMP-9\n,,\n',
+    });
+    expect(res.status).toBe(201);
+    expect(res.body.data.staged).toBe(1);
   });
 
   it('refuses a file with a header and nothing else', async () => {
@@ -870,6 +934,18 @@ describe('an exam can be set, marked and published through the product', () => {
     // silently re-grades it; corrections are the path, and they are attributed.
     const unlock = await POST(`/v1/assessments/${assessmentId}/unlock`, officeToken);
     expect(unlock.status).toBe(404);
+  });
+
+  it('grades a learner who scored exactly full marks', async () => {
+    // The half-open band that the controller closes. [80, 100) does not
+    // contain 100, so the one paper in the class that is certainly right
+    // would come back ungraded.
+    const full = await owner((c) => c.query<{ label: string | null }>(
+      `SELECT gb.label
+         FROM grade_band gb
+        WHERE gb.grading_scale_id = $1 AND gb.span @> 100::numeric`,
+      [scaleId]));
+    expect(full.rows[0]?.label).toBe('A');
   });
 
   it('computes a result run, and will not publish one nobody reviewed', async () => {

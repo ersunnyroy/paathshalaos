@@ -1014,6 +1014,117 @@ cleared it, and there is no endpoint here that hands out a URL — bytes are ref
 served — so there is nothing to gate. The migration says where the gate goes when one is
 added, rather than leaving it implicit.
 
+## M32 — the write surface
+
+Asked whether everything was built, I checked the route table instead of the plan, and
+the answer was no in a place the plan could not see.
+
+**The data model, the services and the tests were the mature part. The surface was not.**
+115 routes existed, and the school-facing *write* actions were: mark attendance, record a
+payment, transport enrolments and boardings, classwork, support tickets, API keys and
+branding. Seven modules were built, tested and **unreachable** — no route, no screen,
+callable only from a test file:
+
+| Module | What was missing |
+| --- | --- |
+| HR (M27) | `src/modules/hr` held one file. No controller, nothing in `app.module.ts`. 28 tests, and a school could not file a day's sick leave |
+| Admissions (M5) | `admissionsService` had no caller in `src/` |
+| Enrollment (M5) | Same — a child could not be enrolled |
+| Invoicing (M7) | A payment could be taken against an invoice the product had no way to raise |
+| Messaging (M9) | 119 tests, and nothing could send |
+| Imports (M9.6) | Onboarding meant typing four hundred learners by hand |
+| Assessment (M8) | `GET /v1/results` and nothing else. After M28, the only way to enter a mark was to attach it to homework |
+
+Four of the six plan flags — `hr`, `public_api`, `whatsapp`, `advanced_reports` — still
+guarded nothing, which is the problem M20, M27 and M28 were each meant to close, sitting
+on the other four.
+
+| ID | Sub-milestone | Status | What shipped |
+| --- | --- | --- | --- |
+| M32.1 | HR | Done | Nine routes behind `@RequiresFeature('hr')`, the roster/leave/cover reads the service never had, and a Staff page built around the two moments an office actually has |
+| M32.2 | Admissions and enrolment | Done | Enquiry → application → decision → offer → enrolled, as one pipeline list, with the form rendered from its own JSON Schema |
+| M32.3 | Fees, messaging, imports | Done | Fee plans, instalments, raising an invoice, taking cash; sending to a class; the five-step import with a CSV parser that survives `"Sharma, Priya"` |
+| M32.4 | Exams and results | Done | Scale → paper → open → marks → lock → compute → review → publish, and the mark sheet |
+| M32.5 | Verification | Done | 51 assertions over real HTTP; 11 mutations, none survived |
+
+**179 routes now, from 115.**
+
+### Tested through `fetch`, not past it
+
+Every assertion in `write-surface-http.spec.ts` goes through the guards against a Nest app
+built from the real `AppModule`. That is the milestone's point: a service test proves a
+function works and cannot prove anybody can call it, which for seven modules was exactly
+the gap. It found eight defects nothing else could have:
+
+- `form_definition.purpose` has no `'admission'` value (0017 allows `application`)
+- `enquiry.programme_id` and `academic_year_id` are NOT NULL — a 500 where a 422 belonged
+- `lead` requires a phone or an email, which was a constraint violation rather than a refusal
+- `lead.source` has no `'campaign'`
+- `fee_component` has no `deleted_at`
+- `message_template.purpose` is DPDP's vocabulary, not a marketer's
+- `ScaleKind` has no `'descriptive'`
+- `grade_band` has no `lower_bound`/`upper_bound` — one numrange called `span`
+
+And three attribution holes, all the same shape: **a document's author taken from the
+request body.** `decidedByStaffId` on an admission decision, `receivedByStaffId` on a cash
+receipt — both now resolved from `app_current_staff_id()`, both with a test that sends a
+different id deliberately and asserts it is ignored.
+
+### 0078 — a receipt named nobody
+
+`recordOfflinePayment` has required `receivedByStaffId` since M7 and written it nowhere:
+accepted, typed, dropped on the floor. Every cash receipt this system has issued is
+attributed to nobody. Cash at a school counter is the one place money can quietly not
+arrive, and a named person answerable for each receipt is the control. Nullable, because
+the rows that already exist genuinely do not know.
+
+### Intake was not atomic, and said it was
+
+`intake` creates a person, a validated form submission and an application. The first
+version was three `withTenant` calls under a comment claiming they were atomic. They are
+not — `withTenant` opens a transaction per call. An HTTP test that submitted invalid
+answers found the person row still there: an office retrying the form ends up with two
+children who are one child.
+
+### The mutation pass, and what it said about the comments
+
+Eleven mutations. Five survived the first run, and three of those were comments
+overclaiming rather than code being wrong — the shape M21 found in `rupees()`, three
+times in one milestone:
+
+*The money comment.* It said `12500.10` through a double is a receipt with the wrong
+figure. Mutating the conversion to the float path failed nothing, because
+`Math.round(Number(s) * 100)` recovers exact paise for every amount a school bills. Then
+the narrower version — "they first disagree around ₹94 lakh crore" — got a **numeric
+overflow** instead of a mismatch, because `fee_component.amount` is `numeric(14,2)` and
+cannot hold a tenth of that. Within this schema the two paths are indistinguishable. The
+string path stays because it has no rounding step and the column width is a decision
+somebody could widen; what is asserted is the boundary that exists.
+
+*The grading comment.* It said a top band of 80–100 fails the coverage check. It does not:
+`[80, 100)` satisfies `[0, 100)`. What actually breaks is the learner who scores exactly
+100, whose percentage is in no band at all — the one paper certainly right, reported as
+ungraded.
+
+*The CSV comment.* It credited the blank-row filter with dropping the trailing newline.
+The parser already does that. The filter is for the line of stray commas a spreadsheet
+export leaves behind, which parses into real empty columns and would import as a nameless
+child.
+
+The other two survivors were tests proving less than they named: the admission-author
+assertion passed whether or not the controller read the body, until the body carried one;
+and the money-shape check was never given a malformed amount.
+
+### Still unreachable, and named rather than implied
+
+Eight services have no caller anywhere in `src/`. Three are blocked on M26's payment
+gateway — `mandateService`, `reconciliationService`, and the settlement half of the money
+path. The rest are real gaps this milestone did not close: `consentService` (DPDP consent
+recording), `exportService` (day book, Tally XML), `grantsService` (granting a role to a
+user), `refundService`, `rolloverService` (rolling a school into the next academic year),
+`retentionService` (a scheduled purge), and `invoicingService` (the platform billing
+schools, which has a console and no route).
+
 ## The rest of the plan (M20–M31)
 
 The first nineteen milestones were a plan that ran out rather than a plan that finished.
@@ -1116,6 +1227,7 @@ left to the end.
 | M25 Invoicing schools | Mostly | 41 | 8 mutations verified; unequal tax halves caught by a CHECK constraint, three tables caught by the M1 RLS invariant, one float right almost always. Payment provider not done |
 | M27 HR and relief cover | Done | 28 | 8 mutations verified; closed a limitation attendance had carried since M6. 2 survivors: a check whose value is its message, and an untested half day |
 | M22 Deploy safety | Partly | 16 | 5 mutations verified. The container stack has now been BUILT AND RUN on a real Docker daemon — .dockerignore was in the wrong directory, and the migration runner blamed a migration for a database whose history did not match it. AWS still absent |
+| M32 The write surface | Done | 51 | Over real HTTP. 11 mutations, none survived. 7 modules made reachable, 8 SQL/enum defects only a request could find, 3 author-from-the-body holes closed, 3 comments narrowed to what is true |
 | M28 Learning | Done | 38 | 14 mutations verified, no survivors. Closed the last M16 flag that guarded nothing. 1 finding outside the milestone (0077: section scope ignored `section_id`, reaching student records, marks, attendance and transport), 1 guard that covered only UPDATE, 1 test proving a different policy than it named |
 
 Two design decisions were made during M2 that are worth carrying forward:

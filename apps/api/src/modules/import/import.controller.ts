@@ -95,7 +95,11 @@ function parseCsv(text: string): Array<Record<string, string>> {
   const names = header.map((h) => h.trim());
 
   return rows
-    // A trailing blank line is not a learner with no name.
+    // A row of nothing is not a learner with no name. This is NOT about the
+    // trailing newline — the parser already drops that, since it leaves no
+    // field and no row behind. It is about the line of stray commas that a
+    // spreadsheet export leaves in the middle or at the end of a file, which
+    // parses into real empty columns and would import as a nameless child.
     .filter((r) => r.some((v) => v.trim() !== ''))
     .map((r) => {
       const record: Record<string, string> = {};

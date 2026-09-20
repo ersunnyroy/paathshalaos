@@ -124,19 +124,25 @@ export class AssessmentController {
   }
 
   /**
-   * A band's range is half-open — [lower, upper) — which is right, and leaks.
+   * A band's range is half-open — [lower, upper) — which is right, and leaks
+   * at exactly one value.
    *
-   * `grading_scale_is_covered` asks whether the bands cover [0, 100), so a top
-   * band of 80–100 does NOT contain a learner who scored exactly 100, and the
-   * scale is refused with a gap nobody can see. The existing tests get past it
-   * by typing `100.0001`, which is an implementation detail of a numrange
-   * escaping into a school's data entry.
+   * The first version of this comment said a top band of 80–100 makes the
+   * scale fail its coverage check. It does not: `grading_scale_is_covered`
+   * asks for [0, 100), and [80, 100) satisfies it. Mutating this away broke
+   * no test, which is what sent me to look.
+   *
+   * What actually breaks is the learner who scores 100. Their percentage is
+   * not inside [80, 100), so `gradeFor` finds no band and they get no grade —
+   * the one result in the class that is certainly right, reported as
+   * ungraded. The existing tests avoid it by typing `100.0001`, which is a
+   * numrange implementation detail escaping into a school's data entry.
    *
    * So a top band stated as ending at 100 is stored as ending just past it.
-   * The number a school types means what it says — "eighty to a hundred" —
-   * and nobody has to learn about half-open intervals to publish a scale.
-   * Only the top band, and only when it is exactly 100: anywhere else, an
-   * upper bound is a boundary the school chose and is left alone.
+   * "Eighty to a hundred" means what it says, and nobody has to learn about
+   * half-open intervals to grade a full-marks paper. Only the top band, and
+   * only when it is exactly 100: anywhere else an upper bound is a boundary
+   * the school chose and is left alone.
    */
   @Post('scales')
   async createScale(@Body() body: unknown) {

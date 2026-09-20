@@ -7,9 +7,33 @@
  * `invoiceService` had no caller in `src/` at all.
  *
  * Money is decimal strings on the way in and on the way out, never JSON
- * numbers. `12500.10` through an IEEE double is 12500.099999999999, and that
- * is a receipt with the wrong figure on it. The services take `bigint` paise,
- * so the conversion happens here, once, at the edge.
+ * numbers, and the reason is narrower than the one this comment first gave.
+ *
+ * It said `12500.10` through a double is 12500.099999999999 and therefore a
+ * receipt with the wrong figure on it. The first half is true of a NUMBER in
+ * JSON; the second does not follow, because `Math.round(Number(s) * 100)`
+ * recovers the exact paise for every amount a school will ever bill. Mutating
+ * this conversion to the float path failed no test, which is how the claim got
+ * read again — the same shape M21 found in `rupees()`, a real hazard borrowed
+ * to justify something that did not need it.
+ *
+ * And then the honest version, which is narrower still. The two paths first
+ * disagree around ₹94,575,592,174,780.41 — and `fee_component.amount` is
+ * `numeric(14,2)`, which cannot hold a tenth of that. Postgres refuses the
+ * value before either conversion could be wrong about it. So within this
+ * schema the float path is not merely adequate, it is indistinguishable, and
+ * a test trying to prove otherwise got a numeric overflow rather than a
+ * mismatch.
+ *
+ * The string path stays because it has no rounding step to reason about, and
+ * because `numeric(14,2)` is a schema decision that a school with a larger
+ * campus could reasonably ask to widen — at which point the conversion would
+ * start to matter and nobody would think to look at it. What is asserted in
+ * the tests is the boundary that exists: exactness at the largest amount this
+ * column can hold.
+ *
+ * The services take `bigint` paise, so the conversion happens here, once, at
+ * the edge.
  *
  * Every endpoint that names a member of staff resolves them from
  * `app_current_staff_id()`. A fee waiver, a voided invoice and a published
