@@ -14,9 +14,37 @@
  *   through a double is no longer exact. It is formatted from the string.
  */
 import { createClient, ApiError as SharedApiError, type TokenStore } from '@paathshala/api-client';
+import { brandHost, type Brand } from './brand';
 
 const API_URL = process.env['NEXT_PUBLIC_API_URL'] ?? 'http://localhost:3001';
-const TENANT_ID = process.env['NEXT_PUBLIC_TENANT_ID'] ?? '';
+
+/**
+ * Only for development, where every app runs on localhost and the address bar
+ * identifies nothing. In production the browser's own host names the school.
+ */
+const DEV_BRAND_HOST = process.env['NEXT_PUBLIC_BRAND_HOST'];
+
+/**
+ * Resolved from the host at startup rather than baked in at build time. Until
+ * the brand has loaded there is no tenant, and nothing that needs one runs.
+ */
+let resolvedTenantId = '';
+
+export function setTenantId(id: string): void {
+  resolvedTenantId = id;
+}
+
+/** Fetches the brand for whatever address this browser is on. */
+export async function loadBrand(): Promise<Brand | null> {
+  const host = brandHost(
+    typeof window === 'undefined' ? '' : window.location.host, DEV_BRAND_HOST);
+  const response = await fetch(
+    `${API_URL}/v1/brand?host=${encodeURIComponent(host)}`, { cache: 'no-store' });
+  const body = (await parse(response)) as { data?: Brand | null } | undefined;
+  const brand = body?.data ?? null;
+  if (brand) setTenantId(brand.tenantId);
+  return brand;
+}
 
 const ACCESS_KEY = 'paathshala.access';
 const REFRESH_KEY = 'paathshala.refresh';
@@ -27,7 +55,7 @@ export interface Session {
 }
 
 export function tenantId(): string {
-  return TENANT_ID;
+  return resolvedTenantId;
 }
 
 export function saveSession(session: Session): void {
@@ -76,14 +104,14 @@ async function parse(response: Response): Promise<unknown> {
 }
 
 export async function login(email: string, password: string): Promise<Session> {
-  if (!TENANT_ID) {
+  if (!resolvedTenantId) {
     throw new ApiError(0, 'no_tenant',
-      'NEXT_PUBLIC_TENANT_ID is not set. Run the seed script and copy the tenant id into apps/web/.env.local.');
+      'This address is not registered to a school yet.');
   }
   const response = await fetch(`${API_URL}/v1/auth/login`, {
     method: 'POST',
     headers: { 'content-type': 'application/json' },
-    body: JSON.stringify({ email, password, tenantId: TENANT_ID }),
+    body: JSON.stringify({ email, password, tenantId: resolvedTenantId }),
   });
   const body = (await parse(response)) as
     { data?: Session; error?: { code: string; message: string } } | undefined;
@@ -130,7 +158,9 @@ export function onSignedOut(handler: (reason: string) => void): void {
 
 const client = createClient({
   baseUrl: API_URL,
-  tenantId: TENANT_ID,
+  // Read through a getter: the tenant is resolved from the host after this
+  // module loads, so capturing the value here would capture an empty string.
+  get tenantId() { return resolvedTenantId; },
   store,
   onSignedOut: (reason) => signOutHandler(reason),
 });

@@ -12,6 +12,7 @@ import { createClient, type Client, type Tokens } from '@paathshala/api-client';
 import { OfflineAttendanceQueue } from '@paathshala/offline-queue';
 import { SecureTokenStore, AsyncQueueStorage } from './storage.ts';
 import { resolveApiUrl } from './api-url.ts';
+import { SchoolStore, apiUrlForHost, type School } from './school.ts';
 
 /**
  * Read from the build, not hard-coded.
@@ -36,12 +37,72 @@ function extra(): { apiUrl?: string; tenantId?: string } {
  * Built lazily, the same failure happens inside a screen, inside an error
  * boundary, with a message somebody can act on.
  */
+/**
+ * The school this phone is set up for, held in memory once read.
+ *
+ * Set by the school picker at first run and by the root layout on every launch
+ * afterwards, so nothing below has to know where it came from.
+ */
+let _school: School | null = null;
+
+export function currentSchool(): School | null { return _school; }
+export function setSchool(school: School | null): void {
+  _school = school;
+  // The client captured the old base URL, so it has to be rebuilt.
+  _api = undefined;
+}
+
+export async function loadSchool(): Promise<School | null> {
+  const { default: AsyncStorage } = await import(
+    '@react-native-async-storage/async-storage');
+  _school = await new SchoolStore(AsyncStorage).read();
+  return _school;
+}
+
+export async function rememberSchool(school: School): Promise<void> {
+  const { default: AsyncStorage } = await import(
+    '@react-native-async-storage/async-storage');
+  await new SchoolStore(AsyncStorage).write(school);
+  setSchool(school);
+}
+
+/**
+ * Asks a host which school it is, before anybody signs in.
+ *
+ * The same public lookup the web sign-in screen uses. A host that is not
+ * registered returns nothing, and the picker says so rather than leaving
+ * somebody staring at a spinner.
+ */
+export async function resolveSchool(host: string): Promise<School | null> {
+  const base = apiUrlForHost(host, extra().apiUrl);
+  const response = await fetch(
+    `${base}/v1/brand?host=${encodeURIComponent(host)}`,
+    { headers: { accept: 'application/json' } });
+  if (!response.ok) return null;
+  const body = await response.json().catch(() => undefined) as
+    { data?: { tenantId: string; name: string; logoUrl: string | null;
+               primaryColour: string | null; supportEmail: string | null;
+               supportPhone: string | null } | null } | undefined;
+  const brand = body?.data;
+  if (!brand) return null;
+  return {
+    host, tenantId: brand.tenantId, name: brand.name, logoUrl: brand.logoUrl,
+    primaryColour: brand.primaryColour, supportEmail: brand.supportEmail,
+    supportPhone: brand.supportPhone,
+  };
+}
+
 export function apiUrl(): string {
-  return resolveApiUrl(extra().apiUrl, Constants.expoConfig?.hostUri);
+  // A configured apiUrl still wins — it is how a development build points at a
+  // laptop — then the school's own host, then the dev-server fallback.
+  const configured = extra().apiUrl;
+  if (configured) return configured.replace(/\/+$/, '');
+  if (_school) return apiUrlForHost(_school.host);
+  return resolveApiUrl(undefined, Constants.expoConfig?.hostUri);
 }
 
 export function tenantId(): string {
-  return extra().tenantId ?? '';
+  return _school?.tenantId ?? extra().tenantId ?? '';
 }
 
 let _tokenStore: SecureTokenStore | undefined;

@@ -19,14 +19,23 @@ export default function SignIn() {
   const [password, setPassword] = useState('');
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
-  const [where, setWhere] = useState<{ api: string; tenant: string } | null>(null);
+  const [where, setWhere] = useState<
+    { api: string; tenant: string; name: string | null; logoUrl: string | null } | null>(null);
 
   useEffect(() => {
     let cancelled = false;
     void (async () => {
       try {
         const session = await import('@/lib/session.ts');
-        if (!cancelled) setWhere({ api: session.apiUrl(), tenant: session.tenantId() });
+        const school = session.currentSchool();
+        if (!cancelled) {
+          setWhere({
+            api: session.apiUrl(),
+            tenant: session.tenantId(),
+            name: school?.name ?? null,
+            logoUrl: school?.logoUrl ?? null,
+          });
+        }
       } catch (e) {
         // Thrown into the boundary on the next render, where it is legible.
         if (!cancelled) setError(e instanceof Error ? e.message : String(e));
@@ -54,14 +63,17 @@ export default function SignIn() {
       {/* The supplied artwork, not a redrawn mark. `resizeMode="contain"` with
           a fixed height keeps the aspect ratio at any screen width; the asset
           is 800x198, so the width follows. */}
+      {/* The school's own mark when they have one, ours when they have not.
+          A white-labelled product that shows the vendor's logo on the sign-in
+          screen is not white-labelled. */}
       <Image
-        source={require('../assets/logo.png')}
+        source={where?.logoUrl ? { uri: where.logoUrl } : require('../assets/logo.png')}
         style={styles.logo}
         resizeMode="contain"
         accessibilityRole="image"
-        accessibilityLabel="paathshalaOS"
+        accessibilityLabel={where?.name ?? 'paathshalaOS'}
       />
-      <Text style={styles.title}>Sign in</Text>
+      <Text style={styles.title}>{where?.name ?? 'Sign in'}</Text>
       <Text style={styles.lede}>
         Attendance works without a signal. Everything you mark is kept on this
         phone and sent when you are back.
@@ -91,8 +103,7 @@ export default function SignIn() {
       {error ? <Text style={styles.error}>{error}</Text> : null}
       {where && !where.tenant ? (
         <Text style={styles.error}>
-          No school is configured yet. Put the tenant id the seed printed into
-          `expo.extra.tenantId` in apps/mobile/app.json, then reload.
+          This phone is not set up for a school yet.
         </Text>
       ) : null}
 
@@ -108,7 +119,15 @@ export default function SignIn() {
 
       {/* Always shown: "which machine is this talking to" is the first question
           when a request fails and the hardest to answer from a phone. */}
-      <Text style={styles.hint}>API: {where?.api ?? 'resolving…'}</Text>
+      <Pressable onPress={() => router.replace('/school')}>
+        <Text style={styles.hint}>
+          Not your school? Change it
+        </Text>
+      </Pressable>
+
+      {/* Not a setting. A school can put its own name on this; it cannot claim
+          to have built it. */}
+      <Text style={styles.poweredBy}>Powered by paathshalaOS</Text>
     </View>
   );
 }
@@ -131,5 +150,8 @@ const styles = StyleSheet.create({
   },
   buttonBusy: { opacity: 0.7 },
   buttonText: { color: '#fff', fontWeight: '700', fontSize: 16 },
-  hint: { marginTop: 12, fontSize: 12, color: theme.slate, textAlign: 'center' },
+  hint: { marginTop: 16, fontSize: 13, color: theme.teal, textAlign: 'center' },
+  poweredBy: {
+    marginTop: 18, fontSize: 11.5, color: theme.slate, textAlign: 'center', opacity: 0.8,
+  },
 });

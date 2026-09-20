@@ -18,6 +18,15 @@ import { brandingService } from './branding.service.ts';
 import { domainService } from './domain.service.ts';
 import { currentScope } from '../../common/scope.ts';
 
+/** `https://stjosephs.paathshala.app:443` to `stjosephs.paathshala.app`. */
+function hostFromOrigin(origin: string): string {
+  try {
+    return new URL(origin).hostname;
+  } catch {
+    return '';
+  }
+}
+
 @Controller('v1')
 export class BrandController {
   /**
@@ -27,12 +36,24 @@ export class BrandController {
   @Public()
   @Get('brand')
   async brand(@Req() request: Request, @Query('host') hostOverride?: string) {
-    // The real Host header wins. `?host=` is only consulted when the request
-    // did not arrive on a real tenant host — which is development, where every
-    // app runs on localhost.
-    const header = request.headers.host ?? '';
-    const looksLocal = /^(localhost|127\.0\.0\.1|\[::1\])(:\d+)?$/.test(header);
-    const host = looksLocal && hostOverride ? hostOverride : header;
+    // Origin first, then Host.
+    //
+    // The API may not be served from the school's domain — `api.paathshala.app`
+    // answering for `stjosephs.paathshala.app` is the ordinary deployment — and
+    // in that case the Host header is OUR hostname, not the school's. A browser
+    // sends Origin on a cross-origin request and cannot forge it, so it is the
+    // better signal; when the two are same-origin no Origin is sent and Host is
+    // already the school's domain.
+    //
+    // `?host=` is honoured only from localhost, where every app runs in
+    // development and no header says anything useful.
+    const hostHeader = request.headers.host ?? '';
+    const origin = request.headers.origin;
+    const looksLocal = /^(localhost|127\.0\.0\.1|\[::1\])(:\d+)?$/.test(hostHeader);
+
+    const host = looksLocal && hostOverride
+      ? hostOverride
+      : (origin ? hostFromOrigin(origin) : hostHeader);
 
     const brand = await brandingService.forHost(host);
     return {

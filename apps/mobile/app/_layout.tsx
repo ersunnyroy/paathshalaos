@@ -50,6 +50,14 @@ function Gate() {
       try {
         const session = await import('@/lib/session.ts');
         session.onSignedOut(() => router.replace('/sign-in'));
+
+        // Which school before who: a token is meaningless until the app knows
+        // which school it belongs to, and the sign-in screen cannot show a
+        // school's name before one has been chosen.
+        const school = await session.loadSchool();
+        if (cancelled) return;
+        if (!school) { router.replace('/school'); return; }
+
         const tokens = await session.tokenStore().read();
         if (!cancelled && !tokens) router.replace('/sign-in');
       } catch (e) {

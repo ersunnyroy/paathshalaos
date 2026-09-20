@@ -3,7 +3,8 @@
 import { useEffect, useState, type ReactNode } from 'react';
 import { usePathname, useRouter } from 'next/navigation';
 import Link from 'next/link';
-import { apiGet, clearSession, currentToken, onSignedOut } from '@/lib/api';
+import { apiGet, clearSession, currentToken, onSignedOut, loadBrand } from '@/lib/api';
+import { brandVariables, type Brand } from '@/lib/brand';
 import { Icon, Mark } from '@/components/ui';
 
 interface Me {
@@ -68,6 +69,21 @@ export function Shell({ children }: { children: ReactNode }) {
   const pathname = usePathname();
   const [me, setMe] = useState<Me | null>(null);
   const [theme, setTheme] = useState<'light' | 'dark' | null>(null);
+  const [brand, setBrand] = useState<Brand | null>(null);
+
+  useEffect(() => {
+    // Also here, not only on the sign-in screen: somebody who arrives with a
+    // live session never passes through sign-in, and the school's name and
+    // colours have to be right for them too.
+    loadBrand()
+      .then((resolved) => {
+        setBrand(resolved);
+        for (const [name, value] of Object.entries(brandVariables(resolved))) {
+          document.documentElement.style.setProperty(name, value);
+        }
+      })
+      .catch(() => undefined);
+  }, []);
 
   useEffect(() => {
     // Null means "follow the OS". Only an explicit choice is stored, so someone
@@ -117,10 +133,13 @@ export function Shell({ children }: { children: ReactNode }) {
     <div className="app" data-entry={me?.impersonation ? '1' : undefined}>
       <nav className="nav" aria-label="Main">
         <button className="workspace" type="button"
-                title="Demo Vidyalaya — one school in this account">
-          <Mark size={24} />
+                title={brand?.name ?? 'Your school'}>
+          {brand?.logoUrl
+            // eslint-disable-next-line @next/next/no-img-element
+            ? <img src={brand.logoUrl} alt="" style={{ height: 24, width: 24, objectFit: 'contain' }} />
+            : <Mark size={24} />}
           <span className="meta">
-            <span className="nm">Demo Vidyalaya</span>
+            <span className="nm">{brand?.name ?? '…'}</span>
             <span className="role">{role || ' '}</span>
           </span>
           <Icon.chevron className="chev" />

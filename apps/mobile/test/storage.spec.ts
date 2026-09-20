@@ -22,6 +22,9 @@ import {
 } from '../src/lib/register.ts';
 import type { AttendanceState } from '@paathshala/offline-queue';
 import { resolveApiUrl } from '../src/lib/api-url.ts';
+import {
+  normaliseHost, apiUrlForHost, SchoolStore,
+} from '../src/lib/school.ts';
 
 function fakeSecureStore(options: {
   initial?: Record<string, string>;
@@ -266,5 +269,61 @@ describe('the dependency set matches the SDK', () => {
 
     expect(drifted, 'run `npx expo install --fix`, or copy the pinned ranges')
       .toEqual([]);
+  });
+});
+
+describe('finding which school this phone belongs to (M19.4)', () => {
+  it('accepts what a teacher would actually type', () => {
+    // A box labelled "your school's address" gets all of these, and refusing
+    // any of them is a support call.
+    for (const typed of [
+      'stjosephs.paathshala.app',
+      'https://stjosephs.paathshala.app',
+      'https://stjosephs.paathshala.app/',
+      'https://stjosephs.paathshala.app/sign-in',
+      '  StJosephs.Paathshala.App  ',
+      'stjosephs.paathshala.app.',
+    ]) {
+      expect(normaliseHost(typed), typed).toBe('stjosephs.paathshala.app');
+    }
+  });
+
+  it('refuses what is not an address', () => {
+    // A bare word would be sent off to resolve something meaningless, and the
+    // teacher would get a network error instead of "that is not an address".
+    for (const bad of ['', '   ', 'my school', 'stjosephs', 'http://', '...', '-x.example']) {
+      expect(normaliseHost(bad), bad).toBeNull();
+    }
+  });
+
+  it('derives the API from the school address', () => {
+    // Asking a teacher for an API URL is asking the wrong person a question
+    // they cannot answer.
+    expect(apiUrlForHost('stjosephs.paathshala.app'))
+      .toBe('https://stjosephs.paathshala.app');
+    // A development override still wins, without a trailing slash.
+    expect(apiUrlForHost('stjosephs.paathshala.app', 'http://192.168.1.14:3001/'))
+      .toBe('http://192.168.1.14:3001');
+  });
+
+  it('remembers the school across launches, and refuses a half-written one', async () => {
+    const { module } = fakeAsyncStorage();
+    const store = new SchoolStore(module);
+    expect(await store.read()).toBeNull();
+
+    const school = {
+      host: 'stjosephs.paathshala.app', tenantId: 't-1', name: 'St Joseph\'s',
+      logoUrl: null, primaryColour: '#14B8A6', supportEmail: null, supportPhone: null,
+    };
+    await store.write(school);
+    expect(await store.read()).toEqual(school);
+
+    // A record missing its tenant id would otherwise produce an app that looks
+    // configured and is pointed at nothing.
+    await module.setItem('paathshala.school', JSON.stringify({ host: 'x.example' }));
+    expect(await store.read()).toBeNull();
+
+    await module.setItem('paathshala.school', 'not json');
+    expect(await store.read()).toBeNull();
   });
 });

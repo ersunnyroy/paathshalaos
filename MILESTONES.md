@@ -545,8 +545,8 @@ the baked-in tenant id that made setup fiddly in the first place.
 | --- | --- | --- | --- |
 | M19.1 | Addressing | Done | `tenant_domain`. Every school gets a managed subdomain at provisioning, live immediately. A custom domain is registered inert and routes only after a DNS TXT record proves ownership |
 | M19.2 | Branding | Done | `tenant_branding` plus `app_brand_for_host()`, a `SECURITY DEFINER` lookup the unauthenticated sign-in screen calls |
-| M19.3 | The web app reads the host | Next | Replace `NEXT_PUBLIC_TENANT_ID` with the resolved brand |
-| M19.4 | The mobile app picks a school | Next | Enter a school's address once instead of editing `app.json` |
+| M19.3 | The web app reads the host | Done | `NEXT_PUBLIC_TENANT_ID` is gone. The brand loads before the sign-in form, the school's mark and colours replace ours, and the demo accounts show only in development |
+| M19.4 | The mobile app picks a school | Done | A teacher types the address they already use in a browser, once. `expo.extra.tenantId` is gone, and the API address comes from the school rather than from a person who cannot know it |
 
 **One host per school, not one per role.** The obvious reading of "a subdomain to access any
 portal of any role" is a subdomain per role, and it is the wrong shape: it leaks the
@@ -571,6 +571,19 @@ background: url(…)` is exactly what that pattern refuses, and the database ref
 route in the system, so it returns a name, a mark, two colours and a support contact the
 school chose to publish — and nothing about size, status, payment or people. A test asserts
 the key list exhaustively, so adding a field is a decision somebody makes on purpose.
+
+**Where the API lives is not the school's problem.** The brand lookup prefers the `Origin`
+header over `Host`, because `api.paathshala.app` answering for
+`stjosephs.paathshala.app` is the ordinary deployment and there the Host header is *ours*.
+A browser sends `Origin` on a cross-origin request and cannot forge it; when the two are
+same-origin no `Origin` is sent and `Host` is already the school's domain. `?host=` is
+honoured only from localhost.
+
+**A colour is checked three times.** The API validates it, a column check refuses it, and
+the browser validates it again before writing it into a CSS custom property. That is not
+belt-and-braces for its own sake: the last check is the one at the point of consequence,
+where a bad value would mean script execution on a page served under a school's own
+domain. A mutation removing the anchors from the pattern fails there and nowhere else.
 
 **"Powered by paathshalaOS" is not a setting.** A school can put its own name on this; it
 cannot claim to have built it. Keeping it out of the branding table is the point — a field
