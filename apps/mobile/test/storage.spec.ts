@@ -226,3 +226,45 @@ describe('finding the API without anybody typing an IP', () => {
       .toBe('https://api.school.example');
   });
 });
+
+describe('the dependency set matches the SDK', () => {
+  it('pins every native package to what Expo Go actually contains', async () => {
+    /*
+     * Written after breaking the app twice with the same mistake.
+     *
+     * Expo Go is a fixed binary: it contains ONE compiled version of each
+     * native module. Installing a different version of the JavaScript side —
+     * `npm view <pkg> version` gives the newest published, not the one the SDK
+     * pins — leaves JS calling into native code that is not there. The app
+     * bundles perfectly and dies at startup with something unhelpful; the one
+     * that cost an evening was `TypeError: Object is not a function` from
+     * async-storage 3.x against Expo Go's 2.2.0.
+     *
+     * `expo install` would prevent this, and could not reach Expo's API from
+     * the environment these versions were chosen in. `bundledNativeModules.json`
+     * ships inside the expo package and is the same mapping, offline.
+     */
+    const { readFileSync } = await import('node:fs');
+    const { dirname, join } = await import('node:path');
+    const root = join(dirname(import.meta.url.replace('file://', '')), '..');
+
+    const read = (p: string) => JSON.parse(readFileSync(join(root, p), 'utf8')) as
+      Record<string, Record<string, string>>;
+
+    const bundled = read('node_modules/expo/bundledNativeModules.json') as
+      unknown as Record<string, string>;
+    const declared = read('package.json')['dependencies']!;
+
+    // Sanity: an empty or unreadable manifest would make this pass vacuously.
+    expect(Object.keys(bundled).length).toBeGreaterThan(20);
+    expect(bundled['expo-router']).toBeTruthy();
+
+    const drifted = Object.entries(declared)
+      .filter(([name]) => bundled[name] !== undefined)
+      .filter(([name, range]) => range !== bundled[name])
+      .map(([name, range]) => `${name}: declared ${range}, SDK pins ${bundled[name]}`);
+
+    expect(drifted, 'run `npx expo install --fix`, or copy the pinned ranges')
+      .toEqual([]);
+  });
+});
