@@ -712,6 +712,196 @@ describe('a school can run an import instead of typing four hundred learners', (
   });
 });
 
+// ---------------------------------------------------------------------------
+
+describe('an exam can be set, marked and published through the product', () => {
+  let scaleId = '';
+  let assessmentId = '';
+  let runId = '';
+  let markedEnrolment = '';
+  let absentEnrolment = '';
+  let offeringId = '';
+  let termId = '';
+
+  beforeAll(async () => {
+    // Two learners in IX-B, so this suite's marks do not collide with the
+    // section the other blocks are moving people in and out of.
+    for (const [given, adm] of [['Kiran', 'WS-EX-1'], ['Tara', 'WS-EX-2']] as const) {
+      const learner = await createLearnerRaw(tenant.orgId, given, adm);
+      const e = await owner((c) => c.query<{ id: string }>(
+        `INSERT INTO enrollment (tenant_id, student_id, section_id, academic_year_id)
+         VALUES ($1, $2, $3, $4) RETURNING id`,
+        [tenant.orgId, learner.studentId, sectionB, academicYearId]));
+      if (adm === 'WS-EX-1') markedEnrolment = e.rows[0]!.id;
+      else absentEnrolment = e.rows[0]!.id;
+    }
+
+    const made = await owner(async (c) => {
+      const t = await c.query<{ id: string }>(
+        `SELECT id FROM term WHERE academic_year_id = $1 ORDER BY starts_on LIMIT 1`,
+        [academicYearId]);
+      const co = await c.query<{ id: string }>(
+        `INSERT INTO course_offering
+           (tenant_id, class_group_id, section_id, subject_id, term_id,
+            primary_teacher_staff_id)
+         SELECT $1, s.class_group_id, $2, sub.id, $3, $4
+           FROM section s, subject sub
+          WHERE s.id = $2 LIMIT 1
+         RETURNING id`,
+        [tenant.orgId, sectionB, t.rows[0]!.id, officeStaffId]);
+      return { termId: t.rows[0]!.id, offeringId: co.rows[0]!.id };
+    });
+    termId = made.termId;
+    offeringId = made.offeringId;
+  }, 60_000);
+
+  it('refuses a grading scale with a gap in it', async () => {
+    // A band ending at 39 and the next starting at 41 leaves every learner on
+    // exactly 40 with no grade at all.
+    const gappy = await POST('/v1/assessments/scales', officeToken, {
+      academicUnitId: tenant.unitId, name: 'Gappy', kind: 'letter',
+      bands: [
+        { label: 'A', lower: 41, upper: 100, isPass: true },
+        { label: 'F', lower: 0, upper: 39, isPass: false },
+      ],
+    });
+    expect(gappy.status).toBe(201);
+    const published = await POST(
+      `/v1/assessments/scales/${gappy.body.data.id}/publish`, officeToken);
+    expect(published.status).toBe(409);
+    expect(published.body.error.code).toBe('scale_has_a_gap');
+  });
+
+  it('publishes a scale that covers the range', async () => {
+    const res = await POST('/v1/assessments/scales', officeToken, {
+      academicUnitId: tenant.unitId, name: 'Standard letter', kind: 'letter',
+      // Bands that touch, stated the way a school states them. The top one
+      // says 100 and means it; the controller is what turns that into a range
+      // containing 100, because a half-open interval is not something anybody
+      // should have to know about to publish a grading scale.
+      bands: [
+        { label: 'F', lower: 0, upper: 40, isPass: false },
+        { label: 'C', lower: 40, upper: 60, isPass: true },
+        { label: 'B', lower: 60, upper: 80, isPass: true },
+        { label: 'A', lower: 80, upper: 100, isPass: true },
+      ],
+    });
+    expect(res.status).toBe(201);
+    scaleId = res.body.data.id;
+    expect((await POST(`/v1/assessments/scales/${scaleId}/publish`, officeToken)).status)
+      .toBe(201);
+  });
+
+  it('will not take marks against an assessment nobody opened', async () => {
+    const created = await POST('/v1/assessments', officeToken, {
+      courseOfferingId: offeringId, termId, name: 'Term 1 exam', kind: 'exam',
+      maxMarks: 100, weightPercent: 100, gradingScaleId: scaleId,
+    });
+    expect(created.status).toBe(201);
+    assessmentId = created.body.data.id;
+    expect(created.body.data.status).toBe('draft');
+
+    const early = await POST(`/v1/assessments/${assessmentId}/marks`, officeToken, {
+      marks: [{ enrollmentId: markedEnrolment, marks: 72 }],
+    });
+    expect(early.status).toBe(409);
+    expect(early.body.error.code).toBe('assessment_draft');
+  });
+
+  it('hands back a mark sheet with every learner on it, marked or not', async () => {
+    expect((await POST(`/v1/assessments/${assessmentId}/open`, officeToken)).status)
+      .toBe(201);
+
+    const sheet = await GET(`/v1/assessments/${assessmentId}/marks`, officeToken);
+    expect(sheet.status).toBe(200);
+    // The whole class, so a teacher can see who is missing rather than only
+    // who is done.
+    expect(sheet.body.data.map((r: any) => r.enrollment_id).sort())
+      .toEqual([markedEnrolment, absentEnrolment].sort());
+    expect(sheet.body.data.every((r: any) => r.mark_id === null)).toBe(true);
+  });
+
+  it('records an absence as an absence, never as a zero', async () => {
+    const res = await POST(`/v1/assessments/${assessmentId}/marks`, officeToken, {
+      marks: [
+        { enrollmentId: markedEnrolment, marks: 72 },
+        { enrollmentId: absentEnrolment, absent: true },
+      ],
+    });
+    expect(res.status).toBe(201);
+    expect(res.body.data.outcomes.every((o: any) => o.outcome === 'recorded')).toBe(true);
+
+    const stored = await owner((c) => c.query<{
+      marks_obtained: string | null; is_absent: boolean;
+    }>(`SELECT marks_obtained::text, is_absent FROM mark
+         WHERE assessment_id = $1 AND enrollment_id = $2`,
+      [assessmentId, absentEnrolment]));
+    // A zero is a mark of zero and drags an average down. A child who was ill
+    // has no mark at all.
+    expect(stored.rows[0]!.marks_obtained).toBeNull();
+    expect(stored.rows[0]!.is_absent).toBe(true);
+  });
+
+  it('rejects one bad row without losing the rest of the class', async () => {
+    const res = await POST(`/v1/assessments/${assessmentId}/marks`, officeToken, {
+      marks: [
+        { enrollmentId: markedEnrolment, marks: 68 },
+        { enrollmentId: absentEnrolment, marks: 900 },  // out of a hundred
+      ],
+    });
+    expect(res.status).toBe(201);
+    const byEnrolment = new Map(
+      res.body.data.outcomes.map((o: any) => [o.enrollmentId, o.outcome]));
+    expect(byEnrolment.get(markedEnrolment)).toBe('updated');
+    expect(byEnrolment.get(absentEnrolment)).toBe('rejected');
+  });
+
+  it('locks the paper, and offers no way to unlock it', async () => {
+    expect((await POST(`/v1/assessments/${assessmentId}/lock`, officeToken)).status)
+      .toBe(201);
+
+    const after = await POST(`/v1/assessments/${assessmentId}/marks`, officeToken, {
+      marks: [{ enrollmentId: markedEnrolment, marks: 99 }],
+    });
+    expect(after.status).toBe(409);
+    expect(after.body.error.code).toBe('assessment_locked');
+
+    // And there is no route that would put it back. Reopening a locked paper
+    // silently re-grades it; corrections are the path, and they are attributed.
+    const unlock = await POST(`/v1/assessments/${assessmentId}/unlock`, officeToken);
+    expect(unlock.status).toBe(404);
+  });
+
+  it('computes a result run, and will not publish one nobody reviewed', async () => {
+    const computed = await POST('/v1/result-runs', officeToken, {
+      sectionId: sectionB, termId, gradingScaleId: scaleId,
+    });
+    expect(computed.status).toBe(201);
+    runId = computed.body.data.run.id;
+    expect(computed.body.data.lines.length).toBeGreaterThan(0);
+
+    const early = await POST(`/v1/result-runs/${runId}/publish`, officeToken);
+    expect(early.status).toBe(409);
+    expect(early.body.error.code).toBe('not_reviewed');
+  });
+
+  it('refuses to let the person who computed it review their own run', async () => {
+    // The second pair of eyes is the only control between a typo and four
+    // hundred families reading it.
+    const res = await POST(`/v1/result-runs/${runId}/review`, officeToken);
+    expect(res.status).toBeGreaterThanOrEqual(400);
+    expect(res.status).toBeLessThan(500);
+  });
+
+  it('lists the run with what stage it has reached', async () => {
+    const res = await GET(`/v1/result-runs?termId=${termId}`, officeToken);
+    expect(res.status).toBe(200);
+    const row = res.body.data.find((r: any) => r.id === runId);
+    expect(row.status).toBe('computed');
+    expect(row.line_count).toBeGreaterThan(0);
+  });
+});
+
 describe('the hr flag now guards something', () => {
   it('refuses the whole module to a school whose plan excludes it', async () => {
     // Until M32 this decorator was on nothing: M16 sold an `hr` flag, M27

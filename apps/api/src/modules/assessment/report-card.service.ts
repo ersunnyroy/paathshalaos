@@ -35,7 +35,8 @@ const SELECT_CARD = `id, enrollment_id, term_id, version, status, result_run_id,
 export const reportCardService = {
   async createTemplate(
     scope: TenantScope,
-    input: { academicUnitId: string; name: string; board?: string; layout: unknown },
+    input: { academicUnitId: string; name: string;
+             board?: string | undefined; layout: unknown },
   ): Promise<{ id: string; version: number }> {
     return withTenant(scope, async (db) => {
       // A new version rather than an edit, for the same reason cards are
@@ -69,7 +70,7 @@ export const reportCardService = {
    */
   async issueForRun(
     scope: TenantScope,
-    input: { runId: string; templateId?: string },
+    input: { runId: string; templateId?: string | undefined },
   ): Promise<{ created: number; cards: ReportCard[] }> {
     const cards = await withTenant(scope, async (db) => {
       const run = await db.query<{ status: string; term_id: string }>(

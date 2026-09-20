@@ -51,7 +51,8 @@ export const gradingService = {
       kind: ScaleKind;
       bands: Array<{
         label: string; lower: number; upper: number;
-        gradePoint?: number; isPass?: boolean; description?: string;
+        gradePoint?: number | undefined; isPass?: boolean | undefined;
+        description?: string | undefined;
       }>;
     },
   ): Promise<GradingScale> {

@@ -30,6 +30,9 @@ import {
 import { BillingController } from './modules/billing/billing.controller.ts';
 import { MessagingController } from './modules/messaging/messaging.controller.ts';
 import { ImportController } from './modules/import/import.controller.ts';
+import {
+  AssessmentController, ResultRunController,
+} from './modules/assessment/assessment.controller.ts';
 import { FamilyController } from './modules/family/family.controller.ts';
 
 @Module({
@@ -42,6 +45,7 @@ import { FamilyController } from './modules/family/family.controller.ts';
     LearningController, HrController,
     AdmissionsController, EnrollmentController, BillingController,
     MessagingController, ImportController,
+    AssessmentController, ResultRunController,
     FamilyController, MetricsController,
   ],
   providers: [

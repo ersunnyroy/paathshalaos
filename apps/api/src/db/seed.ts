@@ -39,7 +39,7 @@ async function main(): Promise<void> {
       console.log(`${ORG_NAME} already exists. Nothing to do.`);
       console.log(`  tenantId: ${existing.rows[0].id}`);
       await printLogins(c, existing.rows[0].id);
-      await c.query('COMMIT');
+    await c.query('COMMIT');
       return;
     }
 
@@ -752,6 +752,36 @@ async function main(): Promise<void> {
          i === 6 ? 'no_show' : 'boarded', randomUUID(), driverUserId]);
     }
 
+    // ------------------------------------------------------------- an exam
+    //
+    // M32.4 gave the results screen a mark sheet and a compute button, and
+    // both need something to work on. A published grading scale and one open
+    // paper with half the class marked — which is the state a teacher's
+    // afternoon actually looks like.
+    const examScale = await one<{ id: string }>(c,
+      // Drafted, then published AFTER the bands are in: a published scale's
+      // bands are frozen by a trigger, which is the point of the freeze and
+      // was the first thing this seed tripped over.
+      `INSERT INTO grading_scale (tenant_id, academic_unit_id, name, kind)
+       VALUES ($1, $2, 'CBSE-like', 'letter') RETURNING id`,
+      [tenantId, unit.id]);
+    for (const [label, lo, hi, gp, pass] of [
+      ['F', 0, 33, 0, false], ['D', 33, 50, 4, true], ['C', 50, 65, 6, true],
+      ['B', 65, 80, 8, true], ['A', 80, 100.0001, 10, true],
+    ] as Array<[string, number, number, number, boolean]>) {
+      await c.query(
+        // `span` is a numrange, half-open: [lower, upper). That is what makes
+        // the coverage check answerable at all, and why the top band reaches
+        // just past 100.
+        `INSERT INTO grade_band
+           (tenant_id, grading_scale_id, label, span, grade_point, is_pass)
+         VALUES ($1, $2, $3, numrange($4::numeric, $5::numeric, '[)'), $6, $7)`,
+        [tenantId, examScale.id, label, lo, hi, gp, pass]);
+    }
+    await c.query(
+      `UPDATE grading_scale SET is_published = true, published_at = now()
+        WHERE id = $1`, [examScale.id]);
+
     // -------------------------------------------------------- a notice to send
     //
     // M32.3 gave the messages screen a send button, and a picker with nothing
@@ -1028,6 +1058,37 @@ async function main(): Promise<void> {
       }
     }
 
+      if (ninthGroup && signedInTeacherStaffId) {
+      const exam = await one<{ id: string }>(c,
+        `INSERT INTO assessment
+           (tenant_id, course_offering_id, term_id, academic_year_id, name, kind,
+            max_marks, pass_marks, weight_percent, grading_scale_id, status,
+            scheduled_on)
+         VALUES ($1, $2, $3, '00000000-0000-0000-0000-000000000000'::uuid,
+                 'Term 1 examination', 'exam', 100, 33, 60, $4, 'open',
+                 CURRENT_DATE - 4) RETURNING id`,
+        [tenantId, ninthGroup.id, ninthGroup.termId, examScale.id]);
+
+      // Half the class, so the screen shows "marked 5 / 10" rather than a
+      // finished paper or an empty one.
+      const ninthSectionIdsForMarks = new Set(
+        sections.filter((sec) => sec.label.startsWith('Class IX')).map((sec) => sec.id));
+      const ninthEnrolmentsForMarks = enrollments
+        .filter((e) => ninthSectionIdsForMarks.has(e.sectionId)).slice(0, 10);
+
+      for (const [i, enrolment] of ninthEnrolmentsForMarks.slice(0, 5).entries()) {
+        await c.query(
+          `INSERT INTO mark
+             (tenant_id, assessment_id, enrollment_id, marks_obtained, is_absent,
+              entered_by_staff_id)
+           VALUES ($1, $2, $3, $4::numeric, $5, $6)`,
+          // One absence, recorded as an absence: no mark at all, which is the
+          // distinction the whole table is shaped around.
+          [tenantId, exam.id, enrolment.id,
+           i === 4 ? null : String(84 - i * 7), i === 4, signedInTeacherStaffId]);
+      }
+    }
+
     await c.query('COMMIT');
 
     console.log('\nSeeded a demo school.\n');
@@ -1037,7 +1098,8 @@ async function main(): Promise<void> {
     console.log(`  2 bus routes, 12 riders, this morning's run recorded`);
     console.log(`  2 lessons and 3 assignments in Class IX, one already marked`);
     console.log(`  3 leave types, one request awaiting a decision, one teacher away`);
-    console.log(`  an admission form, 2 enquiries, 2 applications, 1 offer out\n`);
+    console.log(`  an admission form, 2 enquiries, 2 applications, 1 offer out`);
+    console.log(`  a published grading scale and a term exam half marked\n`);
     await printLogins(c, tenantId);
   } catch (error) {
     await c.query('ROLLBACK');

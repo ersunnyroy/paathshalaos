@@ -36,11 +36,11 @@ export interface Assessment {
 /** One row of a bulk entry. Exactly one of the three outcomes is expressed. */
 export interface MarkInput {
   enrollmentId: string;
-  marks?: number | string;
-  absent?: boolean;
-  exempt?: boolean;
-  remarks?: string;
-  clientEventId?: string;
+  marks?: number | string | undefined;
+  absent?: boolean | undefined;
+  exempt?: boolean | undefined;
+  remarks?: string | undefined;
+  clientEventId?: string | undefined;
 }
 
 export type MarkOutcome =
@@ -58,8 +58,8 @@ export const assessmentService = {
     input: {
       courseOfferingId: string; termId: string; name: string;
       kind: Assessment['kind']; maxMarks: number | string;
-      weightPercent?: number; passMarks?: number; gradingScaleId?: string;
-      scheduledOn?: string;
+      weightPercent?: number | undefined; passMarks?: number | undefined;
+      gradingScaleId?: string | undefined; scheduledOn?: string | undefined;
     },
   ): Promise<Assessment> {
     const assessment = await withTenant(scope, async (db) => {
@@ -274,8 +274,10 @@ export const assessmentService = {
   async requestCorrection(
     scope: TenantScope,
     input: {
-      markId?: string; assessmentId?: string; enrollmentId?: string;
-      toMarks?: number | string; toAbsent?: boolean; toExempt?: boolean;
+      markId?: string | undefined; assessmentId?: string | undefined;
+      enrollmentId?: string | undefined;
+      toMarks?: number | string | undefined; toAbsent?: boolean | undefined;
+      toExempt?: boolean | undefined;
       reason: string; requestedByStaffId: string;
     },
   ): Promise<{ id: string }> {

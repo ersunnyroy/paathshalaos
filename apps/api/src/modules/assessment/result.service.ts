@@ -83,7 +83,7 @@ export const resultService = {
     scope: TenantScope,
     input: {
       sectionId: string; termId: string; gradingScaleId: string;
-      computedByStaffId: string; requireCompleteWeights?: boolean;
+      computedByStaffId: string; requireCompleteWeights?: boolean | undefined;
     },
   ): Promise<{ run: ResultRun; lines: ResultLine[]; unchanged: boolean }> {
     const outcome = await withTenant(scope, async (db) => {
