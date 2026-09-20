@@ -1,22 +1,46 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import {
   View, Text, TextInput, Pressable, StyleSheet, ActivityIndicator,
 } from 'react-native';
 import { router } from 'expo-router';
-import { signIn, tenantId, apiUrl } from '@/lib/session.ts';
 import { theme } from '@/lib/theme.ts';
 
+/*
+ * Nothing that touches a native module is imported at the top of this file.
+ *
+ * expo-router evaluates EVERY file under `app/` at startup, to build its route
+ * tree. So an import here is an import during module initialisation, before
+ * React exists — and a module that throws there kills the app with
+ * `[runtime not ready]` and no stack, outside the reach of any error boundary.
+ * The session module is loaded inside effects and handlers instead.
+ */
 export default function SignIn() {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  const [where, setWhere] = useState<{ api: string; tenant: string } | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    void (async () => {
+      try {
+        const session = await import('@/lib/session.ts');
+        if (!cancelled) setWhere({ api: session.apiUrl(), tenant: session.tenantId() });
+      } catch (e) {
+        // Thrown into the boundary on the next render, where it is legible.
+        if (!cancelled) setError(e instanceof Error ? e.message : String(e));
+      }
+    })();
+    return () => { cancelled = true; };
+  }, []);
 
   async function submit() {
     setBusy(true);
     setError(null);
     try {
-      await signIn(email.trim(), password);
+      const session = await import('@/lib/session.ts');
+      await session.signIn(email.trim(), password);
       router.replace('/');
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Sign in failed.');
@@ -55,16 +79,12 @@ export default function SignIn() {
       />
 
       {error ? <Text style={styles.error}>{error}</Text> : null}
-      {!tenantId() ? (
+      {where && !where.tenant ? (
         <Text style={styles.error}>
           No school is configured yet. Put the tenant id the seed printed into
           `expo.extra.tenantId` in apps/mobile/app.json, then reload.
         </Text>
       ) : null}
-      {/* Shown always, because "which machine is this app talking to" is the
-          first question when a request fails and the hardest to answer from a
-          phone. */}
-      <Text style={styles.hint}>API: {apiUrl()}</Text>
 
       <Pressable
         style={[styles.button, busy && styles.buttonBusy]}
@@ -75,6 +95,10 @@ export default function SignIn() {
           ? <ActivityIndicator color="#fff" />
           : <Text style={styles.buttonText}>Sign in</Text>}
       </Pressable>
+
+      {/* Always shown: "which machine is this talking to" is the first question
+          when a request fails and the hardest to answer from a phone. */}
+      <Text style={styles.hint}>API: {where?.api ?? 'resolving…'}</Text>
     </View>
   );
 }
@@ -90,11 +114,11 @@ const styles = StyleSheet.create({
     fontSize: 16,
   },
   error: { marginTop: 14, color: theme.critical },
-  hint: { marginTop: 10, fontSize: 12, color: theme.slate, textAlign: 'center' },
   button: {
     marginTop: 24, backgroundColor: theme.teal, borderRadius: 10,
     paddingVertical: 14, alignItems: 'center',
   },
   buttonBusy: { opacity: 0.7 },
   buttonText: { color: '#fff', fontWeight: '700', fontSize: 16 },
+  hint: { marginTop: 12, fontSize: 12, color: theme.slate, textAlign: 'center' },
 });

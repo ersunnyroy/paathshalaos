@@ -6,7 +6,6 @@
  * `@paathshala/offline-queue`, both tested in Node. This file exists so the
  * screens never construct either of them and never see a native module.
  */
-import AsyncStorage from '@react-native-async-storage/async-storage';
 import * as SecureStore from 'expo-secure-store';
 import Constants from 'expo-constants';
 import { createClient, type Client, type Tokens } from '@paathshala/api-client';
@@ -70,7 +69,17 @@ export function api(): Client {
 }
 
 let _queue: OfflineAttendanceQueue | undefined;
-export function queue(): OfflineAttendanceQueue {
+/**
+ * Async because AsyncStorage is imported here rather than at the top of the
+ * file. It is a community native module, not part of the Expo SDK proper, so
+ * whether Expo Go contains it is not something this app controls — and a
+ * module that throws while being imported takes the whole app down before
+ * React exists. Imported inside the function, the same failure surfaces in the
+ * screen that needed it, inside the error boundary.
+ */
+export async function queue(): Promise<OfflineAttendanceQueue> {
+  const { default: AsyncStorage } = await import(
+    '@react-native-async-storage/async-storage');
   _queue ??= new OfflineAttendanceQueue(
     new AsyncQueueStorage(AsyncStorage),
     {

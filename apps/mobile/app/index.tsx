@@ -2,7 +2,6 @@ import { useCallback, useEffect, useState } from 'react';
 import {
   View, Text, FlatList, Pressable, StyleSheet, RefreshControl, ActivityIndicator,
 } from 'react-native';
-import { api, queue, signOut } from '@/lib/session.ts';
 import {
   initialMarks, nextState, recordsFor, summarise, type Learner,
 } from '@/lib/register.ts';
@@ -13,6 +12,18 @@ import { router } from 'expo-router';
 interface Section { id: string; name: string; academic_year_id: string }
 
 const today = () => new Date().toISOString().slice(0, 10);
+
+/*
+ * The session module is loaded here, not imported at the top of the file.
+ *
+ * expo-router evaluates EVERY file under `app/` at startup to build its route
+ * tree, so a top-level import is an import during module initialisation —
+ * before React exists, outside any error boundary, and a throw there is the
+ * `[runtime not ready]` crash with no file and no stack. `register.ts` and
+ * `theme.ts` stay as normal imports: both are plain data and functions with
+ * nothing native behind them.
+ */
+const session = () => import('@/lib/session.ts');
 
 /**
  * The register.
@@ -36,11 +47,12 @@ export default function Register() {
   const load = useCallback(async () => {
     setLoadError(null);
     try {
-      const sections = await api().get<Section[]>('/v1/sections');
+      const client = (await session()).api();
+      const sections = await client.get<Section[]>('/v1/sections');
       const first = sections[0] ?? null;
       setSection(first);
       if (!first) return;
-      const learners = await api().get<Learner[]>(`/v1/students?sectionId=${first.id}`);
+      const learners = await client.get<Learner[]>(`/v1/students?sectionId=${first.id}`);
       setRoll(learners);
       setMarks(initialMarks(learners));
     } catch (e) {
@@ -48,7 +60,7 @@ export default function Register() {
       // cached weeks ago silently omits every child who joined since.
       setLoadError(e instanceof Error ? e.message : 'Could not load the class list.');
     } finally {
-      setPending(await queue().pendingCount());
+      setPending(await (await (await session()).queue()).pendingCount());
     }
   }, []);
 
@@ -58,7 +70,8 @@ export default function Register() {
     if (!section || !roll) return;
     setBusy(true);
     try {
-      const opened = await api().post<{ id: string }>('/v1/attendance/sessions', {
+      const client = (await session()).api();
+      const opened = await client.post<{ id: string }>('/v1/attendance/sessions', {
         sectionId: section.id,
         academicYearId: section.academic_year_id,
         sessionDate: today(),
@@ -66,7 +79,8 @@ export default function Register() {
       });
 
       const records = recordsFor(roll, marks, () => globalThis.crypto.randomUUID());
-      await queue().enqueue({
+      const q = await (await session()).queue();
+      await q.enqueue({
         localId: `${opened.id}:${today()}`,
         serverSessionId: opened.id,
         sectionId: section.id,
@@ -74,8 +88,8 @@ export default function Register() {
         records,
       });
 
-      const result = await queue().flush();
-      const left = await queue().pendingCount();
+      const result = await q.flush();
+      const left = await q.pendingCount();
       setPending(left);
       setNote(summarise(result, left, records.length));
     } catch (e) {
@@ -147,7 +161,12 @@ export default function Register() {
       </Pressable>
 
       <Pressable
-        onPress={() => { void signOut().then(() => router.replace('/sign-in')); }}
+        onPress={() => {
+          void (async () => {
+            await (await session()).signOut();
+            router.replace('/sign-in');
+          })();
+        }}
       >
         <Text style={styles.signOut}>Sign out</Text>
       </Pressable>

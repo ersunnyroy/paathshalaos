@@ -1,7 +1,6 @@
 import { Component, useEffect, useState, type ReactNode } from 'react';
 import { View, Text, ScrollView, StyleSheet } from 'react-native';
 import { Stack, router } from 'expo-router';
-import { StatusBar } from 'expo-status-bar';
 
 /**
  * The shell: show what went wrong, then decide where to start.
@@ -83,7 +82,6 @@ function Gate() {
 export default function RootLayout() {
   return (
     <ErrorBoundary>
-      <StatusBar style="light" />
       <Gate />
     </ErrorBoundary>
   );
