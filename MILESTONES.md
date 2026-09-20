@@ -772,6 +772,34 @@ and the outbox dispatcher are already separate processes, and when a parent asks
 message never arrived, the answer crosses them. Written down as the trigger rather than
 as a "later".
 
+## M24 — backup and restore
+
+The milestone's own definition of done said "a restore drill that has **actually been
+run**, with the time it took written down". So it was, and the numbers are in
+`ops/backup/DRILL.md` rather than described here.
+
+| ID | Part | Status | What it is |
+| --- | --- | --- | --- |
+| M24.1 | A backup that is one | Done | Two files: the roles and the database. The roles are cluster objects and absent from a database dump — a restore without them produces a database whose every `GRANT` names something that does not exist |
+| M24.2 | A restore that refuses to be dangerous | Done | The target must be named and must not exist. No `--force`, no drop. `--exit-on-error`, because pg_restore's default is to report failures and exit zero |
+| M24.3 | A drill that has been run | Done | Backup 0.41 s, restore 1.61 s, on 46 MB / 70 migrations / 186 policies. Verified by content hash per table, by policy count, and by actually querying as the application role with a tenant scope |
+| M24.4 | Point-in-time recovery | **Not done** | Needs WAL archiving, which needs a deployment. Written down as missing rather than implied by the word "backup" |
+
+### The drill was a ritual for about ten minutes
+
+It was written, run, then deliberately broken four ways to check it could fail. Three
+were caught: dropping row-level security, losing three rows, and changing one value
+without changing any count.
+
+The fourth was not. Emptying `roles.sql` entirely — the classic way a backup turns out not
+to have been one — left every check passing, because the roles were already present in the
+cluster being restored into. The drill was confirming a property of the machine it ran on
+rather than of the backup. It now reads the backup *file* for the four `CREATE ROLE`
+statements, which holds whatever cluster it runs against.
+
+A drill that cannot fail is a ritual, and the only way to find out which one you have is
+to break it on purpose. Same rule as the code.
+
 ## The rest of the plan (M20–M31)
 
 The first nineteen milestones were a plan that ran out rather than a plan that finished.
@@ -804,7 +832,7 @@ follow real usage instead of guesses.
 | M21 | The parent app — **done, see above** | The mobile app stops being one screen. Attendance, fees, results and messages for a guardian's own children, readable offline. This is where parents actually live, and today they have nothing |
 | M22 | Deployed, reproducibly | Infrastructure as code for the AWS India region, two environments, secrets that are not in a repository, migrations that run as part of a deploy, and a rollback that has been performed rather than described |
 | M23 | Observability — **done, see above** | Structured logs with a request id that survives across services, metrics, traces, and alerts that fire on the things that would actually hurt — failed migrations, auth error rates, webhook backlog, queue depth |
-| M24 | Backup and restore | Point-in-time recovery, and a **restore drill that has actually been run** with the time it took written down. A backup nobody has restored is a belief, not a backup |
+| M24 | Backup and restore — **partly done, see above** | Point-in-time recovery, and a **restore drill that has actually been run** with the time it took written down. A backup nobody has restored is a belief, not a backup |
 | M25 | Taking money from schools | Subscription invoicing against M16's plans, GST, and one payment provider. M16 deliberately stopped short of this; a metered plan nobody is billed for is a spreadsheet |
 | M26 | Taking money from parents | A real gateway behind M7's mandates and reconciliation — UPI AutoPay and cards. The ledger, the receipts and the settlement matching already exist and have never seen a live rupee |
 
@@ -870,6 +898,7 @@ left to the end.
 | M20 Transport | Done | 111 | 27 mutations verified; 1 severe visibility defect, 1 test passing for the wrong reason, 3 defects outside transport, 1 comment describing an impossible bug |
 | M21 Parent app | Done | 84 | 26 mutations verified; a policy pair that recursed for everyone, 4 tests weaker than they looked, 1 comment borrowing a hazard |
 | M23 Observability | Done | 39 | 12 mutations verified; an interceptor blind to guard refusals, and a backlog gauge reporting a confident zero |
+| M24 Backup and restore | Partly | drill | 4 damaged restores tried, 3 caught — the 4th found a drill that could not fail. PITR still missing |
 
 Two design decisions were made during M2 that are worth carrying forward:
 
