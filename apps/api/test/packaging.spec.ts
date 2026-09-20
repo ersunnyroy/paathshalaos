@@ -19,7 +19,7 @@
  */
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { execFileSync } from 'node:child_process';
-import { existsSync, readdirSync } from 'node:fs';
+import { existsSync, readdirSync, readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import pg from 'pg';
@@ -142,5 +142,31 @@ describe.skipIf(!built)('the compiled build', () => {
     for (const [name, script] of Object.entries(pkg.scripts ?? {})) {
       expect(`${name}: ${script}`).not.toContain('--experimental-strip-types');
     }
+  });
+});
+
+describe('the typecheck covers the tests', () => {
+  it('has a tsconfig that includes test/, and a build that runs it', () => {
+    /*
+     * Twenty-seven spec files had never been typechecked. `tsconfig.json`
+     * excludes `test` — correctly, because that config emits to `dist` and the
+     * tests must not ship — and nothing else picked them up, so a test could
+     * assert against a type that did not exist and still go green. A mutation
+     * that broke a shared type failed nothing, which is how it surfaced.
+     *
+     * Three real errors were hiding there, including a test reading a JWT claim
+     * the declared type denied existed.
+     */
+    const test = JSON.parse(
+      readFileSync(new URL('../tsconfig.test.json', import.meta.url), 'utf8')) as
+      { include: string[]; compilerOptions: { noEmit: boolean } };
+    expect(test.include).toContain('test/**/*.ts');
+    expect(test.compilerOptions.noEmit).toBe(true);
+
+    const pkg = JSON.parse(
+      readFileSync(new URL('../package.json', import.meta.url), 'utf8')) as
+      { scripts: Record<string, string> };
+    expect(pkg.scripts['build'], 'the build must typecheck the tests')
+      .toContain('tsconfig.test.json');
   });
 });

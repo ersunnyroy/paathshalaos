@@ -1,13 +1,13 @@
-import type { AttendanceState, MarkInput, RecordOutcome } from './attendance.service.ts';
+import type { AttendanceState, MarkInput, RecordOutcome } from './types.ts';
 
 /**
  * The client-side offline queue.
  *
- * Lives in the API package for now so it is tested against the same types the
- * server uses; it moves to a shared package when the React Native app lands. It
- * has NO dependency on React Native, SQLite or fetch — storage and transport are
- * injected — which is what makes the conflict behaviour testable in Node rather
- * than only on a device in a basement classroom.
+ * Shared by every client: the web app today, the React Native app when it
+ * lands. It has NO dependency on React Native, IndexedDB, SQLite or fetch —
+ * storage and transport are injected — which is what makes the conflict
+ * behaviour testable in Node rather than only on a device in a basement
+ * classroom.
  */
 
 export interface QueuedSession {

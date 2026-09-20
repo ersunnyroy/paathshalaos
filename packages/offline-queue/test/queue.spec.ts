@@ -10,8 +10,8 @@ import { randomUUID } from 'node:crypto';
 import {
   OfflineAttendanceQueue, InMemoryQueueStorage, MAX_QUEUE_AGE_DAYS,
   type SyncTransport, type QueuedSession,
-} from '../src/modules/attendance/offline-queue.ts';
-import type { RecordOutcome, MarkInput } from '../src/modules/attendance/attendance.service.ts';
+} from '@paathshala/offline-queue';
+import type { RecordOutcome, MarkInput } from '@paathshala/offline-queue';
 
 let storage: InMemoryQueueStorage;
 let calls: Array<{ sessionId: string; records: MarkInput[] }>;

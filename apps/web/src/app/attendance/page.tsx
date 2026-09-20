@@ -2,8 +2,9 @@
 
 import { useCallback, useEffect, useState } from 'react';
 import { Shell, PageHead } from '../shell';
-import { Tile, Panel, Empty, SkeletonRows, Avatar, Pill, Toast, Icon } from '@/components/ui';
+import { Avatar, Empty, Icon, Panel, Pill, SkeletonRows, Tile, Toast } from '@/components/ui';
 import { apiGet, apiPost } from '@/lib/api';
+import { attendanceQueue, buildRecords, flushWhenOnline } from '@/lib/offline';
 
 interface Section {
   id: string; section_name: string; class_name: string;
@@ -40,6 +41,7 @@ export default function AttendancePage() {
   const [error, setError] = useState<string | null>(null);
   const [toast, setToast] = useState<{ message: string; tone?: 'bad' } | null>(null);
   const [busy, setBusy] = useState(false);
+  const [pending, setPending] = useState(0);
 
   useEffect(() => {
     apiGet<Section[]>('/v1/sections')
@@ -92,10 +94,25 @@ export default function AttendancePage() {
     setMarks(Object.fromEntries(roll.map((s) => [s.id, state])));
   }
 
+  useEffect(() => {
+    const queue = attendanceQueue((path, body) => apiPost(path, body));
+    return flushWhenOnline(queue, setPending);
+  }, []);
+
   async function submit() {
     if (!section) return;
     setBusy(true);
     setError(null);
+
+    // Every record gets its client event id HERE, before anything touches the
+    // network, and never gets another one. That is what makes a retry a replay:
+    // the server has been idempotent on this key since M6, and until now the
+    // web client never sent one, so a flaky connection double-marked the class.
+    const records = buildRecords(
+      roll.filter((s) => s.enrollment_id)
+        .map((s) => ({ studentId: s.id, state: marks[s.id] ?? 'present' })),
+    );
+
     try {
       let sessionId = existing?.id;
       if (!sessionId) {
@@ -108,26 +125,34 @@ export default function AttendancePage() {
         sessionId = opened.id;
       }
 
-      const result = await apiPost<{ outcomes: Array<{ status: string }> }>(
-        `/v1/attendance/sessions/${sessionId}/marks`,
-        {
-          records: roll
-            .filter((s) => s.enrollment_id)
-            .map((s) => ({ studentId: s.id, state: marks[s.id] ?? 'present' })),
-        },
-      );
-
-      const applied = result.outcomes.filter((o) => o.status === 'applied').length;
-      const already = result.outcomes.filter((o) => o.status === 'already_applied').length;
-      const other = result.outcomes.length - applied - already;
-      setToast({
-        message:
-          `${applied} recorded` +
-          (already ? `, ${already} already on record` : '') +
-          (other ? `, ${other} needing attention` : '') + '.',
+      // Queue first, sync second. The teacher's job is done the moment the roll
+      // is in the queue; whether the network was there is our problem.
+      const queue = attendanceQueue((path, body) => apiPost(path, body));
+      await queue.enqueue({
+        localId: `${sessionId}:${date}`,
+        serverSessionId: sessionId,
+        sectionId: section.id,
+        sessionDate: date,
+        records,
       });
+
+      const result = await queue.flush();
+      const left = await queue.pendingCount();
+      setPending(left);
+
+      setToast(
+        result.synced > 0 && left === 0
+          ? { message: `${records.length} recorded.` }
+          : result.conflicted > 0 || result.corrections > 0
+            ? { message: 'Saved. Some marks need attention — another device got '
+                + 'there first, or the date is past the correction bound.', tone: 'bad' }
+            : { message: `Saved on this device. ${records.length} marks will sync `
+                + 'when you are back online.' },
+      );
       refresh();
     } catch (e) {
+      // Opening the session is the only step that can still fail outright: the
+      // marks themselves are in the queue by then and are never lost here.
       setToast({ message: e instanceof Error ? e.message : 'Could not save.', tone: 'bad' });
     } finally {
       setBusy(false);
@@ -140,6 +165,14 @@ export default function AttendancePage() {
         title="Attendance"
         lede="Everyone starts present. Mark the exceptions — that is what a register actually is."
       >
+        {/* A teacher must never be unaware they are holding unsynced work.
+            An invisible queue is how a day of attendance quietly disappears
+            when a phone is replaced. */}
+        {pending > 0 ? (
+          <Pill tone="warning">
+            {pending} {pending === 1 ? 'register' : 'registers'} waiting to sync
+          </Pill>
+        ) : null}
         <input type="date" value={date} onChange={(e) => setDate(e.target.value)}
                aria-label="Date" />
         <select value={sectionId} onChange={(e) => setSectionId(e.target.value)}

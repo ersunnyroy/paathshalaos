@@ -31,7 +31,7 @@ SQL-level invariants are mutated by running `ALTER POLICY` / `CREATE OR REPLACE 
 against the live database. Editing an already-applied migration file does nothing — the
 runner has a checksum guard and will refuse to start instead.
 
-Tests currently: **566 passing, 64 migrations.** If that number drops, something regressed.
+Tests currently: **582 passing across three packages** (api 557, offline-queue 12, web 13), 64 migrations. If that number drops, something regressed.
 
 ## Architecture you must know before touching anything
 
@@ -109,6 +109,13 @@ Adminer is on **:8081** for browsing the schema; `SCHEMA.md` is the written vers
 - **A direct-run guard using `argv[1].endsWith('x.ts')` breaks the compiled build** — it
   exits 0 having done nothing. Compare `realpathSync` of both sides.
 - **`head` may be Perl's LWP `head`, not coreutils.** Scripts use `sed -n '1p'`.
+- **`tsconfig.json` does not typecheck `test/`** — it emits to `dist` and the tests must
+  not ship. `tsconfig.test.json` does, and the build runs it. Adding a test config that
+  skips the tests puts the project back where it was: 27 spec files asserting against
+  types that did not exist.
+- **Assert on behaviour, not on source text.** Two service-worker tests read the file as a
+  string and checked line order; wrapping the guard in `if (false && …)` passed them all.
+  Load the thing and run it.
 - **Service-level tests cannot see a wrong column name in a SQL string.** Endpoints that
   matter are exercised over real HTTP with a real app (`*-http.spec.ts`,
   `platform-entry.spec.ts`) because the first bug of this kind shipped a 500 past 33
@@ -124,10 +131,15 @@ two implementations of the same migration number does not migrate at all.
 ## Layout
 
 ```
-apps/api      NestJS. src/db/migrations (numbered, checksummed), src/modules/*, test/*
-apps/web      Next.js app router. src/app/*, src/lib/api.ts, src/components/ui.tsx
-packages/     shared code
+apps/api                  NestJS. src/db/migrations (numbered, checksummed), src/modules/*, test/*
+apps/web                  Next.js app router. src/app/*, src/lib/api.ts, src/components/ui.tsx
+packages/offline-queue    The attendance queue. No browser, no React Native, no fetch —
+                          storage and transport are injected, so conflict behaviour is
+                          tested in Node. Its vocabulary is contract-tested against the
+                          server's, at compile time and at runtime.
 ```
+
+Each package has its own `vitest`; run all three before calling something done.
 
 Brand colours: teal `#14B8A6`, deep navy `#0F172A`, slate `#334155`, light gray
 `#E2E8F0`, off-white `#F8FAFC`.

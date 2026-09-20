@@ -156,8 +156,12 @@ function recordingProvider(opts: { failOn?: string[] } = {}): SendProvider & {
       if (opts.failOn?.includes(input.channel)) {
         throw new Error(`${input.channel}_unavailable`);
       }
+      // ?? null rather than passing undefined through: the recorder's shape
+      // says `string | null`, and with exactOptionalPropertyTypes those are
+      // genuinely different. The test was only compiling because test files
+      // were excluded from the typecheck.
       sent.push({ channel: input.channel, to: input.to, body: input.body,
-        dlt: input.dltTemplateId });
+        dlt: input.dltTemplateId ?? null });
       return { providerMessageId: `pm_${randomUUID()}` };
     },
   };

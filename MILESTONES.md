@@ -415,6 +415,48 @@ table at all, so the statement is refused before any policy is consulted. The te
 proving the grant while appearing to prove the policy. The privilege is now asserted
 directly, and the migration says which mechanism is the enforcing one.
 
+## M17 — attendance that survives losing the network
+
+**Why this before the React Native app.** The server half of AC-5 has been finished and
+tested since M6: idempotent marks keyed on a client event id, six conflict paths,
+corrections for anything past the bound. What was missing was a client that used any of
+it — the web attendance screen posted straight to the API **with no client event id at
+all**, so a retry on a flaky connection was a second mark rather than a replay. Fixing
+that reaches every cheap Android phone in the country through a browser, with no app
+store, no install friction and no review queue. The Expo app is still the plan; it is not
+the thing standing between a teacher in a basement classroom and a working register.
+
+| ID | Milestone | Status | What shipped |
+| --- | --- | --- | --- |
+| M17.1 | The queue becomes a shared package | Done | `packages/offline-queue`, with no dependency on React Native, IndexedDB, SQLite or `fetch` — storage and transport are injected, so the conflict behaviour is tested in Node. A contract test checks its vocabulary against the server's, at compile time and at runtime |
+| M17.2 | The web client actually queues | Done | Marks are written to IndexedDB **before** anything touches the network, each with a client event id minted once and never regenerated. A teacher's job is finished the moment the roll is in the queue; whether the network was there is our problem |
+| M17.3 | Installable, and loads with no network | Done | A manifest and a service worker that caches the **shell only** |
+
+**The line in the service worker I would defend hardest:** it caches no API response at
+all. Caching `GET /v1/students` is the obvious win and it is wrong — a register built
+from a roll that looks current and is three weeks old silently omits every child who
+joined since, and nobody finds out until a parent asks why their daughter was marked
+absent all month. The shell is cached, data is network-only, and a request that cannot be
+served fails honestly.
+
+**What the mutations found.**
+
+*Twenty-seven spec files had never been typechecked.* `tsconfig.json` excludes `test/` —
+correctly, since it emits to `dist` — and nothing else picked them up, so a test could
+assert against a type that did not exist and still pass. A mutation breaking a shared type
+failed nothing, which is how it surfaced. Three real errors were hiding there, including
+a test reading a JWT claim the declared type denied existed (`verifyAccessToken` now
+returns the registered claims it actually produces, instead of a cast that concealed
+them). `tsconfig.test.json` now covers them and the build runs it.
+
+*Two tests were reading source text instead of running code.* The service-worker tests
+asserted that certain lines appeared in a certain order; wrapping the API guard in
+`if (false && …)` passed every one of them. The worker is now loaded into a sandbox with a
+fake `caches` and `fetch` and its handlers are dispatched, so the assertions are about
+what it does. Likewise the teardown test proved the `stopped` flag while appearing to
+prove the listener was removed — deleting `removeEventListener` changed nothing. It now
+asserts the registration is gone.
+
 ### Deliberately out of scope
 
 - **Payment collection from schools.** Metering and status are here; taking the money is a

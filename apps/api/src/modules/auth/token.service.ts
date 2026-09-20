@@ -37,9 +37,18 @@ export const tokenService = {
       .sign(key);
   },
 
-  async verifyAccessToken(token: string): Promise<AccessTokenClaims> {
+  /**
+   * Returns our claims AND the registered ones jose put there.
+   *
+   * The earlier signature said `Promise<AccessTokenClaims>`, which was a lie the
+   * cast concealed: `exp`, `iat`, `iss` and `aud` are all present at runtime and
+   * invisible to the typechecker, so a test reading `claims.exp` was writing
+   * against a type that denied it existed. Saying so is free and makes the
+   * expiry checkable by anything that needs it.
+   */
+  async verifyAccessToken(token: string): Promise<AccessTokenClaims & JWTPayload> {
     const { payload } = await jwtVerify(token, key, { issuer: ISSUER, audience: AUDIENCE });
-    return payload as unknown as AccessTokenClaims;
+    return payload as unknown as AccessTokenClaims & JWTPayload;
   },
 
   /**

@@ -15,6 +15,7 @@ export const metadata = {
     ],
     apple: '/apple-icon.png',
   },
+  manifest: '/manifest.webmanifest',
 };
 
 export const viewport = {
@@ -38,11 +39,30 @@ export const viewport = {
  */
 const THEME_SCRIPT = `try{var t=localStorage.getItem('paathshala.theme');if(t==='dark'||t==='light'){document.documentElement.dataset.theme=t}}catch(e){}`;
 
+/**
+ * The offline shell.
+ *
+ * Only the shell: the worker caches no API response, deliberately, because a
+ * roll that looks current and is three weeks old is worse than one that will
+ * not load. Attendance marks travel through the IndexedDB queue instead.
+ */
+const SW_SCRIPT = `
+if ('serviceWorker' in navigator) {
+  window.addEventListener('load', function () {
+    navigator.serviceWorker.register('/sw.js').catch(function () {});
+  });
+}`;
+
 export default function RootLayout({ children }: { children: ReactNode }) {
   return (
     <html lang="en-IN" suppressHydrationWarning>
       <head>
         <script dangerouslySetInnerHTML={{ __html: THEME_SCRIPT }} />
+        {/* Registered after load so it never competes with the first paint,
+            and guarded because a browser without service workers must still
+            get a working app — offline is an improvement here, not a
+            requirement. */}
+        <script dangerouslySetInnerHTML={{ __html: SW_SCRIPT }} />
       </head>
       <body>{children}</body>
     </html>
