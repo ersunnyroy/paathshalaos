@@ -63,7 +63,7 @@ const asJob = () => ({ tenantId: tenant.orgId });
 /** Every task key the migration seeds. */
 const SEEDED = [
   'audit.seal', 'retention.applicant_documents', 'ledger.integrity',
-  'files.pending_erasure', 'audit.partitions',
+  'files.pending_erasure', 'files.scan_backlog', 'audit.partitions',
 ];
 
 /**
@@ -439,23 +439,62 @@ describe('what each job actually does', () => {
     }
   });
 
-  it('counts the files it cannot erase, and says it cannot', async () => {
-    // `retention` sets file.deleted_at and M18 said a "separate sweeper"
-    // removes the object. There is no sweeper and there could not be: nothing
-    // in this system has ever opened a connection to object storage.
+  it('reports the erasure backlog, and does nothing with no store configured',
+    async () => {
+      // This test used to assert the job's own confession — *"counted only:
+      // this product has no object-storage client"* — because that was true
+      // and the number could never go down. M37 gave it a client.
+      //
+      // This suite configures none, deliberately: the job must be safe in a
+      // deployment that has no bucket. `eraseDeleted` returns zeros rather
+      // than throwing, and the backlog is still counted, so the liability is
+      // still visible. Erasing for real is asserted over HTTP against a live
+      // S3 server in `write-surface-http.spec`.
+      await admin.query(
+        `INSERT INTO file (tenant_id, bucket, object_key, mime_type, size_bytes,
+                           sha256, deleted_at)
+         VALUES ($1, 'b', $2, 'image/png', 1024, repeat('a', 64),
+                 now() - interval '30 days')`,
+        [tenant.orgId, `k-${randomUUID()}`]);
+
+      const detail = await jobs['files.pending_erasure']!(asJob());
+      expect(Number(detail['pending'])).toBeGreaterThan(0);
+      expect(Number(detail['oldestDays'])).toBeGreaterThanOrEqual(29);
+      expect(Number(detail['erased'])).toBe(0);
+      expect(Number(detail['failed'])).toBe(0);
+    });
+
+  it('counts a file held back by a legal hold separately from the backlog',
+    async () => {
+      // A held file is not a backlog; it is a file somebody has decided must
+      // stay. Folding it into `pending` would make an operator chase a number
+      // that is supposed to sit there.
+      await admin.query(
+        `INSERT INTO file (tenant_id, bucket, object_key, mime_type, size_bytes,
+                           sha256, deleted_at, legal_hold)
+         VALUES ($1, 'b', $2, 'image/png', 2048, repeat('b', 64),
+                 now() - interval '400 days', true)`,
+        [tenant.orgId, `k-${randomUUID()}`]);
+
+      const detail = await jobs['files.pending_erasure']!(asJob());
+      expect(Number(detail['legalHold'])).toBeGreaterThan(0);
+      // ...and it does not drag the "oldest" figure with it, which would make
+      // the backlog look four hundred days stale forever.
+      expect(Number(detail['oldestDays'])).toBeLessThan(400);
+    });
+
+  it('counts uploads that are stored and not yet cleared', async () => {
+    // 0017: nothing is served until a scan has cleared it. With no CLAMD_HOST
+    // this climbs forever, and that is the point — a deployment without a
+    // scanner should look like it is missing one.
     await admin.query(
-      `INSERT INTO file (tenant_id, bucket, object_key, mime_type, size_bytes,
-                         sha256, deleted_at)
-       VALUES ($1, 'b', $2, 'image/png', 1024, repeat('a', 64),
-               now() - interval '30 days')`,
+      `INSERT INTO file (tenant_id, bucket, object_key, mime_type, size_bytes, sha256)
+       VALUES ($1, 'b', $2, 'application/pdf', 512, repeat('c', 64))`,
       [tenant.orgId, `k-${randomUUID()}`]);
 
-    const detail = await jobs['files.pending_erasure']!(asJob());
+    const detail = await jobs['files.scan_backlog']!(asJob());
     expect(Number(detail['pending'])).toBeGreaterThan(0);
-    expect(Number(detail['oldestDays'])).toBeGreaterThanOrEqual(29);
-    // The honesty is part of the record, so a reader of the run history is not
-    // left wondering why the number never goes down.
-    expect(String(detail['note'])).toMatch(/no object-storage client/i);
+    expect(detail['scannerConfigured']).toBe(false);
   });
 
   it('catches an imbalance that went round the balance trigger', async () => {

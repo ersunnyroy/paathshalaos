@@ -2105,6 +2105,144 @@ have not bought, six reached only by the suite, five internal seams. The
 in M34 and the least accurate.
 
 
+## M37 — the first bytes
+
+The state doc named this as the biggest gap with no owner: *"nothing in this
+system has ever opened a connection to object storage."*
+
+`file` has existed since 0017 with a bucket, an object key, a digest, a scan
+state and a legal hold. `application_document` references it. M36's admissions
+test had to insert a row by hand to have anything to attach. And
+`files.pending_erasure` had been running nightly since M33 reporting a number
+that could not go down, with the reason written into its own run record:
+
+> counted only: this product has no object-storage client
+
+A school could not upload a birth certificate.
+
+| ID | Sub-milestone | Status | What shipped |
+| --- | --- | --- | --- |
+| M37.1 | An S3-compatible store | Done | Presigned upload and download, content-addressed keys, idempotent delete |
+| M37.2 | The file lifecycle | Done | Ask → PUT → confirm → serve → delete → erase, over HTTP |
+| M37.3 | The scan gate 0017 asked for | Done | A ClamAV INSTREAM client, ninety lines and no dependency |
+| M37.4 | The job that counted a liability | Done | It now removes it, and reports what is left |
+| M37.5 | A local setup that can store a file | Done | MinIO and ClamAV in compose, credentials asserted to match |
+
+### Presigned, not proxied
+
+The bytes never pass through the API. It signs a URL and steps out of the way.
+
+Proxying would be less code and is the wrong trade: four hundred admission
+scans on the first Monday of April is four hundred multi-megabyte bodies
+sharing an event loop with the attendance register at 8:45am, each holding a
+connection for as long as the slowest phone on the school's wifi takes. What
+the API keeps is the decision — *may this caller have a URL for this object* —
+which is a policy question and stays on the tenant connection under row-level
+security.
+
+The cost is that a client can walk away between the PUT and the confirm,
+leaving a row `pending` with bytes behind it. That is visible: a new
+`files.scan_backlog` job counts exactly this.
+
+### `content-type` was not being signed
+
+Written as a test assertion on the signed URL rather than on a rejection, and
+it failed immediately:
+
+```
+expected 'content-length;host' to contain 'content-type'
+```
+
+The AWS SDK signs `content-length` into a presigned PUT by default and does
+**not** sign `content-type`. So the mime allowlist in the controller was
+decoration — a client asks for a URL saying `application/pdf`, PUTs
+`text/html`, and the store holds an HTML file under a type nobody chose.
+
+Fixed with `signableHeaders`. It shows up in no other way: every ordinary
+upload works identically with or without it.
+
+### Tested against a real S3 server, and a real clamd conversation
+
+`s3rver` speaks the S3 protocol in-process, so the presigned URLs in this suite
+are signed by the AWS SDK and served by an implementation that was not written
+to agree with it. A hand-written mock would accept whatever the SDK sent and
+prove nothing about whether a URL is valid, which is the only interesting
+question about a presigner.
+
+It does **not** verify SigV4 — it is a fake store, not a fake IAM. So the two
+assertions that wanted to be "the store refuses a mismatched body" are instead
+about the request this code produces, and the suite says so where it matters:
+that AWS then enforces the signed headers is S3's documented contract and is
+**not publicly verified here**.
+
+The scanner tests run against a socket server that implements INSTREAM
+properly — `zINSTREAM\0`, length-prefixed chunks, a zero length to finish, one
+NUL-terminated line back — and answers `FOUND` for the EICAR string. That is
+enough to catch a client that mis-frames a chunk, which a mock returning "OK"
+would not.
+
+The EICAR string is assembled from two halves rather than written out, because
+a literal in a source file is a literal a real scanner quarantines, and this
+repository has to be checkable out on a machine running one.
+
+### No scanner means nothing is served, and that is the feature
+
+0017's comment said it: *"a file that skipped the scanner must not be
+downloadable because somebody forgot to set a flag."*
+
+With no `CLAMD_HOST`, every upload stays `pending` and nothing is served. That
+is useless on purpose — a deployment without a scanner should look like it is
+missing one. The alternative, a flag that marks everything clean, is precisely
+what that default was chosen to prevent, and the person who sets it will not be
+the person who discovers what it did.
+
+A scanner that is *down* is the same answer for the same reason: `failed`
+leaves the row pending. Anything that resolved to `clean` because a daemon was
+restarting would serve an unscanned file.
+
+### Four things can go wrong with an upload and each gets its own answer
+
+"Upload failed" is the message that makes somebody try the same file six times.
+The object is not there yet; it is the wrong size; its digest does not match;
+it is infected. The bytes are read **once** and both hashed and scanned from
+that one buffer — reading twice would let a file pass the digest check and be
+scanned as something else.
+
+A file that fails the digest check is removed from the store. A file that fails
+the *scan* is not: the row is marked infected and the bytes stay until the
+ordinary erasure path takes them, because "what exactly did somebody try to
+upload" is a question an incident asks and an immediate delete answers with
+nothing.
+
+### The row outlives its bytes
+
+`deleted_at` says a school asked for the file to be gone. `erased_at` says the
+store no longer has it. They are days apart by design: marking is transactional
+and happens in the request, erasing is a job that can be interrupted and
+repeated.
+
+The row is not deleted when the bytes are. A retention policy has to be able to
+show that something was there and is not, and a sweep that removed rows could
+not tell "erased" from "never existed" — it would run against the same object
+forever, or lose the ability to prove it ever ran. 0086 adds a CHECK so bytes
+cannot be gone for a file that is still live.
+
+Legal hold is skipped by the query, not by a branch. Litigation outranks a
+retention schedule, and a predicate is harder to forget than an `if`.
+
+### Where a file lives is derived, never supplied
+
+`tenants/<uuid>/ab/cd/<sha256>` — content-addressed, matching 0017's
+`file_tenant_sha256_key`, so the same document uploaded twice is one row and
+one object. A key built from an uploaded filename is a path the uploader
+controls: `../` escapes the prefix on any store that normalises, and a name in
+a right-to-left script can read as one thing and address another.
+
+The two-level fan-out is not decoration. Any S3-compatible store a school
+self-hosts is usually a filesystem underneath, and a directory with four
+hundred thousand entries is slow in a way that is hard to diagnose later.
+
+
 ## The rest of the plan (M20–M31)
 
 The first nineteen milestones were a plan that ran out rather than a plan that finished.

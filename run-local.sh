@@ -148,6 +148,15 @@ DATABASE_HEALTH_URL=postgres://paathshala_health:$PG_PW@localhost:$PG_PORT/paath
 DATABASE_PLATFORM_URL=postgres://paathshala_platform:$PG_PW@localhost:$PG_PORT/paathshala
 JWT_SECRET=local-development-only-secret-at-least-32-characters
 REDIS_URL=redis://localhost:$REDIS_PORT
+OBJECT_STORE_BUCKET=paathshala
+OBJECT_STORE_ENDPOINT=http://localhost:9000
+OBJECT_STORE_ACCESS_KEY_ID=paathshala
+OBJECT_STORE_SECRET_ACCESS_KEY=paathshala-local-only
+OBJECT_STORE_FORCE_PATH_STYLE=true
+# Uncomment once clamav reports healthy — it downloads a few hundred megabytes
+# of signatures on first start. Until then uploads are stored and not served,
+# which is 0017's rule working rather than a bug.
+# CLAMD_HOST=localhost
 PORT=3001
 NODE_ENV=development
 WEB_ORIGINS=http://localhost:3000
@@ -160,6 +169,20 @@ else
   # block on the health url, so a file that had that and not the platform one
   # was "left alone" straight into a failure.
   added=""
+  # Object storage, added to an .env written before M37 existed. Same reason as
+  # the roles below: a file missing one variable refuses to boot on a
+  # validation error, and "left alone" straight into a failure is the worst
+  # kind of helpful.
+  if ! grep -q "OBJECT_STORE_BUCKET" apps/api/.env; then
+    cat >> apps/api/.env <<'STORE'
+OBJECT_STORE_BUCKET=paathshala
+OBJECT_STORE_ENDPOINT=http://localhost:9000
+OBJECT_STORE_ACCESS_KEY_ID=paathshala
+OBJECT_STORE_SECRET_ACCESS_KEY=paathshala-local-only
+OBJECT_STORE_FORCE_PATH_STYLE=true
+STORE
+    added="$added OBJECT_STORE_*"
+  fi
   for role in health platform; do
     var="DATABASE_$(printf '%s' "$role" | tr '[:lower:]' '[:upper:]')_URL"
     if ! grep -q "$var" apps/api/.env; then

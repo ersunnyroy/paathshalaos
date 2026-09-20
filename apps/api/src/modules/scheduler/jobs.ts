@@ -16,6 +16,8 @@
 import type { TenantScope } from '../../db/tenant.ts';
 import { withTenant } from '../../db/tenant.ts';
 import { withMaintenance } from '../../db/maintenance.ts';
+import { fileService } from '../files/file.service.ts';
+import { scanner } from '../../storage/scanner.ts';
 import { retentionService } from '../admissions/retention.service.ts';
 import { ledgerService } from '../billing/ledger.service.ts';
 import { auditService } from '../audit/audit.service.ts';
@@ -160,25 +162,83 @@ export const jobs: Record<string, Job> = {
    * school has promised to delete and has not is exactly that. Closing it needs
    * an object-storage adapter, which belongs with M22's deployment work.
    */
+  /**
+   * Erases the bytes behind files a school has deleted.
+   *
+   * This job used to COUNT them, and its own run record said why: *"counted
+   * only: this product has no object-storage client"*. It had been running
+   * nightly since M33, reporting a number that could never go down, because
+   * nothing in this product had ever opened a connection to an object store.
+   * M37 gave it one.
+   *
+   * `withMaintenance`, not `withTenant`: `file` is staff-only under 0020, a job
+   * has no actor, and through the ordinary path this sweep sees nothing and
+   * reports success having erased nothing — every night, for years.
+   *
+   * Files under legal hold are skipped by the query, not by a branch here.
+   * Litigation outranks a retention schedule, and a predicate is harder to
+   * forget than an `if`.
+   */
   'files.pending_erasure': async (scope) => withMaintenance(scope.tenantId, async (db) => {
+    const swept = await fileService.eraseDeleted(db, scope.tenantId);
+
     const { rows: [row] } = await db.query<{
-      pending: string; oldest_days: string | null; bytes: string;
+      pending: string; oldest_days: string | null; bytes: string; held: string;
     }>(
-      `SELECT count(*)::text AS pending,
-              floor(extract(epoch FROM now() - min(deleted_at)) / 86400)::text AS oldest_days,
-              COALESCE(sum(size_bytes), 0)::text AS bytes
+      `SELECT count(*) FILTER (WHERE legal_hold = false)::text AS pending,
+              floor(extract(epoch FROM now()
+                    - min(deleted_at) FILTER (WHERE legal_hold = false)) / 86400)::text
+                AS oldest_days,
+              COALESCE(sum(size_bytes) FILTER (WHERE legal_hold = false), 0)::text AS bytes,
+              count(*) FILTER (WHERE legal_hold)::text AS held
          FROM file
         WHERE tenant_id = app_current_tenant_id()
-          AND deleted_at IS NOT NULL AND legal_hold = false`);
+          AND deleted_at IS NOT NULL AND erased_at IS NULL`);
     return {
+      ...swept,
+      // What is LEFT after this run, which is the number an operator watches.
+      // It should be zero, or it should be the count of things the store
+      // refused — and `failed` above says which.
       pending: Number(row?.pending ?? 0),
       oldestDays: row?.oldest_days === null || row?.oldest_days === undefined
         ? null : Number(row.oldest_days),
       bytes: Number(row?.bytes ?? 0),
-      // Not a status the job can improve. Stated in the record so that a
-      // reader of the run history is not left wondering why the number never
-      // goes down.
-      note: 'counted only: this product has no object-storage client',
+      // Reported separately rather than folded into `pending`. A held file is
+      // not a backlog; it is a file somebody has decided must stay.
+      legalHold: Number(row?.held ?? 0),
+    };
+  }),
+
+  /**
+   * How many uploads are stored and unserved, and for how long.
+   *
+   * A file is `pending` until something has scanned it, and nothing is served
+   * until then — 0017's rule, and M37 finally built something that can satisfy
+   * it. A deployment with no `CLAMD_HOST` accumulates these forever, which is
+   * deliberate: it should look like it is missing a scanner rather than quietly
+   * serving unscanned files.
+   *
+   * So this number is read two ways and both are useful. Climbing steadily
+   * with no scanner configured is the expected shape. Climbing with one
+   * configured means clamd is down or slow, and the oldest age says which.
+   */
+  'files.scan_backlog': async (scope) => withMaintenance(scope.tenantId, async (db) => {
+    const { rows: [row] } = await db.query<{
+      pending: string; oldest_hours: string | null; infected: string;
+    }>(
+      `SELECT count(*) FILTER (WHERE virus_scan_state = 'pending')::text AS pending,
+              floor(extract(epoch FROM now()
+                    - min(created_at) FILTER (WHERE virus_scan_state = 'pending'))
+                    / 3600)::text AS oldest_hours,
+              count(*) FILTER (WHERE virus_scan_state = 'infected')::text AS infected
+         FROM file
+        WHERE tenant_id = app_current_tenant_id() AND deleted_at IS NULL`);
+    return {
+      pending: Number(row?.pending ?? 0),
+      oldestHours: row?.oldest_hours === null || row?.oldest_hours === undefined
+        ? null : Number(row.oldest_hours),
+      infected: Number(row?.infected ?? 0),
+      scannerConfigured: scanner().configured,
     };
   }),
 

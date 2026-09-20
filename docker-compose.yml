@@ -32,6 +32,79 @@ services:
       timeout: 5s
       retries: 20
 
+  # Object storage, on http://localhost:9000 (console on 9001).
+  #
+  # MinIO speaks S3, so the same client and the same presigned URLs work here
+  # and against AWS in `ap-south-1` — the only differences are the endpoint and
+  # `OBJECT_STORE_FORCE_PATH_STYLE`, which MinIO needs because virtual-host
+  # addressing would require DNS for every bucket.
+  #
+  # It is here rather than optional because M37's whole finding was that this
+  # product had no object-storage client at all. A local setup where uploads
+  # silently do not work is how that happens again.
+  minio:
+    image: minio/minio:RELEASE.2025-04-22T22-12-26Z
+    container_name: paathshala-minio
+    restart: unless-stopped
+    command: ["server", "/data", "--console-address", ":9001"]
+    environment:
+      MINIO_ROOT_USER: paathshala
+      MINIO_ROOT_PASSWORD: paathshala-local-only
+    ports:
+      - "9000:9000"
+      - "9001:9001"
+    volumes:
+      - miniodata:/data
+    healthcheck:
+      test: ["CMD", "mc", "ready", "local"]
+      interval: 5s
+      timeout: 5s
+      retries: 30
+
+  # Creates the bucket once MinIO is up, then exits.
+  #
+  # A separate one-shot container rather than an entrypoint script, so a
+  # failure to create the bucket is a failed container somebody can see instead
+  # of a log line inside a service that stays green.
+  minio-bucket:
+    image: minio/mc:RELEASE.2025-04-16T18-13-26Z
+    container_name: paathshala-minio-bucket
+    depends_on:
+      minio:
+        condition: service_healthy
+    entrypoint: >
+      /bin/sh -c "
+      mc alias set local http://minio:9000 paathshala paathshala-local-only &&
+      mc mb --ignore-existing local/paathshala &&
+      echo 'bucket paathshala ready'
+      "
+
+  # ClamAV, so the scan gate 0017 wrote into the schema can actually be
+  # satisfied locally.
+  #
+  # `virus_scan_state` defaults to 'pending' and nothing is served until a scan
+  # clears it. Without this container every local upload would store fine and
+  # never be downloadable, which looks like a bug and is the rule working.
+  #
+  # It is slow to start — it downloads signature databases on first run, which
+  # is a few hundred megabytes — so the healthcheck is patient and nothing
+  # depends on it. The API treats a scanner that is not there as "failed", not
+  # as "clean", so the rest of the product works while it warms up.
+  clamav:
+    image: clamav/clamav:1.4
+    container_name: paathshala-clamav
+    restart: unless-stopped
+    ports:
+      - "3310:3310"
+    volumes:
+      - clamavdb:/var/lib/clamav
+    healthcheck:
+      test: ["CMD", "clamdcheck.sh"]
+      interval: 30s
+      timeout: 10s
+      retries: 20
+      start_period: 300s
+
   # A browser client for the database, on http://localhost:8081.
   #
   # Worth having precisely because this schema is unusual: almost every table
@@ -187,3 +260,5 @@ services:
 volumes:
   pgdata:
   redisdata:
+  miniodata:
+  clamavdb:

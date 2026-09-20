@@ -38,6 +38,7 @@ import { AccessController } from './modules/authz/access.controller.ts';
 import { ConsentController } from './modules/people/consent.controller.ts';
 import { AcademicsController } from './modules/academics/academics.controller.ts';
 import { StructureController } from './modules/academics/structure.controller.ts';
+import { FileController } from './modules/files/file.controller.ts';
 import { FamilyController } from './modules/family/family.controller.ts';
 import { LocaleController } from './modules/i18n/locale.controller.ts';
 import { ScheduleController } from './modules/scheduler/schedule.controller.ts';
@@ -59,7 +60,7 @@ import { DomainController, ConsoleBrandingController }
     AdmissionsController, EnrollmentController, BillingController,
     MessagingController, ImportController,
     AssessmentController, ResultRunController,
-    AccessController, ConsentController, AcademicsController, StructureController,
+    AccessController, ConsentController, AcademicsController, StructureController, FileController,
     FamilyController, LocaleController, ScheduleController,
     AttendanceController, EmergencyController, GuardianLinkController,
     DomainController, ConsoleBrandingController,

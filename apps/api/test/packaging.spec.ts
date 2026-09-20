@@ -283,3 +283,73 @@ describe('the build output mirrors the source', () => {
       .toEqual(sql(join(API_ROOT, 'src', 'db', 'migrations')));
   });
 });
+
+/**
+ * Storage ships with the thing that stores.
+ *
+ * M37 gave this product its first object-storage client. The failure mode it
+ * was closing is a feature that exists in code and has nothing to run against,
+ * so shipping the client without shipping a store to point it at would be the
+ * same mistake one layer up: a local setup where uploads silently do not work
+ * is how "nothing has ever opened a connection to object storage" happens
+ * again.
+ *
+ * These assertions are about two files agreeing. `docker-compose.yml` starts
+ * MinIO with a root user and a bucket; `run-local.sh` writes the credentials
+ * into `apps/api/.env`. Nothing checks that at runtime — a mismatch is a
+ * `SignatureDoesNotMatch` on the first upload, which says nothing about which
+ * of the two files is wrong.
+ */
+describe('a local setup can actually store a file', () => {
+  const compose = readFileSync(
+    new URL('../../../docker-compose.yml', import.meta.url), 'utf8');
+  const runLocal = readFileSync(
+    new URL('../../../run-local.sh', import.meta.url), 'utf8');
+
+  it('starts an S3-compatible store and creates the bucket', () => {
+    expect(compose).toMatch(/^ {2}minio:$/m);
+    // A one-shot container rather than an entrypoint script, so a failure to
+    // create the bucket is a failed container somebody can see.
+    expect(compose).toMatch(/^ {2}minio-bucket:$/m);
+    expect(compose).toContain('mc mb --ignore-existing local/paathshala');
+  });
+
+  it('writes credentials that match the ones MinIO is started with', () => {
+    // The mismatch this exists for produces `SignatureDoesNotMatch` on the
+    // first upload, which names neither file.
+    const user = /MINIO_ROOT_USER:\s*(\S+)/.exec(compose)?.[1];
+    const password = /MINIO_ROOT_PASSWORD:\s*(\S+)/.exec(compose)?.[1];
+    expect(user).toBeTruthy();
+    expect(password).toBeTruthy();
+    expect(runLocal).toContain(`OBJECT_STORE_ACCESS_KEY_ID=${user}`);
+    expect(runLocal).toContain(`OBJECT_STORE_SECRET_ACCESS_KEY=${password}`);
+  });
+
+  it('uses path-style addressing, which MinIO requires', () => {
+    // Virtual-host addressing needs DNS for every bucket. Without this the
+    // failure is a 404 that reads like a missing object.
+    expect(runLocal).toContain('OBJECT_STORE_FORCE_PATH_STYLE=true');
+  });
+
+  it('adds the storage block to an .env written before it existed', () => {
+    // Same reason as the database roles: a file missing one variable refuses
+    // to boot on a validation error, and "left alone" straight into a failure
+    // is the worst kind of helpful.
+    expect(runLocal).toContain('if ! grep -q "OBJECT_STORE_BUCKET" apps/api/.env');
+  });
+
+  it('ships a scanner, and does not require it to be up', () => {
+    expect(compose).toMatch(/^ {2}clamav:$/m);
+    // Nothing depends_on it. It downloads a few hundred megabytes of
+    // signatures on first start, and the API treats a scanner that is not
+    // there as "failed" rather than "clean", so the rest of the product works
+    // while it warms up.
+    const services = compose.split(/^ {2}(?=\S)/m);
+    for (const service of services) {
+      if (/^(api|migrate|scheduler|bootstrap):/.test(service)) {
+        expect(service, 'nothing may wait on clamav to start')
+          .not.toContain('clamav');
+      }
+    }
+  });
+});

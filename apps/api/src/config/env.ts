@@ -35,6 +35,48 @@ const schema = z.object({
   REDIS_URL: z.string().url(),
 
   /**
+   * Object storage. Optional, and its absence is a stated condition rather
+   * than a crash.
+   *
+   * Every one of these is optional together: a deployment with no bucket still
+   * boots, still serves every other route, and answers file routes with
+   * `storage_not_configured` — which is the truth and is actionable. Making
+   * them required would mean a school running this on one box has to stand up
+   * S3 before they can take attendance.
+   *
+   * `OBJECT_STORE_ENDPOINT` is for anything S3-compatible: MinIO, Ceph, a
+   * school's own hardware. Left unset, the AWS SDK derives the endpoint from
+   * the region, which is what a real deployment in `ap-south-1` wants.
+   *
+   * `OBJECT_STORE_FORCE_PATH_STYLE` is the one that catches people out.
+   * Virtual-host addressing (`bucket.host/key`) needs DNS for every bucket;
+   * MinIO and most self-hosted stores serve `host/bucket/key` instead, and the
+   * failure without this is a 404 that reads like a missing object.
+   */
+  OBJECT_STORE_BUCKET: z.string().min(1).optional(),
+  OBJECT_STORE_REGION: z.string().min(1).default('ap-south-1'),
+  OBJECT_STORE_ENDPOINT: z.string().url().optional(),
+  OBJECT_STORE_ACCESS_KEY_ID: z.string().min(1).optional(),
+  OBJECT_STORE_SECRET_ACCESS_KEY: z.string().min(1).optional(),
+  OBJECT_STORE_FORCE_PATH_STYLE: z.coerce.boolean().default(false),
+  /** How long an upload or download link is good for. Minutes, not hours. */
+  OBJECT_STORE_URL_TTL_SECONDS: z.coerce.number().int().min(30).max(3600).default(300),
+  /** The largest single upload this deployment will sign for. 50MB. */
+  OBJECT_STORE_MAX_BYTES: z.coerce.number().int().min(1024).default(52_428_800),
+
+  /**
+   * ClamAV, for the scan gate 0017 wrote into the schema.
+   *
+   * `virus_scan_state` defaults to 'pending' and nothing is served until a scan
+   * has cleared it. Unset, that rule stands and every upload stays pending and
+   * undownloadable — which is useless and is *supposed* to look useless, so
+   * that a deployment without a scanner is visibly missing one rather than
+   * quietly serving unscanned files.
+   */
+  CLAMD_HOST: z.string().min(1).optional(),
+  CLAMD_PORT: z.coerce.number().int().positive().default(3310),
+
+  /**
    * Browser origins allowed to call this API, comma-separated.
    *
    * There is no wildcard and no default of '*'. The API serves credentials, and

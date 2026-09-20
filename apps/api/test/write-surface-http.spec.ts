@@ -17,7 +17,12 @@ import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { Test } from '@nestjs/testing';
 import type { INestApplication } from '@nestjs/common';
 import pg from 'pg';
-import { randomUUID } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
+import { createServer, type Server, type Socket } from 'node:net';
+import { mkdtempSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import S3rver from 's3rver';
 import {
   createTenant, destroyTenants, createUser, destroyUsers, grantRole, revokeGrant,
   purgeTestData,
@@ -31,6 +36,11 @@ import { catalogueService } from '../src/modules/billing-plans/catalogue.service
 import { subscriptionService } from '../src/modules/billing-plans/subscription.service.ts';
 import { pool } from '../src/db/pool.ts';
 import { closeRedis } from '../src/db/redis.ts';
+import { makeObjectStore, useObjectStore, type ObjectStore }
+  from '../src/storage/object-store.ts';
+import { makeScanner, useScanner } from '../src/storage/scanner.ts';
+import { objectKey } from '../src/storage/keys.ts';
+import { jobs } from '../src/modules/scheduler/jobs.ts';
 import { authPool } from '../src/db/auth-pool.ts';
 
 const PASSWORD = 'correct-horse-battery';
@@ -94,11 +104,125 @@ async function call(
 const GET = (p: string, t: string) => call('GET', p, t);
 const POST = (p: string, t: string, b?: unknown) => call('POST', p, t, b ?? {});
 
+/* --------------------------------------------------------- M37: storage */
+
+/**
+ * A real S3 server and a real clamd conversation, in-process.
+ *
+ * `s3rver` speaks the S3 protocol including presigned GET and PUT, so the URLs
+ * these tests follow are signed by the AWS SDK and served by an implementation
+ * that was not written to agree with it. It does NOT verify SigV4 — see
+ * `storage.spec.ts`, which says so where it matters.
+ *
+ * The clamd fake implements INSTREAM: `zINSTREAM\0`, length-prefixed chunks, a
+ * zero length to finish, one NUL-terminated line back. It answers FOUND for the
+ * EICAR string and OK for everything else, which is exactly what a real one does.
+ */
+const EICAR = ['X5O!P%@AP[4\\PZX54(P^)7CC)7}$EICAR-STANDARD-',
+               'ANTIVIRUS-TEST-FILE!$H+H*'].join('');
+
+let s3: S3rver | undefined;
+let s3dir = '';
+let testStore: ObjectStore;
+let clamd: Server | undefined;
+const clamdSockets: Socket[] = [];
+
+const BUCKET = 'paathshala-ws-test';
+
+async function startStorage(): Promise<void> {
+  s3dir = mkdtempSync(join(tmpdir(), 'paathshala-ws-s3-'));
+  s3 = new S3rver({
+    port: 0, address: '127.0.0.1', silent: true, directory: s3dir,
+    configureBuckets: [{ name: BUCKET, configs: [] }],
+  });
+  const { port } = await s3.run();
+  testStore = makeObjectStore({
+    bucket: BUCKET, region: 'ap-south-1',
+    endpoint: `http://127.0.0.1:${port}`,
+    accessKeyId: 'S3RVER', secretAccessKey: 'S3RVER',
+    forcePathStyle: true, urlTtlSeconds: 300,
+  });
+  useObjectStore(testStore);
+
+  clamd = createServer((socket) => {
+    clamdSockets.push(socket);
+    let buf = Buffer.alloc(0);
+    let greeted = false;
+    let body = Buffer.alloc(0);
+    socket.on('data', (d) => {
+      buf = Buffer.concat([buf, d]);
+      if (!greeted) {
+        const nul = buf.indexOf(0);
+        if (nul === -1) return;
+        buf = buf.subarray(nul + 1);
+        greeted = true;
+      }
+      for (;;) {
+        if (buf.length < 4) return;
+        const len = buf.readUInt32BE(0);
+        if (len === 0) {
+          socket.write(body.includes('EICAR-STANDARD')
+            ? 'stream: Win.Test.EICAR_HDB-1 FOUND\0'
+            : 'stream: OK\0');
+          return;
+        }
+        if (buf.length < 4 + len) return;
+        body = Buffer.concat([body, buf.subarray(4, 4 + len)]);
+        buf = buf.subarray(4 + len);
+      }
+    });
+  });
+  await new Promise<void>((r) => clamd!.listen(0, '127.0.0.1', r));
+  const addr = clamd.address();
+  useScanner(makeScanner({
+    host: '127.0.0.1',
+    port: typeof addr === 'object' && addr ? addr.port : 0,
+    timeoutMs: 5000,
+  }));
+}
+
+async function stopStorage(): Promise<void> {
+  useObjectStore(undefined);
+  useScanner(undefined);
+  for (const c of clamdSockets) c.destroy();
+  if (clamd) await new Promise<void>((r) => clamd!.close(() => r()));
+  await s3?.close();
+  if (s3dir) rmSync(s3dir, { recursive: true, force: true });
+}
+
+/**
+ * The signed PUT for a file this suite already asked for.
+ *
+ * Re-derived from the row rather than remembered from the ask, because asking
+ * twice for a digest the tenant already holds correctly returns no URL — and a
+ * test that stashed the first one would not notice if that stopped being true.
+ */
+async function uploadFor(fileId: string): Promise<{
+  url: string; headers: Record<string, string>;
+}> {
+  const row = await owner((c) => c.query<{ sha256: string; mime_type: string; size_bytes: string }>(
+    'SELECT sha256, mime_type, size_bytes::text FROM file WHERE id = $1', [fileId]));
+  const f = row.rows[0]!;
+  const { url, headers } = await testStore.presignUpload({
+    key: objectKey(tenant.orgId, f.sha256),
+    contentType: f.mime_type,
+    sizeBytes: Number(f.size_bytes),
+  });
+  return { url, headers };
+}
+
+/** The nightly erasure job, run on demand. */
+async function sweepFiles(tenantId: string): Promise<{ erased: number; failed: number }> {
+  const detail = await jobs['files.pending_erasure']!({ tenantId });
+  return { erased: Number(detail['erased']), failed: Number(detail['failed']) };
+}
+
 const today = () => new Date().toISOString().slice(0, 10);
 const inDays = (n: number) =>
   new Date(Date.now() + n * 86_400_000).toISOString().slice(0, 10);
 
 beforeAll(async () => {
+  await startStorage();
   await purgeTestData('%@ws-test.example');
   tenant = await createTenant('WS');
 
@@ -177,6 +301,7 @@ beforeAll(async () => {
 
 afterAll(async () => {
   await app?.close();
+  await stopStorage();
   await owner((c) => c.query('DELETE FROM platform_admin WHERE user_account_id = $1',
     [platformUser.userId]));
   await destroyTenants([tenant.orgId]);
@@ -2853,5 +2978,270 @@ describe('a guardian can be linked to a learner without a spreadsheet', () => {
     });
     expect(res.status).toBe(403);
     expect(res.body.error.code).toBe('cannot_link_guardian');
+  });
+});
+
+// ---------------------------------------------------------------------------
+
+/**
+ * M37 — the first bytes.
+ *
+ * `file` has existed since 0017: a bucket, an object key, a digest, a scan
+ * state, a legal hold. `application_document` references it. M36's admissions
+ * test had to insert a row by hand to have anything to attach, and the
+ * `files.pending_erasure` job had been running nightly since M33 reporting a
+ * number that could not go down, with the reason in its own run record —
+ * *"counted only: this product has no object-storage client"*.
+ *
+ * A school could not upload a birth certificate.
+ *
+ * This block runs the whole lifecycle over HTTP against a real S3 server and a
+ * real clamd conversation: ask, PUT, confirm, download, delete, erase.
+ */
+describe('a school can upload a document and get it back', () => {
+  const pdf = `%PDF-1.4 a birth certificate ${randomUUID()}`;
+  const sha = createHash('sha256').update(pdf).digest('hex');
+  let fileId = '';
+
+  it('says what this deployment can do before anybody picks a file', async () => {
+    const res = await GET('/v1/files/capabilities', officeToken);
+    expect(res.status).toBe(200);
+    expect(res.body.data.storage).toBe(true);
+    expect(res.body.data.scanner).toBe(true);
+    expect(res.body.data.maxBytes).toBeGreaterThan(0);
+  });
+
+  it('refuses a mime type this product will not hold', async () => {
+    // The store serves whatever it is given, so the allowlist is the decision
+    // about what this product is willing to be a host for.
+    const res = await POST('/v1/files', officeToken, {
+      filename: 'payload.svg', mimeType: 'image/svg+xml',
+      sizeBytes: 10, sha256: sha,
+    });
+    expect(res.status).toBe(422);
+  });
+
+  it('refuses a digest that is not one', async () => {
+    // The object key is derived from this. A malformed digest reaching the
+    // helper is a 500 from a throw rather than a sentence naming the field.
+    const res = await POST('/v1/files', officeToken, {
+      filename: 'x.pdf', mimeType: 'application/pdf',
+      sizeBytes: 10, sha256: 'not-a-digest',
+    });
+    expect(res.status).toBe(422);
+  });
+
+  it('hands back a URL to PUT the bytes to', async () => {
+    const res = await POST('/v1/files', officeToken, {
+      filename: 'birth certificate.pdf', mimeType: 'application/pdf',
+      sizeBytes: Buffer.byteLength(pdf), sha256: sha,
+      classification: 'SENSITIVE',
+    });
+    expect(res.status).toBe(201);
+    fileId = res.body.data.file.id;
+    // Nothing has been scanned, so nothing is servable yet.
+    expect(res.body.data.file.virus_scan_state).toBe('pending');
+    expect(res.body.data.upload.url).toContain('X-Amz-Signature');
+    expect(res.body.data.upload.headers['content-type']).toBe('application/pdf');
+  });
+
+  it('will not serve it before it has been checked', async () => {
+    // 0017's rule, and the reason the column defaults to 'pending': a file
+    // that skipped the scanner must not be downloadable because somebody
+    // forgot to set a flag.
+    const res = await POST(`/v1/files/${fileId}/download-url`, officeToken);
+    expect(res.status).toBe(409);
+    expect(res.body.error.code).toBe('not_cleared');
+  });
+
+  it('will not confirm an upload that has not arrived', async () => {
+    const res = await POST(`/v1/files/${fileId}/confirm`, officeToken);
+    expect(res.status).toBe(409);
+    expect(res.body.error.code).toBe('nothing_uploaded');
+  });
+
+  it('takes the bytes and clears them', async () => {
+    const asked = await POST('/v1/files', officeToken, {
+      filename: 'birth certificate.pdf', mimeType: 'application/pdf',
+      sizeBytes: Buffer.byteLength(pdf), sha256: sha,
+    });
+    // Asking again for a digest this tenant already holds returns the row and
+    // no URL. Re-uploading the same transfer certificate for a sibling is the
+    // ordinary case, not an error.
+    expect(asked.body.data.upload).toBeUndefined();
+    expect(asked.body.data.file.id).toBe(fileId);
+
+    const { url, headers } = await uploadFor(fileId);
+    const put = await fetch(url, { method: 'PUT', body: pdf, headers });
+    expect(put.status).toBe(200);
+
+    const confirmed = await POST(`/v1/files/${fileId}/confirm`, officeToken);
+    expect(confirmed.status).toBe(201);
+    expect(confirmed.body.data.virus_scan_state).toBe('clean');
+  });
+
+  it('serves it under the name somebody typed, as an attachment', async () => {
+    const res = await POST(`/v1/files/${fileId}/download-url`, officeToken);
+    expect(res.status).toBe(201);
+    expect(res.body.data.filename).toBe('birth certificate.pdf');
+
+    const fetched = await fetch(res.body.data.url);
+    expect(fetched.status).toBe(200);
+    expect(await fetched.text()).toBe(pdf);
+    expect(fetched.headers.get('content-disposition')).toMatch(/^attachment;/);
+  });
+
+  it('records the download, not just the upload', async () => {
+    // A signed URL IS the capability. Issuing it is the act, and it is audited
+    // whether or not the browser follows it.
+    const audited = await owner((c) => c.query<{ n: string }>(
+      `SELECT count(*)::text AS n FROM audit_log
+        WHERE tenant_id = $1 AND action = 'file.downloaded' AND resource_id = $2`,
+      [tenant.orgId, fileId]));
+    expect(Number(audited.rows[0]!.n)).toBeGreaterThan(0);
+  });
+
+  it('will not confirm the same upload twice', async () => {
+    const res = await POST(`/v1/files/${fileId}/confirm`, officeToken);
+    expect(res.status).toBe(409);
+    expect(res.body.error.code).toBe('already_confirmed');
+  });
+
+  it('refuses bytes that are not what was promised', async () => {
+    const claimed = `%PDF a different file ${randomUUID()}`;
+    const asked = await POST('/v1/files', officeToken, {
+      filename: 'swapped.pdf', mimeType: 'application/pdf',
+      sizeBytes: Buffer.byteLength(claimed),
+      sha256: createHash('sha256').update(claimed).digest('hex'),
+    });
+    const id = asked.body.data.file.id;
+
+    // Same length, different content — so the size check passes and only the
+    // digest catches it. That is the case worth having a test for.
+    const swapped = claimed.replace(/.$/, claimed.endsWith('x') ? 'y' : 'x');
+    const { url, headers } = await uploadFor(id);
+    expect((await fetch(url, { method: 'PUT', body: swapped, headers })).status).toBe(200);
+
+    const res = await POST(`/v1/files/${id}/confirm`, officeToken);
+    expect(res.status).toBe(422);
+    expect(res.body.error.code).toBe('digest_mismatch');
+
+    // ...and the object is gone, rather than left occupying a key.
+    const gone = await POST(`/v1/files/${id}/download-url`, officeToken);
+    expect(gone.status).toBe(409);
+  });
+
+  it('refuses an infected file and keeps the evidence', async () => {
+    const asked = await POST('/v1/files', officeToken, {
+      filename: 'invoice.pdf', mimeType: 'application/pdf',
+      sizeBytes: Buffer.byteLength(EICAR),
+      sha256: createHash('sha256').update(EICAR).digest('hex'),
+    });
+    const id = asked.body.data.file.id;
+    const { url, headers } = await uploadFor(id);
+    await fetch(url, { method: 'PUT', body: EICAR, headers });
+
+    const res = await POST(`/v1/files/${id}/confirm`, officeToken);
+    expect(res.status).toBe(422);
+    expect(res.body.error.code).toBe('file_infected');
+
+    const row = await owner((c) => c.query<{ virus_scan_state: string }>(
+      'SELECT virus_scan_state FROM file WHERE id = $1', [id]));
+    expect(row.rows[0]!.virus_scan_state).toBe('infected');
+
+    // The bytes stay. "What exactly did somebody try to upload" is a question
+    // an incident asks, and an immediate delete answers it with nothing.
+    const audited = await owner((c) => c.query<{ n: string }>(
+      `SELECT count(*)::text AS n FROM audit_log
+        WHERE tenant_id = $1 AND action = 'file.infected'`, [tenant.orgId]));
+    expect(Number(audited.rows[0]!.n)).toBeGreaterThan(0);
+
+    expect((await POST(`/v1/files/${id}/download-url`, officeToken)).status).toBe(409);
+  });
+
+  it('refuses the whole thing to a guardian', async () => {
+    const res = await POST('/v1/files', guardianToken, {
+      filename: 'x.pdf', mimeType: 'application/pdf', sizeBytes: 10,
+      sha256: createHash('sha256').update('x').digest('hex'),
+    });
+    expect(res.status).toBe(403);
+    expect(res.body.error.code).toBe('staff_only');
+  });
+
+  it('will not delete a file under legal hold', async () => {
+    await owner((c) => c.query(
+      'UPDATE file SET legal_hold = true WHERE id = $1', [fileId]));
+    const res = await POST(`/v1/files/${fileId}/delete`, officeToken,
+      { reason: 'No longer needed.' });
+    // Litigation outranks a retention schedule, and a school told "not found"
+    // during discovery has a problem.
+    expect(res.status).toBe(409);
+    expect(res.body.error.code).toBe('under_legal_hold');
+    await owner((c) => c.query(
+      'UPDATE file SET legal_hold = false WHERE id = $1', [fileId]));
+  });
+
+  it('marks it deleted, with a reason, and keeps the bytes until the sweep',
+    async () => {
+      const bare = await POST(`/v1/files/${fileId}/delete`, officeToken, {});
+      expect(bare.status).toBe(422);
+
+      const res = await POST(`/v1/files/${fileId}/delete`, officeToken,
+        { reason: 'Superseded by a clearer scan.' });
+      expect(res.status).toBe(201);
+
+      // Marked, not erased. Marking is transactional; erasing is a job that
+      // can be interrupted and repeated.
+      const row = await owner((c) => c.query<{
+        deleted_at: string | null; erased_at: string | null;
+      }>('SELECT deleted_at::text, erased_at::text FROM file WHERE id = $1', [fileId]));
+      expect(row.rows[0]!.deleted_at).not.toBeNull();
+      expect(row.rows[0]!.erased_at).toBeNull();
+
+      expect((await GET(`/v1/files/${fileId}`, officeToken)).status).toBe(404);
+    });
+
+  it('the sweep takes the bytes, and can be run twice', async () => {
+    // The job that counted this liability every night since M33 and could not
+    // touch it.
+    const first = await sweepFiles(tenant.orgId);
+    expect(first.erased).toBeGreaterThan(0);
+    expect(first.failed).toBe(0);
+
+    const row = await owner((c) => c.query<{ erased_at: string | null }>(
+      'SELECT erased_at::text FROM file WHERE id = $1', [fileId]));
+    expect(row.rows[0]!.erased_at).not.toBeNull();
+
+    // A run that died halfway must be safe to repeat, and a store that had
+    // already expired an object through its own lifecycle rule must not stop
+    // a row being marked erased.
+    const second = await sweepFiles(tenant.orgId);
+    expect(second.erased).toBe(0);
+    expect(second.failed).toBe(0);
+  });
+
+  it('never sweeps a file under legal hold', async () => {
+    const held = `%PDF held ${randomUUID()}`;
+    const asked = await POST('/v1/files', officeToken, {
+      filename: 'held.pdf', mimeType: 'application/pdf',
+      sizeBytes: Buffer.byteLength(held),
+      sha256: createHash('sha256').update(held).digest('hex'),
+    });
+    const id = asked.body.data.file.id;
+    const { url, headers } = await uploadFor(id);
+    await fetch(url, { method: 'PUT', body: held, headers });
+    await POST(`/v1/files/${id}/confirm`, officeToken);
+
+    // Deleted first, THEN held — the order a real hold arrives in.
+    await POST(`/v1/files/${id}/delete`, officeToken, { reason: 'Routine.' });
+    await owner((c) => c.query('UPDATE file SET legal_hold = true WHERE id = $1', [id]));
+
+    await sweepFiles(tenant.orgId);
+    const row = await owner((c) => c.query<{ erased_at: string | null }>(
+      'SELECT erased_at::text FROM file WHERE id = $1', [id]));
+    // Skipped by the query, not by a branch. A predicate is harder to forget
+    // than an `if`.
+    expect(row.rows[0]!.erased_at).toBeNull();
+    await owner((c) => c.query('UPDATE file SET legal_hold = false WHERE id = $1', [id]));
   });
 });
