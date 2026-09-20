@@ -1956,6 +1956,155 @@ of work — two answers to one question, with the tested one not being the live
 one.
 
 
+## M36 — the first day, which did not work
+
+M35 left nineteen methods on the unreachable list and named the next piece of
+work: fifteen "superseded by SQL written inline in a controller". Reading them
+one at a time, that was true of four.
+
+The other eleven had no route of any kind. Four of them were the academic
+structure, and pulling that thread produced the largest finding in the product.
+
+| ID | Sub-milestone | Status | What shipped |
+| --- | --- | --- | --- |
+| M36.1 | The academic spine | Done | `structureService` — a school can create its own years, terms, programmes, subjects, rooms, classes, sections, offerings and timetable |
+| M36.2 | Guardian links without a spreadsheet | Done | Linking and unlinking a guardian was CSV-only |
+| M36.3 | One query for the learner list | Done | The AC-4 proof and the parent's screen ran different SQL |
+| M36.4 | The rest of the eleven | Done | Import polling, console branding |
+| M36.5 | A search box is not a pattern language | Done | `?q=%` returned the whole school |
+
+### A school could not reach the end of its first day
+
+Auditing every structural table for a writer:
+
+| table | who can write it |
+| --- | --- |
+| `academic_unit` | provisioning, when the console creates the tenant |
+| `academic_year` | **nothing** |
+| `term` | rollover only |
+| `programme` | **nothing** |
+| `subject` | **nothing** |
+| `class_group` | a repository method nothing called, and rollover |
+| `section` | rollover only |
+| `course_offering` | rollover only |
+| `room` | **nothing** |
+
+Rollover copies last year's structure into next year and refuses a source year
+that has none — correctly, and that is the point: **it cannot bootstrap.** The
+only school that has ever had a working structure in this system is the one in
+`seed.ts`.
+
+Fourteen milestones of attendance, assessment, fees, messaging, transport and
+results were built on a foundation with no way in. Every suite that exercised
+them inserted its own rows first, which is precisely why none of them noticed.
+
+The new block in `write-surface-http.spec` walks the first day in order —
+academic unit, year with terms, programme, subject, room, class, section,
+offering, slot, activate — entirely over HTTP. It is the test that would have
+failed on day one.
+
+### Four rules the foreign keys permit and a school would suffer
+
+`structureService` is a service rather than a CRUD wrapper because of these.
+Each is one query and none is expressible as a CHECK constraint without a
+trigger reading four tables.
+
+**A term must sit inside its year.** The schema orders a term's own dates and
+stops two terms overlapping. It says nothing about the year containing them. A
+term ending after its year makes every "which term is it" query disagree with
+every "which year is it" one, and the disagreement surfaces on a report card
+months later.
+
+**A course offering's term must belong to its class group's year.** `term` and
+`class_group` both reference `academic_year` and nothing requires the same one.
+Nothing downstream notices: marks go in, a result run computes, a report card
+is issued for a term the child was not in that class for. It surfaces as a
+parent disputing a grade.
+
+**A schedule slot's section must belong to the offering's class group.** Same
+shape — a lesson appears on the timetable of children who do not take it.
+
+**A room and the section using it must be on the same campus.** The chain is
+section → class group → programme → academic unit → campus, which is exactly
+why nobody checks it by eye, and a room code like `101` exists on every campus.
+
+A fifth rule is in the service and belongs there: a year cannot be made active
+with no terms. An active year is the one being taught, teaching happens in a
+term, and an active year with none is a year in which nothing can be recorded —
+discovered by a teacher trying to set the first exam.
+
+### Two refusals that read correctly and could not run
+
+Wiring the routes made a pair of dormant bugs visible immediately.
+
+`structureService.createClassGroup` and `peopleRepository.linkGuardian` both
+ended with a branch that looked like the refusal:
+
+```ts
+if (!rows[0]) throw ApiError.make('permission_error', 'staff_only', …);
+```
+
+Postgres refuses these INSERTs by **raising** `new row violates row-level
+security policy` (42501), not by returning no row. So the branch could not run,
+and the first real caller got a 500 saying `internal_error` for a system
+working exactly as designed.
+
+Neither had a caller before this milestone, which is why neither was ever
+wrong in practice. Two tests asserted `.rejects.toThrow(/row-level security/i)`
+and passed — on Postgres's own sentence, for as long as nobody was reading it.
+They now assert the named 403.
+
+### The search box that was a pattern language
+
+Writing the assertion for the learner list — not reading the code — found that
+`GET /v1/students?q=%25` returns the whole school. The term went into
+`ILIKE '%' || $1 || '%'` unescaped, so a caller-supplied `%` or `_` is a
+wildcard.
+
+Not a data leak: row-level security still decides which rows are legible, and
+nobody saw a child they could not otherwise see. A filter the caller can switch
+off is duller than that and still real — the screen stops meaning what it says,
+and the list a teacher screenshots is not the list they asked for.
+
+`likeLiteral` already existed, in `console.service.ts`, with a test since M15.
+The console escaped. The learner search and the help-centre search did not. One
+question, three answers, two of them wrong. It now has one home in
+`common/like.ts`, three callers and a unit test against the cases the endpoints
+cannot distinguish.
+
+### One query for the learner list
+
+`peopleRepository.listStudents` had this comment above it:
+
+> `listStudents` is the same SQL for a principal and for a parent. The principal
+> sees the school; the parent sees their two children.
+
+True, and beside the point: `DirectoryController` served `/v1/students` from a
+richer query of its own. The AC-4 proof exercised one statement and a parent's
+screen ran another. The richer query moved into the repository and the
+controller calls it, so the proof and the product are now the same statement.
+
+Same move for `impersonationService.listForTenant` in M35, and the same reason.
+
+### The guard that failed in the direction of the work going well
+
+`reachability.spec` asserted `unreachableMethods().length > 20` — a check that
+the walker is looking at a real codebase. True when written in M34, false this
+milestone, because the number came down to nineteen.
+
+A guard that has to be relaxed every time the thing it watches improves is a
+guard somebody eventually deletes. It is now anchored on how many methods were
+**scanned**, which is a number that grows with the product rather than shrinking
+with the debt.
+
+### What is still on the list
+
+Nineteen methods, down from sixty-four in M34. Eight waiting on a gateway we
+have not bought, six reached only by the suite, five internal seams. The
+"superseded by inline SQL" group no longer exists — it was the largest category
+in M34 and the least accurate.
+
+
 ## The rest of the plan (M20–M31)
 
 The first nineteen milestones were a plan that ran out rather than a plan that finished.

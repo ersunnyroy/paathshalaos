@@ -14,6 +14,7 @@ import {
   purgeTestData,
 } from './fixtures.ts';
 import { peopleRepository } from '../src/modules/people/people.repository.ts';
+import { familyService } from '../src/modules/family/family.service.ts';
 import { consentService } from '../src/modules/people/consent.service.ts';
 import { withTenant } from '../src/db/tenant.ts';
 import { pool } from '../src/db/pool.ts';
@@ -142,7 +143,11 @@ describe('AC-4 — the guardian sees exactly their learners', () => {
   });
 
   it('the linked-learners switcher returns both children with their capabilities', async () => {
-    const learners = await peopleRepository.linkedLearners(guardianScope());
+    // Through `familyService.children`, which is what `/v1/family/children`
+    // serves. `peopleRepository.linkedLearners` answered the same question with
+    // fewer columns and had no route; keeping both meant this assertion proved
+    // a switcher no parent was looking at (M36).
+    const learners = await familyService.children(guardianScope());
     expect(learners).toHaveLength(2);
 
     const a = learners.find((l) => l.admission_no === 'ADM-A-001');
@@ -195,13 +200,19 @@ describe('capability flags are enforced at the query, not the UI', () => {
 
 describe('a guardian cannot grant themselves access', () => {
   it('cannot link themselves to an unlinked learner', async () => {
-    await expect(
-      peopleRepository.linkGuardian(guardianScope(), {
-        studentId: learnerC.studentId,
-        guardianPersonId,
-        relationship: 'mother',
-      }),
-    ).rejects.toThrow(/row-level security|Only institute staff/i);
+    // The named refusal, not Postgres's sentence. `linkGuardian` had a branch
+    // that read like this refusal and could not run: the policy RAISES on this
+    // INSERT rather than returning no row, so the branch was unreachable and
+    // the raw error was what a caller would have seen — which nobody did,
+    // because the method had no route until M36.
+    const err = await peopleRepository.linkGuardian(guardianScope(), {
+      studentId: learnerC.studentId,
+      guardianPersonId,
+      relationship: 'mother',
+    }).catch((e: unknown) => e);
+    expect((err as { status: number }).status).toBe(403);
+    expect((err as { getResponse(): { error: { code: string } } })
+      .getResponse().error.code).toBe('cannot_link_guardian');
 
     // And it did not land.
     expect(await peopleRepository.findStudent(guardianScope(), learnerC.studentId)).toBeUndefined();

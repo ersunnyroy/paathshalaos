@@ -234,6 +234,32 @@ export class ImportController {
     };
   }
 
+  /**
+   * Where a batch has got to.
+   *
+   * Declared before `:id/errors` only for reading order; the two differ by a
+   * segment. It exists because a client that starts an import had no way to
+   * ask about it afterwards — every other endpoint here is a verb, and a
+   * screen that uploads four hundred learners and then wants to know whether
+   * the apply finished had to guess from the response it already had.
+   *
+   * `plan_digest` is what makes preview-then-apply honest: the digest is
+   * computed over the plan the preview showed, and apply refuses if the file
+   * has changed underneath it. A client comparing the two knows whether what
+   * it is looking at is still what will happen.
+   */
+  @Get(':id')
+  async batch(@Param('id') id: string) {
+    const batchId = uuid.safeParse(id);
+    if (!batchId.success) throw ApiError.fromZod(batchId.error);
+    const found = await withTenant(currentScope(), (db) =>
+      importService.batch(db, batchId.data));
+    if (!found) {
+      throw ApiError.make('not_found', 'batch_not_found', 'No such import batch.');
+    }
+    return { data: found };
+  }
+
   /** The rows that did not pass, so somebody can fix the file. */
   @Get(':id/errors')
   async errors(@Param('id') id: string, @Query('limit') limit?: string) {

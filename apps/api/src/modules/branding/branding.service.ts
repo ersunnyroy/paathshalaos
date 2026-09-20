@@ -153,7 +153,7 @@ export const brandingService = {
 
   /** The console's view, for onboarding a school's brand with them. */
   async setAsPlatform(actorUserId: string, tenantId: string, input: {
-    appName?: string | null; primaryColour?: string | null;
+    appName?: string | null | undefined; primaryColour?: string | null | undefined;
   }): Promise<void> {
     if (input.primaryColour != null && !HEX.test(input.primaryColour)) {
       throw ApiError.make('validation_error', 'not_a_colour',

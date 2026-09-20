@@ -18,6 +18,7 @@ import { z } from 'zod';
 import { Public } from '../auth/public.decorator.ts';
 import { PlatformGuard, RequiresCapability } from '../platform/platform.guard.ts';
 import { domainService } from './domain.service.ts';
+import { brandingService } from './branding.service.ts';
 import { getContext } from '../../common/request-context.ts';
 import { ApiError } from '../../common/errors.ts';
 
@@ -83,5 +84,43 @@ export class DomainController {
     if (!domainId.success) throw ApiError.fromZod(domainId.error);
     await domainService.setPrimary(actor(), domainId.data);
     return { data: { primary: true } };
+  }
+}
+
+/**
+ * Setting a school's branding from the console (M36).
+ *
+ * `brandingService.set` is the school's own route — M34.4 wired it, after it
+ * shipped in M19 with no caller. `setAsPlatform` is the other side: us setting
+ * it for them, which is what happens during onboarding, before the customer has
+ * an administrator who knows where the settings screen is.
+ *
+ * A separate method rather than the same one with a different actor, because
+ * the school's route runs on the tenant pool under the school's policies and
+ * this runs on the platform pool. Both write the same row and both write the
+ * same audit action, so the school sees `branding.updated` in their own trail
+ * whichever of us did it — which is the point.
+ */
+@Public()
+@UseGuards(PlatformGuard)
+@Controller('platform/v1/tenants')
+export class ConsoleBrandingController {
+  @Post(':id/branding')
+  @RequiresCapability('provision')
+  async setBranding(@Param('id') id: string, @Body() body: unknown) {
+    const tenantId = uuid.safeParse(id);
+    if (!tenantId.success) throw ApiError.fromZod(tenantId.error);
+    const parsed = z.object({
+      appName: z.string().max(80).nullable().optional(),
+      // Deliberately not a hex pattern here. The service refuses anything that
+      // is not a colour, and a stricter rule at this layer would make that
+      // refusal unreachable and its test a tautology — the same trap M32 and
+      // M34 each found twice.
+      primaryColour: z.string().max(100).nullable().optional(),
+    }).safeParse(body);
+    if (!parsed.success) throw ApiError.fromZod(parsed.error);
+
+    await brandingService.setAsPlatform(actor(), tenantId.data, parsed.data);
+    return { data: { updated: true } };
   }
 }

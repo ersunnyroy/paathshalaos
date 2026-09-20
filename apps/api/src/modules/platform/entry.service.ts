@@ -272,23 +272,4 @@ export const entryService = {
    * that decides — which is the point. "Who has been in our records" must not be
    * a question only we can answer.
    */
-  async forSchool(scope: { tenantId: string; actorId: string }): Promise<Array<{
-    id: string; assumed_role: string | null; entry_path: string;
-    status: string; reason: string; started_at: string | null;
-    expires_at: string | null; write_enabled: boolean;
-  }>> {
-    return withTenant(scope, async (db) => {
-      const { rows } = await db.query<{
-        id: string; assumed_role: string | null; entry_path: string;
-        status: string; reason: string; started_at: string | null;
-        expires_at: string | null; write_enabled: boolean;
-      }>(
-        `SELECT id, assumed_role, entry_path, status, reason,
-                started_at, expires_at, write_enabled
-           FROM impersonation_session
-          ORDER BY requested_at DESC
-          LIMIT 100`);
-      return rows;
-    });
-  },
 };

@@ -9,14 +9,6 @@ export interface Campus {
   status: string;
 }
 
-export interface AcademicUnit {
-  id: string;
-  tenant_id: string;
-  campus_id: string;
-  code: string;
-  name: string;
-  unit_type: string;
-}
 
 /**
  * Note what is absent: no method takes a tenant id as a filter argument, and no
@@ -66,17 +58,4 @@ export const tenancyRepository = {
     });
   },
 
-  async listAcademicUnits(scope: TenantScope, campusId?: string): Promise<AcademicUnit[]> {
-    return withTenant(scope, async (db) => {
-      const { rows } = await db.query<AcademicUnit>(
-        `SELECT id, tenant_id, campus_id, code, name, unit_type
-           FROM academic_unit
-          WHERE deleted_at IS NULL
-            AND ($1::uuid IS NULL OR campus_id = $1::uuid)
-          ORDER BY name ASC`,
-        [campusId ?? null],
-      );
-      return rows;
-    });
-  },
 };

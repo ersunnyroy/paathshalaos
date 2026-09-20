@@ -2,6 +2,7 @@ import { withTenant, type TenantScope } from '../../db/tenant.ts';
 import { withHealthScope } from '../../db/health-pool.ts';
 import { auditService } from '../audit/audit.service.ts';
 import { ApiError } from '../../common/errors.ts';
+import { likeLiteral } from '../../common/like.ts';
 
 export interface Person {
   id: string;
@@ -16,6 +17,12 @@ export interface Student {
   person_id: string;
   admission_no: string;
   lifecycle_status: string;
+  given_name: string;
+  family_name: string | null;
+  enrollment_id: string | null;
+  section_id: string | null;
+  section_name: string | null;
+  class_name: string | null;
 }
 
 export interface GuardianLink {
@@ -50,25 +57,70 @@ export interface StudentSensitive {
  * has to mean if it is to survive the twentieth endpoint.
  */
 export const peopleRepository = {
-  async listStudents(scope: TenantScope, opts: { limit?: number } = {}): Promise<Student[]> {
+  /**
+   * The learner list, and the one the product actually serves.
+   *
+   * This used to return four columns from `student` while `DirectoryController`
+   * ran a richer query of its own inline — two answers to one question, with
+   * the tested one not being the live one. That made the comment above a
+   * half-truth: the AC-4 suite proved the policy filters *this* SQL, and the
+   * SQL a parent's screen ran was somewhere else. The richer query won and
+   * moved here (M36), so the proof and the product are now the same statement.
+   *
+   * `enrollment` is joined LEFT and only for the active row: an admitted
+   * learner who has not started yet is still a learner, and dropping them from
+   * the list would hide exactly the children an admissions office is chasing.
+   */
+  async listStudents(
+    scope: TenantScope,
+    opts: { limit?: number | undefined; sectionId?: string | undefined;
+            q?: string | undefined } = {},
+  ): Promise<Student[]> {
     return withTenant(scope, async (db) => {
       const { rows } = await db.query<Student>(
-        `SELECT id, person_id, admission_no, lifecycle_status
-           FROM student
-          WHERE deleted_at IS NULL
-          ORDER BY admission_no
+        `SELECT st.id, st.person_id, st.admission_no, st.lifecycle_status,
+                p.given_name, p.family_name,
+                e.id AS enrollment_id, sec.id AS section_id,
+                sec.name AS section_name, cg.name AS class_name
+           FROM student st
+           JOIN person p ON p.id = st.person_id
+           LEFT JOIN enrollment e ON e.student_id = st.id AND e.status = 'active'
+           LEFT JOIN section sec ON sec.id = e.section_id
+           LEFT JOIN class_group cg ON cg.id = sec.class_group_id
+          WHERE st.deleted_at IS NULL
+            AND ($2::uuid IS NULL OR sec.id = $2::uuid)
+            -- The pattern is built by likeLiteral, not here: a per cent sign
+            -- typed into the search box is a per cent sign, not "everything".
+            AND ($3::text IS NULL
+                 OR p.given_name ILIKE $3::text
+                 OR p.family_name ILIKE $3::text
+                 OR st.admission_no ILIKE $3::text)
+          ORDER BY st.admission_no
           LIMIT $1`,
-        [Math.min(opts.limit ?? 100, 500)],
+        [Math.min(opts.limit ?? 200, 500), opts.sectionId ?? null,
+         opts.q === undefined || opts.q === '' ? null : likeLiteral(opts.q)],
       );
       return rows;
     });
   },
 
-  async findStudent(scope: TenantScope, studentId: string): Promise<Student | undefined> {
+  /** One learner, same columns as the list plus a date of birth. */
+  async findStudent(
+    scope: TenantScope, studentId: string,
+  ): Promise<(Student & { date_of_birth: string | null }) | undefined> {
     return withTenant(scope, async (db) => {
-      const { rows } = await db.query<Student>(
-        `SELECT id, person_id, admission_no, lifecycle_status
-           FROM student WHERE id = $1 AND deleted_at IS NULL`,
+      const { rows } = await db.query<Student & { date_of_birth: string | null }>(
+        `SELECT st.id, st.person_id, st.admission_no, st.lifecycle_status,
+                p.given_name, p.family_name,
+                p.date_of_birth::text AS date_of_birth,
+                e.id AS enrollment_id, sec.id AS section_id,
+                sec.name AS section_name, cg.name AS class_name
+           FROM student st
+           JOIN person p ON p.id = st.person_id
+           LEFT JOIN enrollment e ON e.student_id = st.id AND e.status = 'active'
+           LEFT JOIN section sec ON sec.id = e.section_id
+           LEFT JOIN class_group cg ON cg.id = sec.class_group_id
+          WHERE st.id = $1::uuid AND st.deleted_at IS NULL`,
         [studentId],
       );
       return rows[0];
@@ -145,24 +197,6 @@ export const peopleRepository = {
   },
 
   /** The guardian app's first call on launch: which learners am I linked to. */
-  async linkedLearners(
-    scope: TenantScope,
-  ): Promise<Array<Student & { relationship: string; can_view_finance: boolean }>> {
-    return withTenant(scope, async (db) => {
-      const { rows } = await db.query<Student & { relationship: string; can_view_finance: boolean }>(
-        `SELECT s.id, s.person_id, s.admission_no, s.lifecycle_status,
-                gl.relationship, gl.can_view_finance
-           FROM student s
-           JOIN guardian_link gl ON gl.student_id = s.id
-          WHERE gl.guardian_person_id = app_current_person_id()
-            AND gl.effective_to IS NULL
-            AND s.deleted_at IS NULL
-          ORDER BY s.admission_no`,
-      );
-      return rows;
-    });
-  },
-
   async guardiansOf(scope: TenantScope, studentId: string): Promise<GuardianLink[]> {
     return withTenant(scope, async (db) => {
       const { rows } = await db.query<GuardianLink>(
@@ -231,17 +265,25 @@ export const peopleRepository = {
       studentId: string;
       guardianPersonId: string;
       relationship: string;
-      isPrimary?: boolean;
-      capabilities?: Partial<{
-        canViewAcademics: boolean; canViewFinance: boolean; canPay: boolean;
-        canAuthorisePickup: boolean; canReceiveNotifications: boolean;
-      }>;
-      legalCustodyNote?: string;
+      isPrimary?: boolean | undefined;
+      capabilities?: {
+        canViewAcademics?: boolean | undefined; canViewFinance?: boolean | undefined;
+        canPay?: boolean | undefined; canAuthorisePickup?: boolean | undefined;
+        canReceiveNotifications?: boolean | undefined;
+      } | undefined;
+      legalCustodyNote?: string | undefined;
     },
   ): Promise<GuardianLink> {
     const c = input.capabilities ?? {};
     const created = await withTenant(scope, async (db) => {
-      const { rows } = await db.query<GuardianLink>(
+      // Wrapped because the policy refuses this INSERT by RAISING (42501),
+      // not by returning no row. The `!rows[0]` branch below reads like the
+      // refusal and never ran — it could not, because nothing called this
+      // method until M36 gave it a route, so the first real caller would have
+      // seen a 500 saying "internal error" for a system working as designed.
+      let rows: GuardianLink[];
+      try {
+        ({ rows } = await db.query<GuardianLink>(
         `INSERT INTO guardian_link
            (tenant_id, student_id, guardian_person_id, relationship, is_primary,
             can_view_academics, can_view_finance, can_pay,
@@ -257,7 +299,19 @@ export const peopleRepository = {
          c.canViewAcademics ?? null, c.canViewFinance ?? null, c.canPay ?? null,
          c.canAuthorisePickup ?? null, c.canReceiveNotifications ?? null,
          input.legalCustodyNote ?? null],
-      );
+        ));
+      } catch (err: unknown) {
+        const code = (err as { code?: string }).code;
+        if (code === '42501') {
+          throw ApiError.make('permission_error', 'cannot_link_guardian',
+            'Only institute staff may link a guardian to a learner.');
+        }
+        if (code === '23503') {
+          throw ApiError.make('not_found', 'learner_or_guardian_not_found',
+            'No such learner or guardian.');
+        }
+        throw err;
+      }
       if (!rows[0]) {
         throw ApiError.make('permission_error', 'cannot_link_guardian',
           'Only institute staff may link a guardian to a learner.');

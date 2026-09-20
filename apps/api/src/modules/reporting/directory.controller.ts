@@ -18,6 +18,7 @@ import { withTenant } from '../../db/tenant.ts';
 import { currentScope } from '../../common/scope.ts';
 import { ApiError } from '../../common/errors.ts';
 import { attendanceService } from '../attendance/attendance.service.ts';
+import { peopleRepository } from '../people/people.repository.ts';
 import { paymentService } from '../billing/payment.service.ts';
 import { Money } from '../billing/money.ts';
 
@@ -117,29 +118,12 @@ export class DirectoryController {
     }).safeParse({ sectionId, q });
     if (!parsed.success) throw ApiError.fromZod(parsed.error);
 
+    // Through the repository, not an inline query. This used to be its own
+    // SQL, and `people.spec`'s AC-4 proof exercised a different statement that
+    // happened to be filtered by the same policy — so the suite proved the
+    // policy and not the screen. One query now (M36).
     return {
-      data: await withTenant(currentScope(), async (db) => {
-        const { rows } = await db.query(
-          `SELECT st.id, st.admission_no,
-                  p.given_name, p.family_name,
-                  e.id AS enrollment_id, sec.id AS section_id,
-                  sec.name AS section_name, cg.name AS class_name
-             FROM student st
-             JOIN person p ON p.id = st.person_id
-             LEFT JOIN enrollment e ON e.student_id = st.id AND e.status = 'active'
-             LEFT JOIN section sec ON sec.id = e.section_id
-             LEFT JOIN class_group cg ON cg.id = sec.class_group_id
-            WHERE ($1::uuid IS NULL OR sec.id = $1::uuid)
-              AND ($2::text IS NULL
-                   OR p.given_name ILIKE '%' || $2::text || '%'
-                   OR p.family_name ILIKE '%' || $2::text || '%'
-                   OR st.admission_no ILIKE '%' || $2::text || '%')
-            ORDER BY p.given_name, p.family_name
-            LIMIT 200`,
-          [parsed.data.sectionId ?? null, parsed.data.q ?? null],
-        );
-        return rows;
-      }),
+      data: await peopleRepository.listStudents(currentScope(), parsed.data),
     };
   }
 
@@ -148,16 +132,7 @@ export class DirectoryController {
     const parsed = uuid.safeParse(id);
     if (!parsed.success) throw ApiError.fromZod(parsed.error);
 
-    const found = await withTenant(currentScope(), async (db) => {
-      const { rows } = await db.query(
-        `SELECT st.id, st.admission_no, p.given_name, p.family_name,
-                p.date_of_birth::text AS date_of_birth
-           FROM student st JOIN person p ON p.id = st.person_id
-          WHERE st.id = $1::uuid`,
-        [parsed.data],
-      );
-      return rows[0];
-    });
+    const found = await peopleRepository.findStudent(currentScope(), parsed.data);
     // A learner in another tenant, or one this caller may not see, is
     // indistinguishable from one that does not exist. A 403 would confirm the id.
     if (!found) {

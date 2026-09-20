@@ -15,6 +15,7 @@
 import { withTenant, type TenantScope } from '../../db/tenant.ts';
 import { ApiError } from '../../common/errors.ts';
 import { auditService } from '../audit/audit.service.ts';
+import { likeLiteral } from '../../common/like.ts';
 
 export type Audience = 'everyone' | 'staff' | 'guardians';
 
@@ -129,6 +130,12 @@ export const kbService = {
   async search(scope: TenantScope, query: string, limit = 20): Promise<ArticleWithBody[]> {
     return withTenant(scope, async (db) => {
       const term = query.trim();
+      // Two parameters for one search term: $1 is the literal, used for the
+      // empty check and for `similarity`, and $3 is the escaped LIKE pattern.
+      // Interpolating $1 into '%' || … || '%' let a per cent sign in the box
+      // match everything, which for a help centre means a guardian searching
+      // "100%" gets every article and none of the ones they meant.
+      const pattern = likeLiteral(term);
       const { rows } = await db.query<ArticleWithBody>(
         `SELECT a.id, a.slug, a.title, a.audience, a.category, a.status,
                 a.published_version, a.updated_at,
@@ -140,16 +147,16 @@ export const kbService = {
                                      (SELECT MAX(version) FROM kb_article_version
                                        WHERE kb_article_id = a.id))
           WHERE $1 = ''
-             OR v.title ILIKE '%' || $1 || '%'
-             OR v.body  ILIKE '%' || $1 || '%'
+             OR v.title ILIKE $3
+             OR v.body  ILIKE $3
           ORDER BY
             -- A title hit beats a body hit. Someone searching "fee receipt"
             -- wants the article called that, not the twelve that mention it.
-            (v.title ILIKE '%' || $1 || '%') DESC,
+            (v.title ILIKE $3) DESC,
             similarity(v.title, $1) DESC,
             a.updated_at DESC
           LIMIT $2`,
-        [term, limit]);
+        [term, limit, pattern]);
       return rows;
     });
   },

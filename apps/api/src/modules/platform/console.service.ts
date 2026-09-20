@@ -17,6 +17,7 @@
  * platform-pool.ts fails the process if a migration ever gives it one.
  */
 import { withPlatform } from '../../db/platform-pool.ts';
+import { likeLiteral } from '../../common/like.ts';
 
 export interface SchoolHit {
   id: string;
@@ -43,10 +44,6 @@ export interface SchoolHealth extends SchoolHit {
   provisioned_at: string | null;
 }
 
-/** Postgres LIKE metacharacters, so a search for "100%" is a search for "100%". */
-function likeLiteral(term: string): string {
-  return `%${term.replace(/[\\%_]/g, (c) => `\\${c}`)}%`;
-}
 
 export const consoleService = {
   /**

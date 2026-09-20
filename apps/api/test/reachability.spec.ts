@@ -50,24 +50,30 @@ function sources(dir: string): string[] {
  * in `query-budget.spec` and for the same reason: it cannot be dodged by a
  * method nobody happened to write a test for.
  */
-export function unreachableMethods(): string[] {
+export function walk(): { scanned: string[]; unreachable: string[] } {
   const files = sources(SRC);
   const text = new Map(files.map((f) => [f, readFileSync(f, 'utf8')]));
   const all = [...text.values()];
-  const out: string[] = [];
+  const scanned: string[] = [];
+  const unreachable: string[] = [];
 
   for (const [, t] of text) {
     for (const obj of t.matchAll(/^export const (\w+(?:Service|Repository)) = \{(.*?)^\};/gms)) {
       const owner = obj[1]!;
       for (const m of obj[2]!.matchAll(/^ {2}(?:async )?(\w+)\s*\(/gm)) {
         const name = m[1]!;
+        scanned.push(`${owner}.${name}`);
         const called = all.some((u) =>
           new RegExp(`(?:${owner}|this)\\.${name}\\b`).test(u));
-        if (!called) out.push(`${owner}.${name}`);
+        if (!called) unreachable.push(`${owner}.${name}`);
       }
     }
   }
-  return out.sort();
+  return { scanned: scanned.sort(), unreachable: unreachable.sort() };
+}
+
+export function unreachableMethods(): string[] {
+  return walk().unreachable;
 }
 
 /**
@@ -84,9 +90,7 @@ const UNREACHABLE: Array<{ why: string; methods: string[] }> = [
        + 'a card and accepting a delivery receipt all need a live provider — a '
        + 'receipt endpoint in particular needs a shared secret to check a '
        + 'signature against, and one that trusted anything that posted to it '
-       + 'would let a stranger mark a message delivered. M35 removed the '
-       + 'reconciliation methods from this group: matching a settlement is '
-       + 'arithmetic on rows a school already has, and needs no provider at all.',
+       + 'would let a stranger mark a message delivered.',
     methods: [
       'mandateService.byId', 'mandateService.present', 'mandateService.register',
       'mandateService.transition',
@@ -95,32 +99,16 @@ const UNREACHABLE: Array<{ why: string; methods: string[] }> = [
     ],
   },
   {
-    why: 'Superseded by SQL written inline in a controller. Two answers to one '
-       + 'question, and the tested one is not the live one — the trap here is '
-       + 'somebody fixing a bug in the copy nothing runs.',
+    why: 'Reached only by the suite. Not dead — every one is exercised and '
+       + 'passing — but a method whose only caller is a test is a method the '
+       + 'product does not have. Each is a standalone wrapper around something '
+       + 'the live code does differently: `intake` creates the person and the '
+       + 'student inside one transaction with the form submission, the mark '
+       + 'sheet reads marks with the roster joined, and the retention purge '
+       + 'runs as a job on the maintenance connection because the ordinary one '
+       + 'cannot see the rows.',
     methods: [
-      'academicsRepository.addScheduleSlot', 'academicsRepository.createClassGroup',
-      'academicsRepository.listClassGroups', 'academicsRepository.timetableForStaff',
       'peopleRepository.createPerson', 'peopleRepository.createStudent',
-      'peopleRepository.endGuardianLink', 'peopleRepository.findStudent',
-      'peopleRepository.linkGuardian', 'peopleRepository.linkedLearners',
-      'peopleRepository.listStudents',
-      'tenancyRepository.listAcademicUnits',
-      'importService.batch',
-      'brandingService.setAsPlatform',
-      'entryService.forSchool',
-    ],
-  },
-  {
-    why: 'Reached only by the suite. Not dead — every one of these is exercised '
-       + 'and passing — but a method whose only caller is a test is a method the '
-       + 'product does not have, and a suite proving it works proves nothing a '
-       + 'school can use. Each is a standalone wrapper around a path the live '
-       + 'code takes differently: `intake` does the form submission and the '
-       + 'application inside one transaction, the mark sheet reads marks with '
-       + 'the roster joined, and the retention purge runs as a job on the '
-       + 'maintenance connection because the ordinary one cannot see the rows.',
-    methods: [
       'assessmentService.marksFor',
       'admissionsService.createApplication', 'formsService.submit',
       'retentionService.purgeUnsuccessfulApplicantDocuments',
@@ -185,9 +173,20 @@ describe('what the product cannot do is written down', () => {
   });
 
   it('is actually looking at this codebase', () => {
-    // A walker that walks nothing passes both assertions above. This is the
-    // number that makes them mean something.
-    expect(unreachableMethods().length).toBeGreaterThan(20);
+    // A walker that walks nothing passes both assertions above, so something
+    // has to anchor them to a real codebase.
+    //
+    // Anchored on how many methods were SCANNED, not on how many came back
+    // unreachable. The first version asserted the unreachable count was above
+    // twenty, which was true when it was written and false one milestone
+    // later — a guard that has to be relaxed every time the number improves is
+    // a guard somebody eventually deletes, and it fails in the direction of
+    // the work going well.
+    const { scanned, unreachable } = walk();
+    expect(scanned.length, 'the walker found no service methods at all')
+      .toBeGreaterThan(250);
+    expect(scanned).toContain('attendanceService.submitSession');
+    expect(unreachable.length).toBeLessThan(scanned.length);
   });
 });
 
@@ -227,6 +226,22 @@ describe('the detector catches what it claims to', () => {
       // M35.4: readers that had no screen.
       'assessmentService.byId', 'invoiceService.outstandingFor',
       'consentService.isPermitted', 'authService.revokeAllSessions',
+      // M36: the academic spine. Before these, nothing in this product could
+      // create an academic year, a programme, a subject, a section, a course
+      // offering or a room — so a school signing up on Monday could not reach
+      // the end of its first day, and every feature above rested on data a
+      // developer had inserted by hand.
+      'structureService.createYear', 'structureService.addTerm',
+      'structureService.activateYear', 'structureService.createProgramme',
+      'structureService.createSubject', 'structureService.createRoom',
+      'structureService.createClassGroup', 'structureService.createSection',
+      'structureService.createCourseOffering', 'structureService.addScheduleSlot',
+      'structureService.timetableForStaff', 'structureService.academicUnits',
+      // M36: guardian links were reachable only by uploading a CSV.
+      'peopleRepository.linkGuardian', 'peopleRepository.endGuardianLink',
+      // M36: the list and the AC-4 proof are one query now.
+      'peopleRepository.listStudents', 'peopleRepository.findStudent',
+      'importService.batch', 'brandingService.setAsPlatform',
     ]) {
       expect(found, `${wired} is reachable`).not.toContain(wired);
     }

@@ -37,12 +37,15 @@ import {
 import { AccessController } from './modules/authz/access.controller.ts';
 import { ConsentController } from './modules/people/consent.controller.ts';
 import { AcademicsController } from './modules/academics/academics.controller.ts';
+import { StructureController } from './modules/academics/structure.controller.ts';
 import { FamilyController } from './modules/family/family.controller.ts';
 import { LocaleController } from './modules/i18n/locale.controller.ts';
 import { ScheduleController } from './modules/scheduler/schedule.controller.ts';
 import { AttendanceController } from './modules/attendance/attendance.controller.ts';
-import { EmergencyController } from './modules/people/emergency.controller.ts';
-import { DomainController } from './modules/branding/domain.controller.ts';
+import { EmergencyController, GuardianLinkController }
+  from './modules/people/emergency.controller.ts';
+import { DomainController, ConsoleBrandingController }
+  from './modules/branding/domain.controller.ts';
 
 @Module({
   controllers: [
@@ -56,9 +59,10 @@ import { DomainController } from './modules/branding/domain.controller.ts';
     AdmissionsController, EnrollmentController, BillingController,
     MessagingController, ImportController,
     AssessmentController, ResultRunController,
-    AccessController, ConsentController, AcademicsController,
+    AccessController, ConsentController, AcademicsController, StructureController,
     FamilyController, LocaleController, ScheduleController,
-    AttendanceController, EmergencyController, DomainController,
+    AttendanceController, EmergencyController, GuardianLinkController,
+    DomainController, ConsoleBrandingController,
     MetricsController,
   ],
   providers: [

@@ -8,7 +8,7 @@ import {
   createAcademicYear, createAcademicStructure, destroyAcademics, rowHash,
   OWNER_URL, type TenantFixture, type UserFixture, type AcademicYearFixture,
 } from './fixtures.ts';
-import { academicsRepository } from '../src/modules/academics/academics.repository.ts';
+import { structureService } from '../src/modules/academics/structure.service.ts';
 import { rolloverService } from '../src/modules/academics/rollover.service.ts';
 import { withTenant } from '../src/db/tenant.ts';
 import { pool } from '../src/db/pool.ts';
@@ -104,7 +104,7 @@ describe('the timetable makes a clash impossible, not merely detected', () => {
   let sectionA: string;
 
   beforeAll(async () => {
-    const group = await academicsRepository.createClassGroup(staff(), {
+    const group = await structureService.createClassGroup(staff(), {
       programmeId: struct.programmeId, academicYearId: y2025.yearId,
       name: 'Class XI', levelSequence: 11,
     });
@@ -137,7 +137,7 @@ describe('the timetable makes a clash impossible, not merely detected', () => {
   });
 
   it('books the first slot', async () => {
-    const slot = await academicsRepository.addScheduleSlot(staff(), {
+    const slot = await structureService.addScheduleSlot(staff(), {
       courseOfferingId: offeringA, sectionId: sectionA, roomId: struct.roomId,
       staffId: struct.staffId, dayOfWeek: 1, startsAt: '09:15', endsAt: '10:05',
       effectiveFrom: '2025-04-01',
@@ -146,7 +146,7 @@ describe('the timetable makes a clash impossible, not merely detected', () => {
   });
 
   it('refuses to double-book the room', async () => {
-    const err = await academicsRepository
+    const err = await structureService
       .addScheduleSlot(staff(), {
         courseOfferingId: offeringB, roomId: struct.roomId,
         dayOfWeek: 1, startsAt: '09:45', endsAt: '10:35', effectiveFrom: '2025-04-01',
@@ -156,7 +156,7 @@ describe('the timetable makes a clash impossible, not merely detected', () => {
   });
 
   it('refuses to double-book the teacher', async () => {
-    const err = await academicsRepository
+    const err = await structureService
       .addScheduleSlot(staff(), {
         courseOfferingId: offeringB, staffId: struct.staffId,
         dayOfWeek: 1, startsAt: '09:00', endsAt: '09:30', effectiveFrom: '2025-04-01',
@@ -166,7 +166,7 @@ describe('the timetable makes a clash impossible, not merely detected', () => {
   });
 
   it('refuses to put a section in two lessons at once', async () => {
-    const err = await academicsRepository
+    const err = await structureService
       .addScheduleSlot(staff(), {
         courseOfferingId: offeringB, sectionId: sectionA,
         dayOfWeek: 1, startsAt: '09:30', endsAt: '10:00', effectiveFrom: '2025-04-01',
@@ -179,7 +179,7 @@ describe('the timetable makes a clash impossible, not merely detected', () => {
     // [09:15,10:05) and [10:05,10:55) do not overlap: the range is half-open, so
     // a lesson ending exactly when the next begins is not a clash.
     await expect(
-      academicsRepository.addScheduleSlot(staff(), {
+      structureService.addScheduleSlot(staff(), {
         courseOfferingId: offeringB, roomId: struct.roomId, staffId: struct.staffId,
         dayOfWeek: 1, startsAt: '10:05', endsAt: '10:55', effectiveFrom: '2025-04-01',
       }),
@@ -188,7 +188,7 @@ describe('the timetable makes a clash impossible, not merely detected', () => {
 
   it('allows the same room and time on a different weekday', async () => {
     await expect(
-      academicsRepository.addScheduleSlot(staff(), {
+      structureService.addScheduleSlot(staff(), {
         courseOfferingId: offeringB, roomId: struct.roomId, staffId: struct.staffId,
         dayOfWeek: 2, startsAt: '09:15', endsAt: '10:05', effectiveFrom: '2025-04-01',
       }),
@@ -206,7 +206,7 @@ describe('the timetable makes a clash impossible, not merely detected', () => {
       ),
     );
     await expect(
-      academicsRepository.addScheduleSlot(staff(), {
+      structureService.addScheduleSlot(staff(), {
         courseOfferingId: offeringB, roomId: struct.roomId,
         dayOfWeek: 1, startsAt: '09:15', endsAt: '10:05', effectiveFrom: '2025-07-01',
       }),
@@ -218,7 +218,7 @@ describe('the timetable makes a clash impossible, not merely detected', () => {
     // both write. Exactly one must survive, and the database is the only place
     // that can guarantee it.
     const attempt = (offset: string) =>
-      academicsRepository
+      structureService
         .addScheduleSlot(staff(), {
           courseOfferingId: offeringB, roomId: struct.roomId,
           dayOfWeek: 5, startsAt: offset, endsAt: '15:00', effectiveFrom: '2025-04-01',
@@ -234,16 +234,21 @@ describe('the timetable makes a clash impossible, not merely detected', () => {
 
 describe('the structure is readable by a guardian and writable only by staff', () => {
   it('a guardian can read the class list', async () => {
-    const groups = await academicsRepository.listClassGroups(guardian(), y2025.yearId);
+    const groups = await structureService.classGroups(guardian(), y2025.yearId);
     expect(groups.length).toBeGreaterThan(0);
   });
 
   it('a guardian cannot create a class', async () => {
-    await expect(
-      academicsRepository.createClassGroup(guardian(), {
-        programmeId: struct.programmeId, academicYearId: y2025.yearId, name: 'Fake Class',
-      }),
-    ).rejects.toThrow(/row-level security|staff/i);
+    // Asserted as the named refusal rather than on Postgres's own words.
+    // Matching `/row-level security/` passed for as long as the error WAS the
+    // raw database message — that is, for as long as nothing called this and
+    // the first real caller would have got a 500 (M36).
+    const err = await structureService.createClassGroup(guardian(), {
+      programmeId: struct.programmeId, academicYearId: y2025.yearId, name: 'Fake Class',
+    }).catch((e: unknown) => e);
+    expect((err as { status: number }).status).toBe(403);
+    expect((err as { getResponse(): { error: { code: string } } })
+      .getResponse().error.code).toBe('staff_only');
   });
 
   it('a guardian cannot rename a class', async () => {
@@ -265,7 +270,7 @@ describe('the structure is readable by a guardian and writable only by staff', (
 
 describe('AC-3 — changing the structure does not break history', () => {
   it('rolls over into the new year without touching a single prior-year row', async () => {
-    const before = await academicsRepository.listClassGroups(staff(), y2025.yearId);
+    const before = await structureService.classGroups(staff(), y2025.yearId);
     expect(before.length).toBeGreaterThan(0);
 
     // Hash every prior-year row we are about to leave alone.
@@ -307,11 +312,11 @@ describe('AC-3 — changing the structure does not break history', () => {
   });
 
   it('renaming next year class cannot alter last year record', async () => {
-    const oldGroups = await academicsRepository.listClassGroups(staff(), y2025.yearId);
+    const oldGroups = await structureService.classGroups(staff(), y2025.yearId);
     const oldClass = oldGroups.find((g) => g.name === 'Class XI')!;
     const oldHash = await rowHash('class_group', oldClass.id);
 
-    const newGroups = await academicsRepository.listClassGroups(staff(), y2026.yearId);
+    const newGroups = await structureService.classGroups(staff(), y2026.yearId);
     const newClass = newGroups.find((g) => g.name === 'Class XI')!;
     expect(newClass.id).not.toBe(oldClass.id);
 
@@ -322,7 +327,7 @@ describe('AC-3 — changing the structure does not break history', () => {
 
     // Last year is untouched, by name and by content hash. This is the property
     // that will keep last year's report cards correct when they exist in M8.
-    const afterRename = await academicsRepository.listClassGroups(staff(), y2025.yearId);
+    const afterRename = await structureService.classGroups(staff(), y2025.yearId);
     expect(afterRename.find((g) => g.id === oldClass.id)?.name).toBe('Class XI');
     expect(await rowHash('class_group', oldClass.id)).toBe(oldHash);
   });
@@ -360,7 +365,7 @@ describe('AC-3 — changing the structure does not break history', () => {
     const fresh = await createAcademicYear(tenant.orgId, tenant.unitId, '2027-28', 2027, { terms: 0 });
     const source = await createAcademicYear(tenant.orgId, tenant.unitId, '2024-25', 2024, { terms: 3 });
 
-    const group = await academicsRepository.createClassGroup(staff(), {
+    const group = await structureService.createClassGroup(staff(), {
       programmeId: struct.programmeId, academicYearId: source.yearId, name: 'Class IX',
     });
     expect(group.id).toBeTruthy();
@@ -375,7 +380,7 @@ describe('AC-3 — changing the structure does not break history', () => {
   it('fills only the missing terms when the target is partly set up', async () => {
     const source = await createAcademicYear(tenant.orgId, tenant.unitId, '2023-24', 2023, { terms: 4 });
     const target = await createAcademicYear(tenant.orgId, tenant.unitId, '2028-29', 2028, { terms: 1 });
-    await academicsRepository.createClassGroup(staff(), {
+    await structureService.createClassGroup(staff(), {
       programmeId: struct.programmeId, academicYearId: source.yearId, name: 'Class VIII',
     });
 
@@ -390,7 +395,7 @@ describe('AC-3 — changing the structure does not break history', () => {
   it('refuses when a term sequence cannot be created at all', async () => {
     const source = await createAcademicYear(tenant.orgId, tenant.unitId, '2022-23', 2022, { terms: 2 });
     const target = await createAcademicYear(tenant.orgId, tenant.unitId, '2029-30', 2029, { terms: 0 });
-    await academicsRepository.createClassGroup(staff(), {
+    await structureService.createClassGroup(staff(), {
       programmeId: struct.programmeId, academicYearId: source.yearId, name: 'Class VII',
     });
 
@@ -415,7 +420,7 @@ describe('AC-3 — changing the structure does not break history', () => {
     expect(err.getResponse().error.code).toBe('term_sequence_missing');
 
     // And nothing was written: the whole rollover is one transaction.
-    const groups = await academicsRepository.listClassGroups(staff(), target.yearId);
+    const groups = await structureService.classGroups(staff(), target.yearId);
     expect(groups).toHaveLength(0);
   });
 

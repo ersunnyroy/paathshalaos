@@ -2369,3 +2369,489 @@ describe('a correction always names its reason before anything else', () => {
     expect(res.body.error.code).toBe('run_not_found');
   });
 });
+
+// ---------------------------------------------------------------------------
+
+/**
+ * M36 — the first day, which did not work.
+ *
+ * A method-level sweep in M34 listed fifteen service methods as "superseded by
+ * SQL written inline in a controller". Reading them one at a time, that was
+ * true of four. The other eleven had no route of any kind, and four of them
+ * were the academic structure.
+ *
+ * Auditing every structural table for a writer produced this:
+ *
+ *   academic_unit      provisioning, when the console creates the tenant
+ *   academic_year      NOTHING
+ *   term               rollover only
+ *   programme          NOTHING
+ *   subject            NOTHING
+ *   class_group        a repository method nothing called, and rollover
+ *   section            rollover only
+ *   course_offering    rollover only
+ *   room               NOTHING
+ *
+ * Rollover copies last year into next year and refuses a source year with no
+ * structure, correctly — so it cannot bootstrap. **The only school that has
+ * ever had a working structure in this system is the one in `seed.ts`.**
+ *
+ * Fourteen milestones of attendance, assessment, fees, messaging and results
+ * sat on top of a foundation with no way in. Every one of them was tested
+ * against rows a developer had inserted by hand, which is why none of the
+ * suites noticed.
+ *
+ * This block is the first day, in the order a school works in, entirely
+ * through HTTP. It is the test that would have failed on day one.
+ */
+describe('a school can set itself up from nothing', () => {
+  let unitId = '';
+  let yearId = '';
+  let termOneId = '';
+  let programmeId36 = '';
+  let subjectId = '';
+  let roomId = '';
+  let otherCampusRoomId = '';
+  let classGroupId = '';
+  let sectionId = '';
+  let offeringId = '';
+
+  it('finds the academic unit it was provisioned with', async () => {
+    // Step zero, and the one that was quietly impossible. `academicUnitId` is
+    // required by fee plans, report card templates, programmes, subjects and
+    // years — and no endpoint would tell a client a single valid value.
+    const res = await GET('/v1/academic-units', officeToken);
+    expect(res.status).toBe(200);
+    const mine = res.body.data.find((u: any) => u.id === tenant.unitId);
+    expect(mine).toBeTruthy();
+    expect(mine.campus_id).toBe(tenant.campusId);
+
+    unitId = mine.id;
+  });
+
+  it('refuses a year that ends before it starts', async () => {
+    const res = await POST('/v1/structure/years', officeToken, {
+      academicUnitId: unitId, label: 'Backwards',
+      startsOn: '2028-03-31', endsOn: '2027-04-01',
+    });
+    expect(res.status).toBe(422);
+    expect(res.body.error.code).toBe('dates_out_of_order');
+  });
+
+  it('refuses a term that runs outside its year', async () => {
+    // The foreign keys allow it and the CHECK constraints allow it: the schema
+    // orders a term's own dates and stops two terms overlapping, and says
+    // nothing about the year containing them. A term ending after its year
+    // makes every "which term is it" query disagree with every "which year is
+    // it" one, months before anybody notices on a report card.
+    const res = await POST('/v1/structure/years', officeToken, {
+      academicUnitId: unitId, label: '2028-29',
+      startsOn: '2028-04-01', endsOn: '2029-03-31',
+      terms: [
+        { label: 'Term 1', sequence: 1, startsOn: '2028-04-01', endsOn: '2028-09-30' },
+        { label: 'Term 2', sequence: 2, startsOn: '2028-10-01', endsOn: '2029-06-30' },
+      ],
+    });
+    expect(res.status).toBe(422);
+    expect(res.body.error.code).toBe('term_outside_year');
+    // Names the term, not just the rule. A school setting up twelve terms
+    // needs to know which one.
+    expect(res.body.error.message).toContain('Term 2');
+
+    // ...and nothing was written. The year and Term 1 are inside one
+    // transaction with the term that failed.
+    const orphan = await owner((c) => c.query<{ n: string }>(
+      `SELECT count(*)::text AS n FROM academic_year
+        WHERE tenant_id = $1 AND label = '2028-29'`, [tenant.orgId]));
+    expect(orphan.rows[0]!.n).toBe('0');
+  });
+
+  it('creates the year and its terms in one call', async () => {
+    const res = await POST('/v1/structure/years', officeToken, {
+      academicUnitId: unitId, label: '2028-29',
+      startsOn: '2028-04-01', endsOn: '2029-03-31',
+      terms: [
+        { label: 'Term 1', sequence: 1, startsOn: '2028-04-01', endsOn: '2028-09-30' },
+        { label: 'Term 2', sequence: 2, startsOn: '2028-10-01', endsOn: '2029-03-31' },
+      ],
+    });
+    expect(res.status).toBe(201);
+    yearId = res.body.data.id;
+    // Planning, not active: a school builds next year while this one runs, and
+    // two *active* years may not overlap within a unit.
+    expect(res.body.data.status).toBe('planning');
+    expect(res.body.data.terms).toHaveLength(2);
+    termOneId = res.body.data.terms[0].id;
+  });
+
+  it('will not activate a year with no terms', async () => {
+    const empty = await POST('/v1/structure/years', officeToken, {
+      academicUnitId: unitId, label: '2029-30',
+      startsOn: '2029-04-01', endsOn: '2030-03-31',
+    });
+    expect(empty.status).toBe(201);
+
+    // An active year is the one being taught, and teaching happens in a term.
+    // Every assessment, result run and report card is keyed to one, so an
+    // active year with none is a year in which nothing can be recorded —
+    // visible to a principal only when a teacher tries to set the first exam.
+    const res = await POST(`/v1/structure/years/${empty.body.data.id}/activate`,
+      officeToken);
+    expect(res.status).toBe(409);
+    expect(res.body.error.code).toBe('year_has_no_terms');
+  });
+
+  it('creates a programme and a subject', async () => {
+    const programme = await POST('/v1/structure/programmes', officeToken, {
+      academicUnitId: unitId, code: 'M36-CBSE', name: 'CBSE Senior School',
+      durationTerms: 2, credentialType: 'board_examination',
+    });
+    expect(programme.status).toBe(201);
+    programmeId36 = programme.body.data.id;
+
+    const subject = await POST('/v1/structure/subjects', officeToken, {
+      academicUnitId: unitId, code: 'M36-MATH', name: 'Mathematics',
+      subjectType: 'core', defaultCredits: '6.00',
+    });
+    expect(subject.status).toBe(201);
+    subjectId = subject.body.data.id;
+    // A decimal string out, like every other numeric that crosses this
+    // boundary. Credits are summed onto a transcript.
+    expect(subject.body.data.default_credits).toBe('6.00');
+  });
+
+  it('refuses a second subject with the same code in the same unit', async () => {
+    const res = await POST('/v1/structure/subjects', officeToken, {
+      academicUnitId: unitId, code: 'M36-MATH', name: 'Maths again',
+    });
+    expect(res.status).toBe(409);
+    expect(res.body.error.code).toBe('already_exists');
+  });
+
+  it('creates a room', async () => {
+    const res = await POST('/v1/structure/rooms', officeToken, {
+      campusId: tenant.campusId, code: 'M36-R101', name: 'Room 101',
+      capacity: 40, roomType: 'classroom',
+    });
+    expect(res.status).toBe(201);
+    roomId = res.body.data.id;
+  });
+
+  it('creates a class group and a section', async () => {
+    const group = await POST('/v1/structure/class-groups', officeToken, {
+      programmeId: programmeId36, academicYearId: yearId,
+      name: 'Class IX', levelSequence: 9, capacity: 80,
+    });
+    expect(group.status).toBe(201);
+    classGroupId = group.body.data.id;
+    // Kept separate from the name precisely so renaming it to "Grade 10" next
+    // year does not reorder last year's reports.
+    expect(group.body.data.level_sequence).toBe(9);
+
+    const section = await POST('/v1/structure/sections', officeToken, {
+      classGroupId, name: 'A', capacity: 40,
+      classTeacherStaffId: teacherStaffId, roomId,
+    });
+    expect(section.status).toBe(201);
+    sectionId = section.body.data.id;
+    expect(section.body.data.room_id).toBe(roomId);
+
+    const listed = await GET(
+      `/v1/structure/class-groups/${classGroupId}/sections`, officeToken);
+    expect(listed.body.data.map((s: any) => s.id)).toEqual([sectionId]);
+  });
+
+  it('refuses a room on another campus', async () => {
+    // `room` references `campus` and `section` does not, so the two are only
+    // relatable through class group → programme → academic unit → campus. Four
+    // joins nobody performs by eye, and a room code like 101 exists on every
+    // campus a school has.
+    const elsewhere = await owner((c) => c.query<{ id: string }>(
+      `INSERT INTO campus (tenant_id, code, name) VALUES ($1, $2, $3) RETURNING id`,
+      [tenant.orgId, `${tenant.prefix}-M36B`, 'Second Campus']));
+    otherCampusRoomId = (await owner((c) => c.query<{ id: string }>(
+      `INSERT INTO room (tenant_id, campus_id, code, name)
+       VALUES ($1, $2, 'R-101', 'Room 101 over there') RETURNING id`,
+      [tenant.orgId, elsewhere.rows[0]!.id]))).rows[0]!.id;
+
+    const res = await POST('/v1/structure/sections', officeToken, {
+      classGroupId, name: 'B', roomId: otherCampusRoomId,
+    });
+    expect(res.status).toBe(422);
+    expect(res.body.error.code).toBe('room_on_another_campus');
+  });
+
+  it('refuses an offering whose term belongs to a different year', async () => {
+    // Both foreign keys are satisfied: `term` and `class_group` each reference
+    // `academic_year`, and nothing requires them to reference the SAME one.
+    // Nothing downstream notices either — marks go in, a result run computes,
+    // and a report card is issued for a term the child was not in that class
+    // for. It surfaces as a parent disputing a grade.
+    const otherYear = await POST('/v1/structure/years', officeToken, {
+      academicUnitId: unitId, label: '2030-31',
+      startsOn: '2030-04-01', endsOn: '2031-03-31',
+      terms: [{ label: 'Only', sequence: 1, startsOn: '2030-04-01', endsOn: '2031-03-31' }],
+    });
+    const wrongTerm = otherYear.body.data.terms[0].id;
+
+    const res = await POST('/v1/structure/course-offerings', officeToken, {
+      classGroupId, subjectId, termId: wrongTerm,
+    });
+    expect(res.status).toBe(422);
+    expect(res.body.error.code).toBe('term_from_another_year');
+  });
+
+  it('creates the offering, and lists it with names a human reads', async () => {
+    const res = await POST('/v1/structure/course-offerings', officeToken, {
+      classGroupId, subjectId, termId: termOneId,
+      sectionId, primaryTeacherStaffId: teacherStaffId, credits: '6.00',
+    });
+    expect(res.status).toBe(201);
+    offeringId = res.body.data.id;
+
+    const listed = await GET(
+      `/v1/structure/course-offerings?classGroupId=${classGroupId}`, officeToken);
+    const mine = listed.body.data.find((o: any) => o.id === offeringId);
+    expect(mine.subject_name).toBe('Mathematics');
+    expect(mine.class_name).toBe('Class IX');
+    expect(mine.section_name).toBe('A');
+  });
+
+  it('refuses a slot for a section that does not take the subject', async () => {
+    const otherGroup = await POST('/v1/structure/class-groups', officeToken, {
+      programmeId: programmeId36, academicYearId: yearId, name: 'Class X',
+    });
+    const otherSection = await POST('/v1/structure/sections', officeToken, {
+      classGroupId: otherGroup.body.data.id, name: 'A',
+    });
+
+    const res = await POST('/v1/structure/schedule-slots', officeToken, {
+      courseOfferingId: offeringId, sectionId: otherSection.body.data.id,
+      dayOfWeek: 1, startsAt: '09:00', endsAt: '09:45',
+    });
+    expect(res.status).toBe(422);
+    expect(res.body.error.code).toBe('section_from_another_class');
+  });
+
+  it('refuses a period that ends before it starts', async () => {
+    const res = await POST('/v1/structure/schedule-slots', officeToken, {
+      courseOfferingId: offeringId, dayOfWeek: 1,
+      startsAt: '10:00', endsAt: '09:00',
+    });
+    expect(res.status).toBe(422);
+    expect(res.body.error.code).toBe('period_ends_before_it_starts');
+  });
+
+  it('puts the lesson on the timetable', async () => {
+    const res = await POST('/v1/structure/schedule-slots', officeToken, {
+      courseOfferingId: offeringId, sectionId, roomId, staffId: teacherStaffId,
+      // ISO-8601: Monday is 1. The other common convention puts Sunday at 0,
+      // and a timetable one day out looks right on a screen.
+      dayOfWeek: 1, startsAt: '09:00', endsAt: '09:45', periodNo: 1,
+    });
+    expect(res.status).toBe(201);
+    expect(res.body.data.day_of_week).toBe(1);
+  });
+
+  it('refuses to double-book the room, through the endpoint', async () => {
+    // The exclusion constraint, reached over HTTP rather than from a service
+    // test. It has been provably correct since M4 and unreachable until now.
+    const res = await POST('/v1/structure/schedule-slots', officeToken, {
+      courseOfferingId: offeringId, roomId,
+      dayOfWeek: 1, startsAt: '09:30', endsAt: '10:15',
+    });
+    expect(res.status).toBe(409);
+    expect(res.body.error.code).toBe('timetable_room_clash');
+  });
+
+  it('shows the teacher their week, and the class theirs', async () => {
+    const staff = await GET(`/v1/timetable/staff/${teacherStaffId}`, officeToken);
+    expect(staff.status).toBe(200);
+    const lesson = staff.body.data.find((l: any) => l.course_offering_id === offeringId);
+    expect(lesson.subject_name).toBe('Mathematics');
+    expect(lesson.room_name).toBe('Room 101');
+    expect(lesson.starts_at).toMatch(/^09:00/);
+
+    const section = await GET(`/v1/timetable/sections/${sectionId}`, officeToken);
+    expect(section.body.data.some((l: any) => l.course_offering_id === offeringId))
+      .toBe(true);
+  });
+
+  it('includes a whole-class lesson in a section’s timetable', async () => {
+    // A slot with no `section_id` means the whole class. Filtering on
+    // `section_id = $1` alone empties the timetable for every school that
+    // teaches its classes together, which is most of them.
+    const wholeClass = await POST('/v1/structure/schedule-slots', officeToken, {
+      courseOfferingId: offeringId, roomId,
+      dayOfWeek: 2, startsAt: '11:00', endsAt: '11:45',
+    });
+    expect(wholeClass.status).toBe(201);
+
+    const section = await GET(`/v1/timetable/sections/${sectionId}`, officeToken);
+    expect(section.body.data.some((l: any) => l.id === wholeClass.body.data.id))
+      .toBe(true);
+  });
+
+  it('makes the year active once it has terms', async () => {
+    const res = await POST(`/v1/structure/years/${yearId}/activate`, officeToken);
+    expect(res.status).toBe(201);
+    expect(res.body.data.status).toBe('active');
+
+    // And only once. planning → active is the transition; active → active is a
+    // click somebody made twice.
+    const again = await POST(`/v1/structure/years/${yearId}/activate`, officeToken);
+    expect(again.status).toBe(409);
+    expect(again.body.error.code).toBe('not_in_planning');
+  });
+
+  it('refuses the whole structure to a guardian', async () => {
+    // Nothing above checks a role. Every INSERT is written against a WITH
+    // CHECK that admits staff only, and the service turns the resulting empty
+    // result into a named refusal rather than a TypeError and a 500.
+    for (const [path, body] of [
+      ['/v1/structure/programmes',
+       { academicUnitId: unitId, code: 'SNEAK', name: 'Mine' }],
+      ['/v1/structure/subjects',
+       { academicUnitId: unitId, code: 'SNEAK', name: 'Mine' }],
+      ['/v1/structure/rooms',
+       { campusId: tenant.campusId, code: 'SNEAK', name: 'Mine' }],
+      ['/v1/structure/class-groups',
+       { programmeId: programmeId36, academicYearId: yearId, name: 'Mine' }],
+    ] as const) {
+      const res = await POST(path, guardianToken, body);
+      expect(res.status, `${path} let a guardian write`).toBe(403);
+      expect(res.body.error.code).toBe('staff_only');
+    }
+  });
+});
+
+describe('the learner list is one query, and it filters', () => {
+  let inA = '';
+
+  beforeAll(async () => {
+    const learner = await createLearnerRaw(tenant.orgId, 'Meher', 'WS-M36-F1');
+    inA = learner.studentId;
+    await owner((c) => c.query(
+      `INSERT INTO enrollment (tenant_id, student_id, section_id, academic_year_id)
+       VALUES ($1, $2, $3, $4)`,
+      [tenant.orgId, inA, sectionA, academicYearId]));
+  }, 60_000);
+
+  it('narrows to a section', async () => {
+    // A surviving mutation found this: neutering the section filter broke no
+    // test. `/v1/students?sectionId=` is what a teacher's roster screen calls,
+    // it has existed since M9, and nothing had ever asserted that the
+    // parameter does anything.
+    const all = await GET('/v1/students', officeToken);
+    expect(all.body.data.length).toBeGreaterThan(1);
+
+    const inSection = await GET(`/v1/students?sectionId=${sectionA}`, officeToken);
+    expect(inSection.status).toBe(200);
+    expect(inSection.body.data.map((s: any) => s.id)).toContain(inA);
+    expect(inSection.body.data.length).toBeLessThan(all.body.data.length);
+    for (const row of inSection.body.data) {
+      expect(row.section_id).toBe(sectionA);
+    }
+  });
+
+  it('searches on either name or the admission number', async () => {
+    for (const q of ['Meher', 'WS-M36-F1']) {
+      const res = await GET(`/v1/students?q=${encodeURIComponent(q)}`, officeToken);
+      expect(res.status, `searching for ${q}`).toBe(200);
+      expect(res.body.data.map((s: any) => s.id), `searching for ${q}`).toContain(inA);
+    }
+
+    const none = await GET('/v1/students?q=nobodycalledthis', officeToken);
+    expect(none.body.data).toEqual([]);
+  });
+
+  it('treats a LIKE metacharacter as a character', async () => {
+    // `%` must not return the school. The value goes into an ILIKE pattern,
+    // and a wildcard that a caller can supply is a filter a caller can remove.
+    const res = await GET('/v1/students?q=%25', officeToken);
+    expect(res.status).toBe(200);
+    expect(res.body.data).toEqual([]);
+  });
+
+  it('carries the name and class a screen needs, not just ids', async () => {
+    const res = await GET(`/v1/students/${inA}`, officeToken);
+    expect(res.status).toBe(200);
+    expect(res.body.data.given_name).toBe('Meher');
+    expect(res.body.data.section_id).toBe(sectionA);
+  });
+});
+
+describe('a guardian can be linked to a learner without a spreadsheet', () => {
+  let studentId = '';
+  let guardianPersonId = '';
+  let linkId = '';
+
+  beforeAll(async () => {
+    studentId = (await createLearnerRaw(tenant.orgId, 'Anaya', 'WS-M36-1')).studentId;
+    guardianPersonId = await createPersonRaw(tenant.orgId, 'Deepa',
+      { familyName: 'Rao' });
+  }, 60_000);
+
+  it('links one, with the permissive defaults', async () => {
+    // Before this route the only way to link a guardian was to upload a CSV
+    // through the import module. Fine for the first Monday, wrong for a child
+    // admitted mid-term or a wrong link typed at the counter.
+    const res = await POST('/v1/guardian-links', officeToken, {
+      studentId, guardianPersonId, relationship: 'mother', isPrimary: true,
+    });
+    expect(res.status).toBe(201);
+    linkId = res.body.data.id;
+    // 0012's defaults: a school adding a parent means a parent. The
+    // restrictive case is a deliberate act and looks like one.
+    expect(res.body.data.can_view_academics).toBe(true);
+    expect(res.body.data.can_pay).toBe(true);
+    expect(res.body.data.is_primary).toBe(true);
+  });
+
+  it('links a second with narrower capabilities, named one by one', async () => {
+    const otherPerson = await createPersonRaw(tenant.orgId, 'Vikram',
+      { familyName: 'Rao' });
+    const res = await POST('/v1/guardian-links', officeToken, {
+      studentId, guardianPersonId: otherPerson, relationship: 'father',
+      capabilities: { canViewFinance: false, canPay: false },
+      legalCustodyNote: 'Access to academic records only, per the order of 12 May.',
+    });
+    expect(res.status).toBe(201);
+    expect(res.body.data.can_view_finance).toBe(false);
+    expect(res.body.data.can_pay).toBe(false);
+    // Unnamed flags keep their defaults rather than being cleared along with
+    // the two that were named.
+    expect(res.body.data.can_view_academics).toBe(true);
+
+    const both = await GET(`/v1/students/${studentId}/guardians`, officeToken);
+    expect(both.body.data).toHaveLength(2);
+  });
+
+  it('will not end a link without a reason', async () => {
+    const res = await POST(`/v1/guardian-links/${linkId}/end`, officeToken, {});
+    expect(res.status).toBe(422);
+  });
+
+  it('ends it, keeping the row', async () => {
+    const res = await POST(`/v1/guardian-links/${linkId}/end`, officeToken,
+      { reason: 'Custody order of 3 June.' });
+    expect(res.status).toBe(201);
+
+    // "Who could collect this child last March" is a question asked after
+    // something has gone wrong, and a deleted row answers it with silence.
+    const row = await owner((c) => c.query<{ effective_to: string | null }>(
+      'SELECT effective_to::text FROM guardian_link WHERE id = $1', [linkId]));
+    expect(row.rows[0]!.effective_to).not.toBeNull();
+
+    const live = await GET(`/v1/students/${studentId}/guardians`, officeToken);
+    expect(live.body.data.map((g: any) => g.id)).not.toContain(linkId);
+  });
+
+  it('refuses both to a guardian', async () => {
+    const res = await POST('/v1/guardian-links', guardianToken, {
+      studentId, guardianPersonId, relationship: 'mother',
+    });
+    expect(res.status).toBe(403);
+    expect(res.body.error.code).toBe('cannot_link_guardian');
+  });
+});
