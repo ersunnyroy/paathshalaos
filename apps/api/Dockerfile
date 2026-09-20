@@ -30,7 +30,16 @@ COPY packages/offline-queue/package.json packages/offline-queue/
 COPY packages/api-client/package.json packages/api-client/
 RUN pnpm install --frozen-lockfile --filter @paathshala/api...
 
-COPY . .
+# Named directories rather than `COPY . .`.
+#
+# A dot copies whatever is in the context, which is how a host's node_modules
+# — or a .env — ends up in an image when the ignore file is in the wrong
+# place. Naming the inputs means a mistake in .dockerignore costs a slower
+# build rather than a corrupted one.
+COPY tsconfig.base.json ./
+COPY packages ./packages
+COPY apps/api ./apps/api
+
 RUN pnpm --filter @paathshala/api run build
 
 # Production dependencies only, resolved into a self-contained tree so the

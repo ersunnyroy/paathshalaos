@@ -53,7 +53,35 @@ export async function migrate(connectionString = env.DATABASE_OWNER_URL): Promis
     );
     const seen = new Map(done.map((r) => [r.name, r.checksum]));
 
-    for (const m of readMigrations()) {
+    const pending = readMigrations();
+
+    // Names this database has applied that this build does not ship.
+    //
+    // The runner used to ignore these entirely, and that silence is what makes
+    // the resulting failure unreadable. A database migrated by a different
+    // revision of this repository — a renamed or renumbered migration, a branch
+    // that shipped one and was rebased away, a volume older than a renumbering
+    // — has objects in it that no recorded name accounts for. The next
+    // migration that creates one of those objects then fails with Postgres's
+    // own words, `relation "x" already exists`, which reads as a broken
+    // migration rather than as a history that no longer corresponds to this
+    // build.
+    //
+    // This is not fatal on its own: a database ahead of the code is normal
+    // mid-deploy, and `assertSchemaMatchesCode` already makes that call at
+    // boot. Here it is context, printed before the first statement runs and
+    // again on the failure it explains.
+    const shippedNames = new Set(pending.map((m) => m.name));
+    const unrecognised = done.map((r) => r.name).filter((n) => !shippedNames.has(n)).sort();
+
+    if (unrecognised.length > 0) {
+      console.warn(
+        `warning: ${unrecognised.length} applied migration(s) are not shipped by this build: ` +
+          `${unrecognised.slice(0, 5).join(', ')}${unrecognised.length > 5 ? ', …' : ''}`,
+      );
+    }
+
+    for (const m of pending) {
       const previous = seen.get(m.name);
 
       if (previous === m.checksum) continue;
@@ -80,7 +108,16 @@ export async function migrate(connectionString = env.DATABASE_OWNER_URL): Promis
         applied += 1;
       } catch (err) {
         await client.query('ROLLBACK');
-        throw new Error(`Migration ${m.name} failed: ${err instanceof Error ? err.message : err}`);
+        const reason = err instanceof Error ? err.message : String(err);
+        const divergence =
+          unrecognised.length > 0
+            ? ` This database has applied ${unrecognised.length} migration(s) this build does ` +
+              `not ship (${unrecognised.slice(0, 5).join(', ')}` +
+              `${unrecognised.length > 5 ? ', …' : ''}), so it was migrated by a different ` +
+              'revision of this repository and its recorded history no longer accounts for ' +
+              'every object in it. That is the likely cause, and re-running will not clear it.'
+            : '';
+        throw new Error(`Migration ${m.name} failed: ${reason}.${divergence}`);
       }
     }
 
