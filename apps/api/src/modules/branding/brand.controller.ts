@@ -11,12 +11,14 @@
  * freely — except in development, where the web app runs on localhost and has
  * to be able to say which school it is pretending to be.
  */
-import { Controller, Get, Query, Req } from '@nestjs/common';
+import { Controller, Get, Post, Body, Query, Req } from '@nestjs/common';
+import { z } from 'zod';
 import type { Request } from 'express';
 import { Public } from '../auth/public.decorator.ts';
 import { brandingService } from './branding.service.ts';
 import { domainService } from './domain.service.ts';
 import { currentScope } from '../../common/scope.ts';
+import { ApiError } from '../../common/errors.ts';
 
 /** `https://stjosephs.paathshala.app:443` to `stjosephs.paathshala.app`. */
 function hostFromOrigin(origin: string): string {
@@ -71,6 +73,40 @@ export class BrandingSettingsController {
   @Get()
   async mine() {
     return { data: await brandingService.forTenant(currentScope()) };
+  }
+
+  /**
+   * Changing it (M34.4).
+   *
+   * `brandingService.set` has existed since M19 with no caller anywhere: the
+   * school could see its own branding and could not change it, which is worse
+   * than not having the feature — it looks like something somebody else
+   * controls. Found by a method-level reachability sweep, not by anybody using
+   * the product, which is its own comment on how visible this was.
+   *
+   * Every field is optional and a missing one is left alone, because the
+   * service's UPSERT is `COALESCE(EXCLUDED.x, existing.x)`. Sending `null`
+   * clears a field; omitting it does not.
+   */
+  @Post()
+  async update(@Body() body: unknown) {
+    const parsed = z.object({
+      appName: z.string().max(80).nullable().optional(),
+      // Deliberately NOT `.max(7)`. A seven-character bound here refuses every
+      // bad colour before `brandingService.set` sees it, so the service's own
+      // HEX check — the one with the message and the reason — becomes
+      // unreachable, and a mutation removing it breaks nothing. One answer per
+      // question: the bound is only wide enough to stop an absurd payload.
+      primaryColour: z.string().max(64).nullable().optional(),
+      inkColour: z.string().max(64).nullable().optional(),
+      supportEmail: z.string().email().max(200).nullable().optional(),
+      supportPhone: z.string().max(32).nullable().optional(),
+      logoFileId: z.string().uuid().nullable().optional(),
+      logoDarkFileId: z.string().uuid().nullable().optional(),
+    }).safeParse(body);
+    if (!parsed.success) throw ApiError.fromZod(parsed.error);
+
+    return { data: await brandingService.set(currentScope(), parsed.data) };
   }
 
   @Get('domains')

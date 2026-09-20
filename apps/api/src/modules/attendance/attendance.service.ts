@@ -424,9 +424,17 @@ export const attendanceService = {
       requestedBy?: string | undefined;
     },
   ): Promise<string> {
+    // Named with its month, like every other read of this table (M30.1). It was
+    // not, and the guard that is supposed to catch that could not see it: the
+    // query is in a single-quoted string and the check only scanned template
+    // literals. Both are fixed — this query and the guard.
     const fromState = input.recordId
       ? (await db.query<{ state: string }>(
-          'SELECT state FROM attendance_record WHERE id = $1', [input.recordId],
+          `SELECT r.state FROM attendance_record r
+            WHERE r.id = $1
+              AND r.session_date = (SELECT session_date FROM attendance_record
+                                     WHERE id = $1)`,
+          [input.recordId],
         )).rows[0]?.state ?? null
       : null;
 
@@ -455,6 +463,86 @@ export const attendanceService = {
         'A correction must record why.');
     }
     return withTenant(scope, (db) => this.requestCorrection(db, input));
+  },
+
+  /**
+   * Refusing one, with the reason that makes the refusal reviewable.
+   *
+   * There was no way to do this. `attendance_correction` has carried a
+   * `rejected` status and a `rejection_reason` since 0021, the CHECK
+   * constraint has required the reason since 0021, and no code had ever
+   * written either — so a correction a school disagreed with stayed pending
+   * for ever and the pending queue only grew (M34.2).
+   */
+  async rejectCorrection(
+    scope: TenantScope,
+    input: { correctionId: string; reason: string },
+  ): Promise<void> {
+    if (!input.reason.trim()) {
+      throw ApiError.make('validation_error', 'reason_required',
+        'A refusal has to say why — it is what the next request has to answer.');
+    }
+    await withTenant(scope, async (db) => {
+      const { rows } = await db.query<{ id: string }>(
+        `UPDATE attendance_correction
+            SET status = 'rejected', rejection_reason = $2
+          WHERE id = $1::uuid AND status = 'pending'
+          RETURNING id`,
+        [input.correctionId, input.reason]);
+      if (!rows[0]) {
+        throw ApiError.make('conflict', 'correction_not_pending',
+          'That correction does not exist or has already been decided.');
+      }
+    });
+
+    await auditService.record({
+      tenantId: scope.tenantId,
+      actorUserId: scope.actorId,
+      action: 'attendance.correction_rejected',
+      resourceType: 'attendance_correction',
+      resourceId: input.correctionId,
+      classification: 'INTERNAL',
+      after: { reason: input.reason },
+    });
+  },
+
+  /**
+   * The queue somebody has to work through.
+   *
+   * Every late offline sync into a locked session creates one of these, and
+   * until M34.2 nothing could list them and nothing could decide them. The
+   * index `attendance_correction_pending_idx` has existed since 0021 for a
+   * query nobody had written.
+   */
+  async pendingCorrections(
+    scope: TenantScope,
+  ): Promise<Array<Record<string, unknown>>> {
+    return withTenant(scope, async (db) => {
+      const { rows } = await db.query(
+        `SELECT c.id, c.from_state, c.to_state, c.reason, c.origin,
+                c.requested_at, c.status,
+                ses.session_date::text AS session_date, ses.period_no,
+                sec.name AS section_name, cg.name AS class_name,
+                p.given_name, p.family_name, st.admission_no,
+                rq.person_id AS requested_by_person_id,
+                rp.given_name AS requested_by_name
+           FROM attendance_correction c
+           LEFT JOIN attendance_record r
+                  ON r.id = c.attendance_record_id
+                 AND r.session_date = c.record_session_date
+           LEFT JOIN attendance_session ses
+                  ON ses.id = COALESCE(c.attendance_session_id, r.attendance_session_id)
+           LEFT JOIN section sec ON sec.id = ses.section_id
+           LEFT JOIN class_group cg ON cg.id = sec.class_group_id
+           LEFT JOIN enrollment e ON e.id = COALESCE(c.enrollment_id, r.enrollment_id)
+           LEFT JOIN student st ON st.id = e.student_id
+           LEFT JOIN person p ON p.id = st.person_id
+           LEFT JOIN staff rq ON rq.id = c.requested_by
+           LEFT JOIN person rp ON rp.id = rq.person_id
+          WHERE c.status = 'pending'
+          ORDER BY c.requested_at`);
+      return rows;
+    });
   },
 
   /**

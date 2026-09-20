@@ -1515,3 +1515,249 @@ describe('setting a language', () => {
     expect((await GET('/v1/locale', guardianToken)).body.data.stated[0].locale).toBe('hi-IN');
   });
 });
+
+/**
+ * M34.2 and M34.3 — the routes a method-level sweep found missing.
+ *
+ * M32 gave thirteen modules a write surface and recorded the lesson. It missed
+ * two things that a sweep of "which service methods has nobody called" found
+ * immediately: the attendance correction workflow, and the one read in this
+ * product that exists to be done in a hurry.
+ */
+describe('attendance can be finished, locked and corrected', () => {
+  let sessionId = '';
+  let recordId = '';
+  let correctionId = '';
+
+  beforeAll(async () => {
+    sessionId = (await owner(async (c) => (await c.query<{ id: string }>(
+      `INSERT INTO attendance_session
+         (tenant_id, section_id, academic_year_id, session_date, mode, status)
+       VALUES ($1, $2, $3, CURRENT_DATE, 'day', 'open') RETURNING id`,
+      [tenant.orgId, sectionA, academicYearId])).rows[0]!.id));
+
+    recordId = (await owner(async (c) => (await c.query<{ id: string }>(
+      `INSERT INTO attendance_record
+         (tenant_id, attendance_session_id, session_date, enrollment_id, state)
+       VALUES ($1, $2, (SELECT session_date FROM attendance_session WHERE id = $2),
+               (SELECT id FROM enrollment WHERE section_id = $3 LIMIT 1), 'absent')
+       RETURNING id`,
+      [tenant.orgId, sessionId, sectionA])).rows[0]!.id));
+  }, 60_000);
+
+  it('submits a register, then locks it', async () => {
+    const submitted = await POST(`/v1/attendance/sessions/${sessionId}/submit`, officeToken);
+    expect(submitted.status).toBe(201);
+    expect(submitted.body.data.status).toBe('submitted');
+
+    // Locking is what makes a correction necessary rather than an edit. AC-5's
+    // whole conflict model is written in terms of locked sessions, and until
+    // M34.2 no school could lock one.
+    expect((await POST(`/v1/attendance/sessions/${sessionId}/lock`, officeToken)).status)
+      .toBe(201);
+    expect((await POST(`/v1/attendance/sessions/${sessionId}/lock`, officeToken)).status)
+      .toBe(409);
+  });
+
+  it('refuses a correction with no reason', async () => {
+    // The correction row IS the evidence of what changed and why. "It always
+    // said absent" is a thing families dispute years later.
+    const res = await POST('/v1/attendance/corrections', officeToken,
+      { recordId, toState: 'present', reason: '   ' });
+    expect(res.status).toBe(422);
+  });
+
+  it('raises one, lists it, and approves it', async () => {
+    const asked = await POST('/v1/attendance/corrections', officeToken,
+      { recordId, toState: 'present', reason: 'She was in the lab.' });
+    expect(asked.status).toBe(201);
+    correctionId = asked.body.data.id;
+
+    // The queue nothing could read. `attendance_correction_pending_idx` has
+    // existed since 0021 for a query nobody had written.
+    const queue = await GET('/v1/attendance/corrections', officeToken);
+    expect(queue.status).toBe(200);
+    const mine = queue.body.data.find((c: any) => c.id === correctionId);
+    expect(mine).toBeTruthy();
+    expect(mine.from_state).toBe('absent');
+    expect(mine.to_state).toBe('present');
+    // Enough context to decide without opening another screen.
+    expect(mine.given_name).toBeTruthy();
+    expect(mine.session_date).toBeTruthy();
+
+    expect((await POST(`/v1/attendance/corrections/${correctionId}/approve`,
+      officeToken)).status).toBe(201);
+
+    const after = await owner(async (c) => (await c.query<{ state: string }>(
+      'SELECT state FROM attendance_record WHERE id = $1', [recordId])).rows[0]!.state);
+    expect(after).toBe('present');
+  });
+
+  it('refuses a second decision on the same correction', async () => {
+    expect((await POST(`/v1/attendance/corrections/${correctionId}/approve`,
+      officeToken)).status).toBe(409);
+  });
+
+  it('rejects one, with the reason the constraint has always required', async () => {
+    // `rejection_reason` has been a column with a CHECK since 0021 and no code
+    // had ever written it, so a correction a school disagreed with stayed
+    // pending for ever.
+    const asked = await POST('/v1/attendance/corrections', officeToken,
+      { recordId, toState: 'excused', reason: 'Mother says she was ill.' });
+    const id = asked.body.data.id;
+
+    expect((await POST(`/v1/attendance/corrections/${id}/reject`, officeToken, {}))
+      .status).toBe(422);
+
+    // Whitespace, which the schema's `min(1)` allows through. Without this the
+    // service's own check is unreachable from HTTP and a mutation deleting it
+    // breaks nothing — the same trap M32 found in the refund refusals.
+    expect((await POST(`/v1/attendance/corrections/${id}/reject`, officeToken,
+      { reason: '   ' })).status).toBe(422);
+
+    expect((await POST(`/v1/attendance/corrections/${id}/reject`, officeToken,
+      { reason: 'No note was produced.' })).status).toBe(201);
+
+    const row = await owner(async (c) => (await c.query<{
+      status: string; rejection_reason: string | null;
+    }>('SELECT status, rejection_reason FROM attendance_correction WHERE id = $1',
+      [id])).rows[0]!);
+    expect(row.status).toBe('rejected');
+    expect(row.rejection_reason).toBe('No note was produced.');
+
+    // ...and it stays decided. A second refusal would overwrite the first
+    // reason, which is the evidence of what the school actually said.
+    expect((await POST(`/v1/attendance/corrections/${id}/reject`, officeToken,
+      { reason: 'Changed my mind.' })).status).toBe(409);
+  });
+
+  it('names the person deciding from the session, not the body', async () => {
+    // M32's lesson, applied to the routes it did not reach.
+    const asked = await POST('/v1/attendance/corrections', officeToken,
+      { recordId, toState: 'late', reason: 'Arrived at 9.10.',
+        requestedBy: '00000000-0000-0000-0000-000000000000' });
+    const row = await owner(async (c) => (await c.query<{ requested_by: string | null }>(
+      'SELECT requested_by FROM attendance_correction WHERE id = $1',
+      [asked.body.data.id])).rows[0]!);
+    expect(row.requested_by).toBe(officeStaffId);
+  });
+
+  it('refuses somebody who is not staff', async () => {
+    const res = await POST('/v1/attendance/corrections', guardianToken,
+      { recordId, toState: 'present', reason: 'He was there.' });
+    expect(res.status).toBeGreaterThanOrEqual(400);
+  });
+});
+
+describe('the information somebody needs in ten seconds', () => {
+  let childId = '';
+
+  beforeAll(async () => {
+    const child = await createLearnerRaw(tenant.orgId, 'Ishaan', 'WS-EMG-1',
+      { medicalNote: 'Severe peanut allergy — EpiPen in the office.',
+        bloodGroup: 'O+' });
+    childId = child.studentId;
+    await owner((c) => c.query(
+      `UPDATE student SET emergency_contact_name = 'Rekha Nair',
+                          emergency_contact_phone = '+919876543210'
+        WHERE id = $1`, [childId]));
+  }, 60_000);
+
+  it('answers with the allergy, which nothing could read before', async () => {
+    // `findStudentSensitive` reads on a narrower database role and audits the
+    // attempt whether or not it succeeds. It had no caller anywhere in src/:
+    // a teacher standing over a child who had collapsed had nothing to read.
+    const res = await GET(`/v1/students/${childId}/emergency`, officeToken);
+    expect(res.status).toBe(200);
+    expect(res.body.data.medical_note).toMatch(/peanut/i);
+    expect(res.body.data.blood_group).toBe('O+');
+    expect(res.body.data.emergency_contact_phone).toBe('+919876543210');
+  });
+
+  it('audits the read, and audits the refusal the same way', async () => {
+    // A refused attempt on a medical note is exactly as interesting as a
+    // successful one.
+    await GET(`/v1/students/${childId}/emergency`, officeToken);
+    const hit = await owner(async (c) => (await c.query<{ n: string }>(
+      `SELECT count(*)::text AS n FROM audit_log
+        WHERE tenant_id = $1 AND resource_id = $2
+          AND action IN ('student.sensitive.read', 'student.sensitive.read_denied')`,
+      [tenant.orgId, childId])).rows[0]!.n);
+    expect(Number(hit)).toBeGreaterThan(0);
+  });
+
+  it('keeps the allergy off the ordinary learner read', async () => {
+    // A sensitive field that rides along with an ordinary read is a field that
+    // ends up in an export, a log line and a support screenshot — and makes
+    // every read look like somebody asking for a medical note, which is what
+    // ruins the audit trail for spotting one who was.
+    const plain = await GET(`/v1/students/${childId}`, officeToken);
+    expect(plain.status).toBe(200);
+    expect(JSON.stringify(plain.body)).not.toMatch(/peanut/i);
+    expect(plain.body.data).not.toHaveProperty('blood_group');
+  });
+
+  it('says who may collect the child, and what else they may do', async () => {
+    const parentPersonId = await createPersonRaw(tenant.orgId, 'Rekha',
+      { familyName: 'Nair' });
+    await linkGuardianRaw(tenant.orgId, childId, parentPersonId,
+      { isPrimary: true, canAuthorisePickup: true });
+
+    const res = await GET(`/v1/students/${childId}/guardians`, officeToken);
+    expect(res.status).toBe(200);
+    const link = res.body.data.find((g: any) => g.guardian_person_id === parentPersonId);
+    expect(link.can_authorise_pickup).toBe(true);
+    expect(link.is_primary).toBe(true);
+  });
+});
+
+/**
+ * M34.4 — a feature that could be seen and not changed.
+ *
+ * `brandingService.set` shipped in M19 and had no caller anywhere in `src/`
+ * until the reachability sweep found it. A school could look at its own name,
+ * mark and colours on the settings screen and had no way to alter any of them —
+ * which does not read as a missing feature, it reads as something somebody else
+ * controls.
+ */
+describe('a school can change its own branding', () => {
+  it('sets a name and a colour, and reads them back', async () => {
+    const res = await POST('/v1/branding', officeToken, {
+      appName: 'Nalanda Portal', primaryColour: '#14B8A6',
+    });
+    expect(res.status).toBe(201);
+    expect(res.body.data.app_name).toBe('Nalanda Portal');
+
+    const read = await GET('/v1/branding', officeToken);
+    expect(read.body.data.primary_colour).toBe('#14B8A6');
+  });
+
+  it('leaves a field alone when it is not mentioned', async () => {
+    // The service upserts with COALESCE, so an omitted field keeps its value
+    // and an explicit null clears it. A screen that sent only what changed
+    // would otherwise blank everything else.
+    await POST('/v1/branding', officeToken, { supportEmail: 'help@nalanda.example' });
+    const read = await GET('/v1/branding', officeToken);
+    expect(read.body.data.app_name).toBe('Nalanda Portal');
+    expect(read.body.data.support_email).toBe('help@nalanda.example');
+  });
+
+  it('refuses a colour that is not one', async () => {
+    // The value is interpolated into a CSS custom property on a page served
+    // under the school's own domain, so `#fff; background:url(...)` is exactly
+    // what the check exists to refuse.
+    const res = await POST('/v1/branding', officeToken,
+      { primaryColour: '#fff; background:url(//evil)' });
+    expect(res.status).toBe(422);
+    expect(res.body.error.code).toBe('not_a_colour');
+
+    // ...and something merely wrong rather than dangerous is refused by the
+    // same rule, in the same place. The schema's length bound is wide enough
+    // that the service's check is what answers — otherwise the service's rule
+    // is unreachable and deleting it breaks nothing.
+    expect((await POST('/v1/branding', officeToken, { inkColour: 'navy' }))
+      .body.error.code).toBe('not_a_colour');
+    expect((await GET('/v1/branding', officeToken)).body.data.primary_colour)
+      .toBe('#14B8A6');
+  });
+});

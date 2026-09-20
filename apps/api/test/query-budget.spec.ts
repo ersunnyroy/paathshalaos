@@ -343,8 +343,14 @@ describe('no shipped query reads attendance without naming a month', () => {
       // Migrations are the schema, not queries against it.
       if (file.includes('/db/migrations/')) continue;
       const text = readFileSync(file, 'utf8');
-      // Template literals, which is how every query in this codebase is written.
-      for (const [sql] of text.matchAll(/`[^`]*`/g)) {
+      // Template literals AND quoted strings. The check used to scan only
+      // backticks, "which is how every query in this codebase is written" —
+      // and it was not: `requestCorrection` had a single-quoted
+      // `SELECT state FROM attendance_record WHERE id = $1` that read every
+      // month the school had ever run, sitting in plain sight past a guard
+      // written to catch exactly that. Found by a method-level sweep, not by
+      // this test (M34).
+      for (const [sql] of text.matchAll(/`[^`]*`|'[^'\n]*'|"[^"\n]*"/g)) {
         if (!touchesAttendanceRecord(sql)) continue;
         if (ALLOWED_TO_SCAN_EVERYTHING.some((r) => r.test(sql))) continue;
         if (namesItsMonth(sql)) continue;

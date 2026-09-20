@@ -1678,6 +1678,113 @@ The survivors worth naming:
   fleet-wide deletion of children's documents, and a redundant WHERE clause
   costs nothing. Same reasoning as 0080's tenant clause, recorded the same way.
 
+## M34 — what the code says and nothing does
+
+M33 ended with a note: it existed because I went looking for unblocked work
+rather than trusting the list of remaining milestones, and that search found a
+dated outage. So the next thing to do was the search itself, properly and once —
+a sweep for everything this codebase declares and nothing uses.
+
+It found more than M33 did.
+
+| ID | Sub-milestone | Status | What shipped |
+| --- | --- | --- | --- |
+| M34.1 | The sweep, as a test | Done | `reachability.spec.ts` — every service method nothing calls, listed with a reason, in both directions |
+| M34.2 | Attendance can be finished, locked and corrected | Done | The correction workflow had no surface at all |
+| M34.3 | The information somebody needs in ten seconds | Done | A child's allergies could not be read from anywhere in the product |
+| M34.4 | A feature that could be seen and not changed | Done | `brandingService.set` shipped in M19 with no caller |
+
+**Sixty-four service methods had no caller anywhere in `src/`.** Not obscure
+helpers: whole workflows, with tests, that no part of the product could reach.
+
+### The correction workflow, which nothing could complete
+
+`attendance_correction` has carried a `pending` status since 0021 and an index
+built for a query nobody had written. Every late offline sync into a locked
+session creates one of those rows — the service does that itself, and has since
+M6 — and **nothing could list them and nothing could decide them.** They
+accumulated for ever and the learner's attendance stayed wrong.
+
+`rejection_reason` had a CHECK constraint requiring it since 0021 and had never
+been written by any code at all, because there was no reject path. There is now,
+and a refusal has to say why: it is what the next request has to answer.
+
+`lockSession` had no caller either. Locking is what makes a correction necessary
+rather than an edit, and AC-5's entire conflict model is written in terms of
+locked sessions — which no school could create.
+
+### A child's allergies
+
+`peopleRepository.findStudentSensitive` reads a blood group, a medical note,
+accommodations and an emergency contact. It does it properly: on a separate
+database role whose column grants are narrower than the application role's,
+under the same row-level security, and it writes an audit row **whether or not
+it returned anything**, because a refused attempt on a medical note is exactly
+as interesting as a successful one.
+
+Nothing could call it. The whole of `peopleRepository` has no caller — the
+directory controller writes its own SQL, and that SQL returns a name, an
+admission number and a date of birth. A teacher standing over a child who had
+collapsed had nothing to read.
+
+It is a separate route rather than extra columns on the learner read, and that
+is the design: a sensitive field that rides along with an ordinary read ends up
+in a CSV export, a log line and a support screenshot — and makes every read look
+like somebody asking for a medical note, which ruins the audit trail for
+spotting one who was.
+
+### The guard the sweep left behind
+
+M32 found services with no route. M33 found functions with no scheduled caller.
+Both were found by looking, and neither left anything behind that would notice
+the next one. `reachability.spec.ts` does:
+
+- it walks every `xService` / `xRepository` and finds the methods nothing calls;
+- each one must appear in a list **with a reason**, grouped by the kind of debt
+  it is — "waiting on a payment provider" and "shipped without a write surface"
+  are different problems and only one of them is anybody's fault;
+- a method that becomes unreachable and is not listed fails the suite;
+- **a method that is listed and has since been wired also fails it**, so the
+  list cannot rot into a page of stale apologies. That direction caught
+  `brandingService.set` within a minute of it getting a route.
+
+It does not fail on the number being large. Sixty-odd methods are unreachable
+and most are somebody's afternoon. What it refuses is the number growing
+quietly, which is how all sixty got there.
+
+### And a hole in M30's guard, found by the same sweep
+
+`requestCorrection` read `SELECT state FROM attendance_record WHERE id = $1` —
+no month, so it scanned every partition the school had ever had. M30.3's static
+check exists precisely to catch that and did not, because the query is in a
+**single-quoted string** and the check only scanned template literals. Its own
+comment said template literals were "how every query in this codebase is
+written". They were not.
+
+Both are fixed: the query names its month, and the check reads quoted strings
+too. A mutation restoring the old query now fails it.
+
+### The mutation pass, and five survivors — three of one shape
+
+Twelve mutations, five survived, and three of them were the same mistake M32
+already recorded:
+
+- **A zod rule shadowing the service's own.** The reject route's `min(1)` refused
+  an empty reason before `rejectCorrection` could, so deleting the service's
+  check broke nothing. Same for the branding colour: a `.max(7)` on the request
+  body meant `brandingService.set`'s HEX check — the one with the message and
+  the anchors that stop `#fff; background:url(...)` — was unreachable from HTTP.
+  The bound is now wide enough that the service answers, and the tests send
+  whitespace and `navy`, which reach it.
+- **A decision that could be taken twice.** Nothing tried rejecting an
+  already-rejected correction, which would have overwritten the reason — the
+  evidence of what the school actually said.
+- **Two mutations of the guard itself survived**, because the real codebase and
+  the list agree, so emptying either filter changes nothing. Closed by pulling
+  the comparison into a function and testing it against synthetic disagreements
+  in both directions — the third time this exact fix has been needed (M29.2's
+  catalogue audit, M30.3's month check, and now this).
+
 ## The rest of the plan (M20–M31)
 
 The first nineteen milestones were a plan that ran out rather than a plan that finished.
@@ -1713,6 +1820,7 @@ follow real usage instead of guesses.
 | M24 | Backup and restore — **partly done, see above** | Point-in-time recovery, and a **restore drill that has actually been run** with the time it took written down. A backup nobody has restored is a belief, not a backup |
 | M25 | Taking money from schools — **invoicing done, see above** | Subscription invoicing against M16's plans, GST, and one payment provider. M16 deliberately stopped short of this; a metered plan nobody is billed for is a spreadsheet |
 | M26 | Taking money from parents | A real gateway behind M7's mandates and reconciliation — UPI AutoPay and cards. The ledger, the receipts and the settlement matching already exist and have never seen a live rupee |
+| M34 | What the code says and nothing does — **done, see above** | A sweep for everything declared and unused. Sixty-four service methods had no caller; the attendance correction workflow and a child's medical note were among them |
 | M33 | The jobs nobody was running — **done, see above** | A scheduler, and callers for four functions whose comments described a job that did not exist. One of them was three months from silently losing every audit record |
 | M30 | Scale, where it is real — **done, see above** | `attendance_record` partitioned by month, the rate limiter moved into Redis, and a budget that caught every read still scanning every month |
 | M29 | It speaks the language — **done, see above** | The chain, the catalogue and the settings that set both. `organization.locale` had existed since M1 and nothing had ever read it, which meant a school that does not operate in English could not send messages at all |
@@ -1786,6 +1894,7 @@ left to the end.
 | M29 It speaks the language | Done | 18 API + 26 mobile | 39 mutations verified, 4 survivors closed and 1 shown to be unclosable. `organization.locale` had been unread since M1, which meant a school not operating in English could not send at all. Migration 0079 closed a write policy that let any principal — a parent included — update the organization row; 0080 records the one clause no test can kill |
 | M30 Scale | Done | 30 | 34 mutations verified, 6 survivors closed. `attendance_record` partitioned by month (0081) and the first Redis connection this system has ever opened. The budget test found the partitioning had bought nothing: every read filtered the joined session, not the record. Also caught a declared cascade the database could never perform, and an invariant that would have stopped watching the table it guards |
 | M33 The jobs nobody was running | Done | 42 | 28 mutations verified, 7 survivors closed. Four functions documented as having a scheduled caller had none. `ensure_audit_partition` could not be executed by any role that exists, so the "defensive" fallback could not work either and every database was three months from losing audit records. The obvious wiring — `withTenant({ tenantId })` — would have made all three compliance jobs succeed having examined zero rows; the fix for that then made one school's purge delete the whole fleet's documents until three tenant predicates were added |
+| M34 What the code says and nothing does | Done | 23 | 12 mutations verified, 5 survivors closed. A method-level sweep found 64 service methods with no caller anywhere: the attendance correction workflow had no surface, `lockSession` had no route, `rejection_reason` had never been written by any code, and a child's medical note could not be read from anywhere in the product. The sweep is now a test that fails in both directions. Also found a hole in M30.3's own guard — it scanned only template literals |
 
 Two design decisions were made during M2 that are worth carrying forward:
 

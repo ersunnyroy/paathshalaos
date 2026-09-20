@@ -95,9 +95,16 @@ export const brandingService = {
 
   /** The school edits its own. Validated here as well as by the column checks. */
   async set(scope: TenantScope, input: Partial<{
-    appName: string | null; primaryColour: string | null; inkColour: string | null;
-    supportEmail: string | null; supportPhone: string | null;
-    logoFileId: string | null; logoDarkFileId: string | null;
+    // `| undefined` on every one, because `exactOptionalPropertyTypes` makes
+    // "absent" and "present and undefined" different types — and the caller is
+    // a zod-parsed request body, where they are the same thing.
+    appName: string | null | undefined;
+    primaryColour: string | null | undefined;
+    inkColour: string | null | undefined;
+    supportEmail: string | null | undefined;
+    supportPhone: string | null | undefined;
+    logoFileId: string | null | undefined;
+    logoDarkFileId: string | null | undefined;
   }>): Promise<Branding> {
     for (const [field, value] of [
       ['primaryColour', input.primaryColour], ['inkColour', input.inkColour],
