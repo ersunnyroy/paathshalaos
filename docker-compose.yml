@@ -61,9 +61,19 @@ services:
 
   # ---------------------------------------------------------------- the API
   #
-  # NOT YET BUILT ANYWHERE. Written against a Docker daemon the development
-  # environment could not reach, so this is a description of an intended build
-  # rather than a record of one that worked.
+  # BEHIND A PROFILE, and that is the important line. `docker compose up`
+  # brings up Postgres, Redis and Adminer and nothing else, because that is
+  # what `run-local.sh` and every instruction in RUNNING.md assume: the
+  # containers are the infrastructure, and the API runs on the host with a
+  # watcher attached. Adding an API service without a profile quietly changed
+  # what a bare `up` means — it built an image nobody asked for and bound 3001,
+  # which is the port `run-local.sh` starts the host API on a few lines later.
+  # The daemon refuses the second binder with `address already in use`, a
+  # message about sockets that says nothing about the two ways to run this
+  # application having collided.
+  #
+  # So: `docker compose --profile app up --build` runs the whole thing in
+  # containers, and a bare `up` stays what it was.
   #
   # Two services from one image, because the ordering between them is the
   # thing that goes wrong. `migrate` runs to completion first; `api` starts
@@ -85,6 +95,7 @@ services:
       dockerfile: apps/api/Dockerfile
     image: paathshala-api:local
     container_name: paathshala-bootstrap
+    profiles: ["app"]
     command: ["node", "dist/db/bootstrap.js"]
     environment: &api_env
       NODE_ENV: production
@@ -114,6 +125,7 @@ services:
       dockerfile: apps/api/Dockerfile
     image: paathshala-api:local
     container_name: paathshala-migrate
+    profiles: ["app"]
     command: ["node", "dist/db/migrate.js"]
     environment: *api_env
     depends_on:
@@ -127,9 +139,13 @@ services:
       dockerfile: apps/api/Dockerfile
     image: paathshala-api:local
     container_name: paathshala-api
+    profiles: ["app"]
     environment: *api_env
     ports:
-      - "3001:3001"
+      # Overridable because the collision is real: `run-local.sh` runs the API
+      # on the host at 3001. API_PORT=3002 puts the container beside it rather
+      # than instead of it.
+      - "${API_PORT:-3001}:3001"
     depends_on:
       migrate:
         condition: service_completed_successfully

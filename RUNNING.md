@@ -51,6 +51,20 @@ docker exec paathshala-postgres pg_isready -U paathshala_owner -d paathshala
 | Postgres | **5433** | A local 5432 is usually already taken |
 | Redis | **6380** | Same |
 
+`docker compose up -d` deliberately starts the infrastructure and nothing else.
+The API is also in that file, behind a profile:
+
+```bash
+docker compose --profile app up --build    # everything, API included
+```
+
+Use one or the other, not both. The profile version binds **3001** on the host,
+which is the same port the host-side API below listens on, and the second one to
+start fails with `address already in use` — a message about sockets that will
+not tell you the two ways to run this application have collided. `API_PORT=3002
+docker compose --profile app up --build` puts the container beside your dev API
+instead of on top of it. To free 3001, `bash run-local.sh stop`.
+
 The container creates the `paathshala` database and the `paathshala_owner` role
 on first boot. The four unprivileged roles the API runs as are created by
 `db:bootstrap` below — one for tenant data, one for credentials, one that reads
