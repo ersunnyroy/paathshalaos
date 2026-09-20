@@ -15,6 +15,8 @@
 import { randomUUID } from 'node:crypto';
 import { withPlatform } from '../../db/platform-pool.ts';
 import { ApiError } from '../../common/errors.ts';
+import { logger } from '../../common/logger.ts';
+import { domainService } from '../branding/domain.service.ts';
 import { auditService } from '../audit/audit.service.ts';
 import { passwordService } from '../auth/password.service.ts';
 
@@ -41,6 +43,14 @@ export interface ProvisionResult {
   temporaryPassword: string;
   /** True when this call created the school; false when it replayed an earlier one. */
   created: boolean;
+  /**
+   * The school's web address, allocated at creation.
+   *
+   * Absent only when allocation failed, which is logged and does not undo the
+   * school — a missing subdomain is fixable afterwards; a half-created school
+   * is not.
+   */
+  host?: string;
 }
 
 /** Enough entropy that it is a real credential, short enough to read down a phone. */
@@ -179,6 +189,21 @@ export const provisioningService = {
           owner_email: input.ownerEmail.toLowerCase(),
         },
       });
+
+      // A school with no address is a school nobody can reach: the sign-in
+      // screen resolves the tenant from the host, so provisioning without one
+      // would hand somebody a login page that cannot know whose it is.
+      //
+      // Outside the transaction deliberately — a subdomain collision must not
+      // roll back a school that is otherwise correctly created.
+      try {
+        const domain = await domainService.allocateManaged(
+          actorUserId, result.tenantId, input.displayName);
+        return { ...result, host: domain.host };
+      } catch (err) {
+        logger.error({ err, tenant_id: result.tenantId },
+          'school provisioned but no subdomain could be allocated');
+      }
     }
 
     return result;

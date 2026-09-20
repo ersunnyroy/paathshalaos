@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import {
-  View, Text, TextInput, Pressable, StyleSheet, ActivityIndicator,
+  View, Text, TextInput, Pressable, StyleSheet, ActivityIndicator, Image,
 } from 'react-native';
 import { router } from 'expo-router';
 import { theme } from '@/lib/theme.ts';
@@ -51,6 +51,16 @@ export default function SignIn() {
 
   return (
     <View style={styles.page}>
+      {/* The supplied artwork, not a redrawn mark. `resizeMode="contain"` with
+          a fixed height keeps the aspect ratio at any screen width; the asset
+          is 800x198, so the width follows. */}
+      <Image
+        source={require('../assets/logo.png')}
+        style={styles.logo}
+        resizeMode="contain"
+        accessibilityRole="image"
+        accessibilityLabel="paathshalaOS"
+      />
       <Text style={styles.title}>Sign in</Text>
       <Text style={styles.lede}>
         Attendance works without a signal. Everything you mark is kept on this
@@ -105,6 +115,7 @@ export default function SignIn() {
 
 const styles = StyleSheet.create({
   page: { flex: 1, padding: 24, justifyContent: 'center' },
+  logo: { width: '70%', height: 54, alignSelf: 'flex-start', marginBottom: 22 },
   title: { fontSize: 24, fontWeight: '700', color: theme.navy },
   lede: { marginTop: 8, marginBottom: 20, color: theme.slate, lineHeight: 20 },
   label: { marginTop: 14, marginBottom: 6, fontWeight: '600', color: theme.slate },

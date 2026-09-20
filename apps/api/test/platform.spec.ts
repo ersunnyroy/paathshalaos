@@ -55,7 +55,10 @@ beforeAll(async () => {
 
 afterAll(async () => {
   await owned(async (c) => {
-    for (const t of ['role_grant', 'academic_unit', 'campus']) {
+    // tenant_domain first: provisioning now allocates a subdomain, and that row
+    // references the organization this teardown is about to delete.
+    for (const t of ['tenant_branding', 'tenant_domain',
+                     'role_grant', 'academic_unit', 'campus']) {
       await c.query(`DELETE FROM ${t} WHERE tenant_id = ANY($1)`, [madeTenants]);
     }
     await c.query('DELETE FROM tenant_provisioning WHERE tenant_id = ANY($1)', [madeTenants]);

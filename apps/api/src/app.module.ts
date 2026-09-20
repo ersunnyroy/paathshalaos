@@ -16,6 +16,8 @@ import { ReadOnlyEntryGuard } from './modules/platform/read-only-entry.guard.ts'
 import { AccessLogController } from './modules/platform/access-log.controller.ts';
 import { EntitlementGuard } from './modules/billing-plans/entitlement.guard.ts';
 import { PlanController } from './modules/billing-plans/plan.controller.ts';
+import { BrandController, BrandingSettingsController }
+  from './modules/branding/brand.controller.ts';
 
 @Module({
   controllers: [
@@ -23,6 +25,7 @@ import { PlanController } from './modules/billing-plans/plan.controller.ts';
     ReportingController, DirectoryController,
     IntegrationsController, PublicApiController, SupportController,
     OpenApiController, PlatformController, AccessLogController, PlanController,
+    BrandController, BrandingSettingsController,
   ],
   providers: [
     // Registered globally, so a new controller is authenticated by default and

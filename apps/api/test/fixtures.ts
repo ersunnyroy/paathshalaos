@@ -85,6 +85,7 @@ const TABLE_TEARDOWN_ORDER = [
   'room', 'subject', 'term',
   'guardian_link', 'student', 'staff', 'programme',
   'role_grant', 'tenant_principal', 'contact_method', 'address',
+  'tenant_branding', 'tenant_domain',
   'subscription_event', 'subscription',
   'impersonation_session', 'audit_checkpoint',
   'person',
@@ -265,6 +266,11 @@ export async function destroyUsers(userIds: string[]): Promise<void> {
         await client.query(`ALTER TABLE ${table} ENABLE TRIGGER ${trigger}`);
       }
     }
+    // platform_admin references the account too, and a suite whose teardown was
+    // interrupted leaves rows that block every later purge. Cleared here so one
+    // aborted run cannot wedge the whole suite.
+    await client.query('DELETE FROM platform_admin WHERE user_account_id = ANY($1)',
+      [userIds]);
     await client.query('DELETE FROM role_grant WHERE user_account_id = ANY($1)', [userIds]);
     await client.query('DELETE FROM user_account WHERE id = ANY($1)', [userIds]);
   } finally {
@@ -596,6 +602,11 @@ export async function purgeTestData(emailDomain = '%-test.example'): Promise<voi
     await client.query('DELETE FROM api_client WHERE created_by = ANY($1)', [userIds]);
     await client.query('DELETE FROM form_submission WHERE submitted_by = ANY($1)', [userIds]);
     await client.query('DELETE FROM form_definition WHERE created_by = ANY($1)', [userIds]);
+    // platform_admin references the account too, and a suite whose teardown was
+    // interrupted leaves rows that block every later purge. Cleared here so one
+    // aborted run cannot wedge the whole suite.
+    await client.query('DELETE FROM platform_admin WHERE user_account_id = ANY($1)',
+      [userIds]);
     await client.query('DELETE FROM role_grant WHERE user_account_id = ANY($1)', [userIds]);
     await client.query('DELETE FROM user_account WHERE id = ANY($1)', [userIds]);
 

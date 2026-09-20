@@ -528,6 +528,54 @@ builds, and cannot prove the SDK it targets is one that any installed client wil
 That is a check against the outside world, and it belongs at the start of choosing a
 version rather than after somebody's phone shows an empty screen.
 
+## M19 — white-labelling, and how a school is reached
+
+**Two problems that look separate and are the same one.** A school subscribing to this
+should be able to put its own name and mark on it — and that is not a cosmetic setting,
+because the branding appears on the **sign-in screen**, the one screen shown before anybody
+has authenticated. So the school has to be identifiable without a token. Meanwhile the web
+app carried its tenant in a build-time variable and the mobile app in a config file, which
+is one build per school and the opposite of white-labelling.
+
+The host solves both. `stjosephs.paathshala.app` or `portal.stjosephs.edu.in` identifies
+the school before login, which is exactly what the sign-in screen needs — and it removes
+the baked-in tenant id that made setup fiddly in the first place.
+
+| ID | Milestone | Status | What shipped |
+| --- | --- | --- | --- |
+| M19.1 | Addressing | Done | `tenant_domain`. Every school gets a managed subdomain at provisioning, live immediately. A custom domain is registered inert and routes only after a DNS TXT record proves ownership |
+| M19.2 | Branding | Done | `tenant_branding` plus `app_brand_for_host()`, a `SECURITY DEFINER` lookup the unauthenticated sign-in screen calls |
+| M19.3 | The web app reads the host | Next | Replace `NEXT_PUBLIC_TENANT_ID` with the resolved brand |
+| M19.4 | The mobile app picks a school | Next | Enter a school's address once instead of editing `app.json` |
+
+**One host per school, not one per role.** The obvious reading of "a subdomain to access any
+portal of any role" is a subdomain per role, and it is the wrong shape: it leaks the
+school's structure to anyone who can guess a hostname, and it gives a person who is both a
+teacher and a parent two different URLs for one account. The host says which **school**;
+the signed-in user's grants decide what they see, exactly as they do now.
+
+**An unverified domain routes nothing.** Without that, anybody could claim any hostname
+and capture the branding — and later the traffic — of a domain they do not own. A school's
+parents typing their password into a page somebody else controls is the failure being
+prevented, so verification reads the TXT record for real. The check tolerates a domain that
+also verifies with Google or Microsoft, and rejoins chunked values, because a TXT string
+caps at 255 bytes and a real domain carries several records.
+
+**Branding is a closed list, not a stylesheet.** "Let them supply CSS" is the flexible
+answer and it is wrong twice: it is an injection surface on a page we serve under a
+school's own domain, and it makes every future layout change somebody's broken portal. A
+school sets a name, a mark and two colours. The colours are anchored hex — `#fff;
+background: url(…)` is exactly what that pattern refuses, and the database refuses it too.
+
+**What the public endpoint returns is the whole security question.** It is the most exposed
+route in the system, so it returns a name, a mark, two colours and a support contact the
+school chose to publish — and nothing about size, status, payment or people. A test asserts
+the key list exhaustively, so adding a field is a decision somebody makes on purpose.
+
+**"Powered by paathshalaOS" is not a setting.** A school can put its own name on this; it
+cannot claim to have built it. Keeping it out of the branding table is the point — a field
+that can be set is a field somebody will ask to have set.
+
 ### Deliberately out of scope
 
 - **Payment collection from schools.** Metering and status are here; taking the money is a
