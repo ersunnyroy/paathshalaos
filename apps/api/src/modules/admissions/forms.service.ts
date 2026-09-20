@@ -1,5 +1,5 @@
 import { Ajv, type ValidateFunction } from 'ajv';
-import { withTenant, type TenantScope } from '../../db/tenant.ts';
+import { withTenant, type TenantScope, type TenantClient } from '../../db/tenant.ts';
 import { auditService } from '../audit/audit.service.ts';
 import { ApiError } from '../../common/errors.ts';
 
@@ -218,7 +218,28 @@ export const formsService = {
     scope: TenantScope,
     input: { formDefinitionId: string; payload: Record<string, unknown> },
   ): Promise<{ id: string; formDefinitionId: string }> {
-    return withTenant(scope, async (db) => {
+    return withTenant(scope, (db) => this.submitWithin(db, scope, input));
+  },
+
+  /**
+   * The same submission, inside a transaction somebody else opened.
+   *
+   * Split out for admissions intake, which creates a person, a submission and
+   * an application and must do all three or none. `withTenant` opens its own
+   * transaction per call, so three calls are three transactions — and the
+   * first version of intake proved it by leaving an orphan person behind
+   * every time the answers failed validation. Two of those and an office has
+   * two children who are one child.
+   *
+   * The validation and the version pinning stay here rather than being
+   * reimplemented by the caller, which was the point of the split.
+   */
+  async submitWithin(
+    db: TenantClient,
+    scope: TenantScope,
+    input: { formDefinitionId: string; payload: Record<string, unknown> },
+  ): Promise<{ id: string; formDefinitionId: string }> {
+    {
       const { rows } = await db.query<{ id: string; json_schema: unknown; published_at: Date | null }>(
         'SELECT id, json_schema, published_at FROM form_definition WHERE id = $1',
         [input.formDefinitionId],
@@ -255,7 +276,7 @@ export const formsService = {
         [def.id, JSON.stringify(input.payload), scope.actorId ?? null],
       );
       return { id: inserted.rows[0]!.id, formDefinitionId: def.id };
-    });
+    }
   },
 
   /** Test seam. The cache is otherwise safe for the process lifetime. */

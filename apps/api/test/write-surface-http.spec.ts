@@ -45,7 +45,11 @@ let teacherToken = '';
 
 let teacherStaffId = '';
 let coverStaffId = '';
+let officeStaffId = '';
 let sectionA = '';
+let sectionB = '';
+let programmeId = '';
+let academicYearId = '';
 let leaveTypeId = '';
 let planCode = '';
 
@@ -104,11 +108,20 @@ beforeAll(async () => {
   const cg = await createClassGroupRaw(tenant.orgId, struct.programmeId, year.yearId,
     'Class IX');
   sectionA = await createSectionFor(tenant.orgId, cg, 'A');
+  sectionB = await createSectionFor(tenant.orgId, cg, 'B');
+  programmeId = struct.programmeId;
+  academicYearId = year.yearId;
 
   const t = await makeTeacher(tenant.orgId, tenant.campusId, teacherUser.userId,
     { givenName: 'Meera', employeeCode: 'WS-T1', classTeacherOf: [sectionA] });
   teacherStaffId = t.staffId;
   coverStaffId = struct.staffId;
+
+  // The office account is staff too — an admission decision names a person,
+  // and this is the person it names.
+  const office = await makeTeacher(tenant.orgId, tenant.campusId, officeUser.userId,
+    { givenName: 'Anjali', employeeCode: 'WS-OFF' });
+  officeStaffId = office.staffId;
 
   await owner(async (c) => {
     const lt = await c.query<{ id: string }>(
@@ -257,6 +270,185 @@ describe('HR is reachable at all', () => {
     // M27 stopped at inputs deliberately. If a salary figure ever appears in
     // this response, somebody has started building a payroll product.
     expect(Object.keys(row).join(' ')).not.toMatch(/salary|gross|net|pf|esi|tds/i);
+  });
+});
+
+// ---------------------------------------------------------------------------
+
+describe('a child can be admitted, end to end, through the product', () => {
+  let formId = '';
+  let enquiryId = '';
+  let applicationId = '';
+  let decisionId = '';
+  let studentId = '';
+  let enrollmentId = '';
+
+  it('publishes an admission form', async () => {
+    const res = await POST('/v1/admissions/forms', officeToken, {
+      code: `adm_${randomUUID().slice(0, 8)}`,
+      title: 'Admission 2026-27',
+      jsonSchema: {
+        type: 'object',
+        required: ['previousSchool'],
+        properties: {
+          previousSchool: { type: 'string' },
+          motherTongue: { type: 'string' },
+        },
+      },
+    });
+    expect(res.status).toBe(201);
+    formId = res.body.data.id;
+    expect(res.body.data.published_at).toBeTruthy();
+
+    const listed = await GET('/v1/admissions/forms', officeToken);
+    expect(listed.body.data.map((f: any) => f.id)).toContain(formId);
+  });
+
+  it('records somebody who rang, with a name and a number and nothing else', async () => {
+    const res = await POST('/v1/admissions/enquiries', officeToken, {
+      name: 'Lakshmi Iyer', phone: '9876500011', source: 'phone',
+      campusId: tenant.campusId, programmeId, academicYearId,
+      note: 'Asked about Class IX for her son.',
+    });
+    expect(res.status).toBe(201);
+    enquiryId = res.body.data.enquiryId;
+
+    const pipeline = await GET('/v1/admissions/pipeline', officeToken);
+    const row = pipeline.body.data.find((r: any) => r.id === enquiryId);
+    expect(row.kind).toBe('enquiry');
+    expect(row.stage).toBe('enquired');
+    expect(row.phone).toBe('9876500011');
+  });
+
+  it('refuses an enquiry nobody could ring back', async () => {
+    const res = await POST('/v1/admissions/enquiries', officeToken, {
+      name: 'No Contact', source: 'walk_in',
+      campusId: tenant.campusId, programmeId, academicYearId,
+    });
+    // A named refusal, not a check-constraint 500 with Postgres's words in it.
+    expect(res.status).toBe(422);
+    expect(JSON.stringify(res.body)).toMatch(/ring them back/i);
+  });
+
+  it('refuses a form submission that does not answer the form', async () => {
+    // The whole reason an application carries a form_submission_id: the answer
+    // set is validated against a pinned version, so it is reproducible years
+    // later. A missing required answer has to fail here, not on the screen.
+    const res = await POST('/v1/admissions/applications', officeToken, {
+      givenName: 'Arjun', familyName: 'Iyer',
+      programmeId, academicYearId, formDefinitionId: formId,
+      answers: { motherTongue: 'Tamil' },
+    });
+    expect(res.status).toBe(422);
+    expect(JSON.stringify(res.body)).toMatch(/previousSchool/);
+  });
+
+  it('leaves no half-made applicant behind when the form is refused', async () => {
+    // Intake creates a person, a submission and an application. If the second
+    // or third fails and the first survives, an office retrying the form ends
+    // up with two children who are one child.
+    const orphans = await owner((c) => c.query<{ n: string }>(
+      `SELECT count(*)::text AS n FROM person
+        WHERE tenant_id = $1 AND given_name = 'Arjun'`, [tenant.orgId]));
+    expect(orphans.rows[0]!.n).toBe('0');
+  });
+
+  it('takes an application at the counter in one call', async () => {
+    const res = await POST('/v1/admissions/applications', officeToken, {
+      givenName: 'Arjun', familyName: 'Iyer', dateOfBirth: '2011-07-04',
+      programmeId, academicYearId, formDefinitionId: formId,
+      answers: { previousSchool: 'St Anne\'s', motherTongue: 'Tamil' },
+      enquiryId,
+    });
+    expect(res.status).toBe(201);
+    applicationId = res.body.data.id;
+    expect(res.body.data.application_no).toBeTruthy();
+
+    const pipeline = await GET('/v1/admissions/pipeline', officeToken);
+    const ids = pipeline.body.data.map((r: any) => r.id);
+    expect(ids).toContain(applicationId);
+    // And the enquiry it came from is no longer listed separately. One family,
+    // one row — listing both is how somebody gets rung about applying after
+    // they have applied.
+    expect(ids).not.toContain(enquiryId);
+  });
+
+  it('will not let an account with no staff row decide an admission', async () => {
+    // The guardian-shaped case: a real principal whose account was never
+    // linked to a person. The refusal is about attribution, not permission —
+    // an admission decision is the document a family disputes.
+    const noStaff = await createUser('nostaff@ws-test.example', PASSWORD);
+    await grantRole(tenant.orgId, noStaff.userId, 'ORG_OWNER', 'organization', null);
+    const token = await tokenFor(noStaff, ['ORG_OWNER']);
+
+    const res = await POST(`/v1/admissions/applications/${applicationId}/decide`, token,
+      { outcome: 'offered', offeredSectionId: sectionA });
+    expect(res.status).toBe(403);
+    expect(res.body.error.code).toBe('not_staff');
+
+    await destroyUsers([noStaff.userId]);
+  });
+
+  it('offers a place, attributed to the caller and not to the body', async () => {
+    const res = await POST(`/v1/admissions/applications/${applicationId}/decide`,
+      officeToken, {
+        outcome: 'offered', offeredSectionId: sectionA, offerValidDays: 14,
+        conditions: 'Subject to the transfer certificate.',
+      });
+    expect(res.status).toBe(201);
+    decisionId = res.body.data.id;
+
+    const stored = await owner((c) => c.query<{ decided_by: string }>(
+      'SELECT decided_by FROM admission_decision WHERE id = $1', [decisionId]));
+    expect(stored.rows[0]!.decided_by).toBe(officeStaffId);
+  });
+
+  it('accepting the offer is what creates the learner', async () => {
+    const res = await POST(`/v1/admissions/decisions/${decisionId}/accept`, officeToken,
+      { admissionNoPrefix: 'WS' });
+    expect(res.status).toBe(201);
+    studentId = res.body.data.enrollment.student_id;
+    enrollmentId = res.body.data.enrollment.id;
+    expect(res.body.data.enrollment.section_id).toBe(sectionA);
+
+    const learner = await GET(`/v1/students/${studentId}`, officeToken);
+    expect(learner.status).toBe(200);
+    expect(learner.body.data.given_name).toBe('Arjun');
+  });
+
+  it('shows the family as enrolled rather than as an open application', async () => {
+    const pipeline = await GET('/v1/admissions/pipeline', officeToken);
+    const row = pipeline.body.data.find((r: any) => r.id === applicationId);
+    expect(row.enrolled).toBe(true);
+    expect(row.accepted_at).toBeTruthy();
+  });
+
+  it('moves the learner between sections, and refuses to do it silently', async () => {
+    const noReason = await POST(`/v1/enrollments/${enrollmentId}/section`, officeToken,
+      { toSectionId: sectionB });
+    expect(noReason.status).toBe(422);
+
+    const moved = await POST(`/v1/enrollments/${enrollmentId}/section`, officeToken,
+      { toSectionId: sectionB, reason: 'Parent asked for the morning section.' });
+    expect(moved.status).toBe(201);
+    expect(moved.body.data.section_id).toBe(sectionB);
+
+    const history = await GET(`/v1/enrollments/${enrollmentId}/history`, officeToken);
+    expect(history.status).toBe(200);
+    expect(history.body.data.map((e: any) => e.event_type)).toContain('section_changed');
+    expect(JSON.stringify(history.body.data)).toMatch(/morning section/);
+  });
+
+  it('withdraws a learner, with a reason, and keeps the record', async () => {
+    const res = await POST(`/v1/enrollments/${enrollmentId}/withdraw`, officeToken,
+      { reason: 'Family relocating to Pune.' });
+    expect(res.status).toBe(201);
+    expect(res.body.data.status).toBe('withdrawn');
+
+    // Withdrawn, not deleted. The register for the term they were here is
+    // still the register for that term.
+    const still = await GET(`/v1/students/${studentId}`, officeToken);
+    expect(still.status).toBe(200);
   });
 });
 

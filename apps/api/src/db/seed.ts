@@ -752,6 +752,85 @@ async function main(): Promise<void> {
          i === 6 ? 'no_show' : 'boarded', randomUUID(), driverUserId]);
     }
 
+    // ---------------------------------------------------------- admissions
+    //
+    // M5's pipeline, populated, for the same reason as everything else in this
+    // seed: a screen with nothing on it demonstrates nothing. The shape is a
+    // funnel mid-season — two families who have only rung, one who has applied
+    // and is waiting on us, and one who has been offered a place and not yet
+    // replied. The fourth state, on the roll, is every learner above.
+    const admissionForm = await one<{ id: string }>(c,
+      `INSERT INTO form_definition
+         (tenant_id, code, version, title, purpose, json_schema, published_at)
+       VALUES ($1, 'admission_2026', 1, 'Admission 2026-27', 'application',
+               $2::jsonb, now()) RETURNING id`,
+      [tenantId, JSON.stringify({
+        type: 'object',
+        required: ['previousSchool', 'motherTongue'],
+        properties: {
+          previousSchool: { type: 'string', title: 'Previous school' },
+          motherTongue: {
+            type: 'string', title: 'Mother tongue',
+            enum: ['Hindi', 'Tamil', 'Telugu', 'Marathi', 'Bengali', 'English', 'Other'],
+          },
+          siblingHere: { type: 'boolean', title: 'Sibling already here' },
+        },
+      })]);
+
+    const ninthGroup = offerings.find((o) => o.className === 'Class IX');
+    const offerSection = sections[0]!;
+
+    for (const [name, phone, source, note] of [
+      ['Lakshmi Iyer', '9876500011', 'phone', 'Asked about Class IX for her son.'],
+      ['Farhan Qureshi', '9876500012', 'walk_in', 'Came in with his daughter. Wants a tour.'],
+    ] as Array<[string, string, string, string]>) {
+      const lead = await one<{ id: string }>(c,
+        `INSERT INTO lead (tenant_id, campus_id, source, name, phone)
+         VALUES ($1, $2, $3, $4, $5) RETURNING id`,
+        [tenantId, campus.id, source, name, phone]);
+      await c.query(
+        `INSERT INTO enquiry
+           (tenant_id, lead_id, programme_id, academic_year_id, stage, next_action_note)
+         VALUES ($1, $2, $3, $4, 'enquired', $5)`,
+        [tenantId, lead.id, programme.id, year.id, note]);
+    }
+
+    for (const [i, [given, family, decide]] of ([
+      ['Arjun', 'Nair', false],
+      ['Diya', 'Kulkarni', true],
+    ] as Array<[string, string, boolean]>).entries()) {
+      const applicant = await one<{ id: string }>(c,
+        `INSERT INTO person (tenant_id, given_name, family_name, date_of_birth)
+         VALUES ($1, $2, $3, ('2011-08-1' || $4)::date) RETURNING id`,
+        [tenantId, given, family, String(i)]);
+      const submission = await one<{ id: string }>(c,
+        `INSERT INTO form_submission (tenant_id, form_definition_id, payload)
+         VALUES ($1, $2, $3::jsonb) RETURNING id`,
+        [tenantId, admissionForm.id, JSON.stringify({
+          previousSchool: i === 0 ? "St Anne's" : 'Kendriya Vidyalaya',
+          motherTongue: i === 0 ? 'Tamil' : 'Marathi',
+          siblingHere: i === 1,
+        })]);
+      const app = await one<{ id: string }>(c,
+        `INSERT INTO application
+           (tenant_id, applicant_person_id, programme_id, academic_year_id,
+            application_no, form_submission_id, status, submitted_at)
+         VALUES ($1, $2, $3, $4, $5, $6, 'submitted', now() - ($7 || ' days')::interval)
+         RETURNING id`,
+        [tenantId, applicant.id, programme.id, year.id,
+         `APP-2026-000${i + 1}`, submission.id, String(6 - i * 3)]);
+
+      if (decide && signedInTeacherStaffId && ninthGroup) {
+        await c.query(
+          `INSERT INTO admission_decision
+             (tenant_id, application_id, outcome, decided_by, offered_section_id,
+              offer_expires_at, conditions)
+           VALUES ($1, $2, 'offered', $3, $4, now() + interval '9 days',
+                   'Subject to the transfer certificate.')`,
+          [tenantId, app.id, signedInTeacherStaffId, offerSection.id]);
+      }
+    }
+
     // ------------------------------------------------------------------- HR
     //
     // M27's tables, populated, because M32 gave them a screen and a screen
@@ -939,7 +1018,8 @@ async function main(): Promise<void> {
     console.log(`  40 learners, 4 sections, 24 invoices, today's attendance for one section`);
     console.log(`  2 bus routes, 12 riders, this morning's run recorded`);
     console.log(`  2 lessons and 3 assignments in Class IX, one already marked`);
-    console.log(`  3 leave types, one request awaiting a decision, one teacher away\n`);
+    console.log(`  3 leave types, one request awaiting a decision, one teacher away`);
+    console.log(`  an admission form, 2 enquiries, 2 applications, 1 offer out\n`);
     await printLogins(c, tenantId);
   } catch (error) {
     await c.query('ROLLBACK');

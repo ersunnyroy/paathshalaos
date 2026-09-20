@@ -1,6 +1,7 @@
 import { withTenant, type TenantScope, type TenantClient } from '../../db/tenant.ts';
 import { auditService } from '../audit/audit.service.ts';
 import { ApiError } from '../../common/errors.ts';
+import { formsService } from './forms.service.ts';
 
 export interface Application {
   id: string;
@@ -55,6 +56,225 @@ async function nextApplicationNo(
 }
 
 export const admissionsService = {
+
+  /**
+   * The pipeline, as one list.
+   *
+   * Added with M32's controller. M5 built every step of admissions and no way
+   * to see them together, because nothing that needed the list existed — the
+   * same absence M27 had, found the same way.
+   *
+   * Enquiries and applications are separate tables and deliberately one list
+   * here: an office does not think in terms of which table a family is in, it
+   * thinks "who have we heard from and what happens next". A screen that makes
+   * somebody check two places is a screen where the second place stops being
+   * checked.
+   */
+  async pipeline(scope: TenantScope, opts: { academicYearId?: string | undefined } = {}):
+  Promise<Array<{
+    kind: 'enquiry' | 'application';
+    id: string; person_id: string | null; name: string;
+    phone: string | null; programme_name: string | null;
+    stage: string; application_no: string | null;
+    decision_id: string | null; outcome: string | null;
+    offered_section: string | null; offer_expires_at: string | null;
+    accepted_at: string | null; declined_at: string | null;
+    enrolled: boolean; created_at: string;
+  }>> {
+    return withTenant(scope, async (db) => {
+      const { rows } = await db.query<{
+        kind: 'enquiry' | 'application';
+        id: string; person_id: string | null; name: string;
+        phone: string | null; programme_name: string | null;
+        stage: string; application_no: string | null;
+        decision_id: string | null; outcome: string | null;
+        offered_section: string | null; offer_expires_at: string | null;
+        accepted_at: string | null; declined_at: string | null;
+        enrolled: boolean; created_at: string;
+      }>(
+        `SELECT 'application'::text AS kind, a.id, a.applicant_person_id AS person_id,
+                p.given_name || COALESCE(' ' || p.family_name, '') AS name,
+                NULL::text AS phone, pr.name AS programme_name,
+                a.status AS stage, a.application_no,
+                d.id AS decision_id, d.outcome, sec.name AS offered_section,
+                d.offer_expires_at::text, d.accepted_at::text, d.declined_at::text,
+                EXISTS (SELECT 1 FROM enrollment e
+                         WHERE e.student_id = (SELECT st.id FROM student st
+                                                WHERE st.person_id = a.applicant_person_id))
+                  AS enrolled,
+                a.created_at::text
+           FROM application a
+           JOIN person p ON p.id = a.applicant_person_id
+           LEFT JOIN programme pr ON pr.id = a.programme_id
+           -- The decision in force. Superseded ones stay on the record — that
+           -- is the point of M5's supersede path — and must not appear here as
+           -- a second row for the same family.
+           LEFT JOIN LATERAL (
+             SELECT d2.* FROM admission_decision d2
+              WHERE d2.application_id = a.id AND d2.superseded_at IS NULL
+              ORDER BY d2.decided_at DESC LIMIT 1) d ON true
+           LEFT JOIN section sec ON sec.id = d.offered_section_id
+          WHERE a.deleted_at IS NULL
+            AND ($1::uuid IS NULL OR a.academic_year_id = $1)
+
+          UNION ALL
+
+         SELECT 'enquiry'::text, e.id, NULL::uuid,
+                l.name, l.phone, pr.name, e.stage, NULL::text,
+                NULL::uuid, NULL::text, NULL::text, NULL::text, NULL::text, NULL::text,
+                false, e.created_at::text
+           FROM enquiry e
+           JOIN lead l ON l.id = e.lead_id
+           LEFT JOIN programme pr ON pr.id = e.programme_id
+          WHERE e.deleted_at IS NULL
+            -- An enquiry that became an application is shown as the
+            -- application. Listing both is how one family gets rung twice.
+            AND e.stage NOT IN ('closed_won', 'closed_lost')
+            AND NOT EXISTS (SELECT 1 FROM application a2 WHERE a2.enquiry_id = e.id)
+            AND ($1::uuid IS NULL OR e.academic_year_id = $1)
+
+          ORDER BY created_at DESC`,
+        [opts.academicYearId ?? null]);
+      return rows;
+    });
+  },
+
+  /** Published admission forms, for the intake screen's picker. */
+  async admissionForms(scope: TenantScope): Promise<Array<{
+    id: string; code: string; version: number; title: string; json_schema: unknown;
+  }>> {
+    return withTenant(scope, async (db) => {
+      const { rows } = await db.query<{
+        id: string; code: string; version: number; title: string; json_schema: unknown;
+      }>(
+        `SELECT DISTINCT ON (code) id, code, version, title, json_schema
+           FROM form_definition
+          WHERE purpose = 'application' AND published_at IS NOT NULL
+          ORDER BY code, version DESC`);
+      return rows;
+    });
+  },
+
+  /**
+   * Somebody rang, or walked in.
+   *
+   * The cheapest possible record, because the alternative is a note on paper.
+   * A lead with a name and a phone number is worth more than a perfect record
+   * that nobody had time to make.
+   */
+  async recordEnquiry(scope: TenantScope, input: {
+    name: string; phone?: string | undefined; email?: string | undefined;
+    source: string; campusId: string;
+    programmeId: string; academicYearId: string;
+    note?: string | undefined;
+  }): Promise<{ leadId: string; enquiryId: string }> {
+    const made = await withTenant(scope, async (db) => {
+      const lead = await db.query<{ id: string }>(
+        `INSERT INTO lead (tenant_id, campus_id, source, name, phone, email)
+         VALUES (app_current_tenant_id(), $1::uuid, $2, $3, $4, $5) RETURNING id`,
+        [input.campusId, input.source, input.name, input.phone ?? null,
+         input.email ?? null]);
+      const enquiry = await db.query<{ id: string }>(
+        `INSERT INTO enquiry
+           (tenant_id, lead_id, programme_id, academic_year_id, stage,
+            next_action_note)
+         VALUES (app_current_tenant_id(), $1::uuid, $2::uuid, $3::uuid,
+                 'enquired', $4) RETURNING id`,
+        [lead.rows[0]!.id, input.programmeId, input.academicYearId,
+         input.note ?? null]);
+      return { leadId: lead.rows[0]!.id, enquiryId: enquiry.rows[0]!.id };
+    });
+
+    await auditService.record({
+      tenantId: scope.tenantId,
+      ...(scope.actorId ? { actorUserId: scope.actorId } : {}),
+      action: 'enquiry.recorded', resourceType: 'enquiry',
+      resourceId: made.enquiryId, classification: 'INTERNAL',
+    });
+    return made;
+  },
+
+  /**
+   * A family at the counter, in one call.
+   *
+   * `createApplication` needs a person and a validated form submission, which
+   * is right — an application without an answer set is an application nobody
+   * can reproduce years later. But it means the counter path is three calls
+   * that must all succeed, and a screen that leaves a person row behind when
+   * the third fails is a screen that creates duplicate children.
+   *
+   * So this is one method: the person, the submission and the application, in
+   * that order, and the application's own failure takes the lot with it
+   * because `withTenant` is a transaction.
+   */
+  async intake(scope: TenantScope, input: {
+    givenName: string; familyName?: string | undefined; dateOfBirth?: string | undefined;
+    programmeId: string; academicYearId: string; formDefinitionId: string;
+    answers: Record<string, unknown>;
+    enquiryId?: string | undefined;
+    requiredDocuments?: string[] | undefined;
+  }): Promise<Application> {
+    // ONE transaction. The first version of this was three `withTenant` calls
+    // and a comment claiming they were atomic, which they are not: `withTenant`
+    // opens a transaction per call. An HTTP test that submitted answers failing
+    // validation then found the person row still there — so an office retrying
+    // the form ends up with two children who are one child.
+    //
+    // The validation and the version pinning stay in the forms service, which
+    // owns them; only the transaction boundary moved.
+    const application = await withTenant(scope, async (db) => {
+      const person = await db.query<{ id: string }>(
+        `INSERT INTO person (tenant_id, given_name, family_name, date_of_birth)
+         VALUES (app_current_tenant_id(), $1, $2, $3::date) RETURNING id`,
+        [input.givenName, input.familyName ?? null, input.dateOfBirth ?? null]);
+      const personId = person.rows[0]!.id;
+
+      const submission = await formsService.submitWithin(db, scope, {
+        formDefinitionId: input.formDefinitionId,
+        payload: input.answers,
+      });
+
+      const created = await this.createApplicationWithin(db, scope, {
+        applicantPersonId: personId,
+        programmeId: input.programmeId,
+        academicYearId: input.academicYearId,
+        formSubmissionId: submission.id,
+        ...(input.enquiryId ? { enquiryId: input.enquiryId } : {}),
+        ...(input.requiredDocuments ? { requiredDocuments: input.requiredDocuments } : {}),
+      });
+
+      if (input.enquiryId) {
+        // The enquiry did its job. Leaving it open is how a family gets rung
+        // about applying after they have applied.
+        await db.query(
+          `UPDATE enquiry SET stage = 'form_submitted', form_submission_id = $2::uuid,
+                              updated_at = now()
+            WHERE id = $1::uuid`, [input.enquiryId, submission.id]);
+      }
+      return created;
+    });
+
+    await auditService.record({
+      tenantId: scope.tenantId,
+      ...(scope.actorId ? { actorUserId: scope.actorId } : {}),
+      action: 'application.submitted',
+      resourceType: 'application',
+      resourceId: application.id,
+      classification: 'SENSITIVE',
+      after: { applicationNo: application.application_no },
+    });
+
+    return application;
+  },
+
+  /** The caller's own staff row, for attributing a decision. */
+  async currentStaffId(scope: TenantScope): Promise<string | undefined> {
+    return withTenant(scope, async (db) => {
+      const { rows } = await db.query<{ staff_id: string | null }>(
+        'SELECT app_current_staff_id() AS staff_id');
+      return rows[0]?.staff_id ?? undefined;
+    });
+  },
   /** Converts a submitted form into an application with its document checklist. */
   async createApplication(
     scope: TenantScope,
@@ -68,7 +288,36 @@ export const admissionsService = {
       numberPrefix?: string;
     },
   ): Promise<Application> {
-    const created = await withTenant(scope, async (db) => {
+    const created = await withTenant(scope,
+      (db) => this.createApplicationWithin(db, scope, input));
+
+    await auditService.record({
+      tenantId: scope.tenantId,
+      actorUserId: scope.actorId,
+      action: 'application.submitted',
+      resourceType: 'application',
+      resourceId: created.id,
+      classification: 'SENSITIVE',
+      after: { applicationNo: created.application_no },
+    });
+    return created;
+  },
+
+  /** As above, inside a transaction the caller already opened. See intake. */
+  async createApplicationWithin(
+    db: TenantClient,
+    scope: TenantScope,
+    input: {
+      applicantPersonId: string;
+      programmeId: string;
+      academicYearId: string;
+      formSubmissionId: string;
+      enquiryId?: string | undefined;
+      requiredDocuments?: string[] | undefined;
+      numberPrefix?: string | undefined;
+    },
+  ): Promise<Application> {
+    {
       const applicationNo = await nextApplicationNo(
         db, input.academicYearId, input.numberPrefix ?? 'APP-',
       );
@@ -103,18 +352,7 @@ export const admissionsService = {
         );
       }
       return application;
-    });
-
-    await auditService.record({
-      tenantId: scope.tenantId,
-      actorUserId: scope.actorId,
-      action: 'application.submitted',
-      resourceType: 'application',
-      resourceId: created.id,
-      classification: 'SENSITIVE',
-      after: { applicationNo: created.application_no },
-    });
-    return created;
+    }
   },
 
   async attachDocument(
@@ -207,11 +445,11 @@ export const admissionsService = {
       applicationId: string;
       outcome: 'offered' | 'waitlisted' | 'rejected';
       decidedByStaffId: string;
-      offeredSectionId?: string;
-      offerValidDays?: number;
-      conditions?: string;
-      reason?: string;
-      supersede?: boolean;
+      offeredSectionId?: string | undefined;
+      offerValidDays?: number | undefined;
+      conditions?: string | undefined;
+      reason?: string | undefined;
+      supersede?: boolean | undefined;
     },
   ): Promise<AdmissionDecision> {
     if (input.outcome === 'offered' && !input.offeredSectionId) {
@@ -288,7 +526,8 @@ export const admissionsService = {
    */
   async acceptOfferAndEnrol(
     scope: TenantScope,
-    input: { decisionId: string; admissionNoPrefix?: string; rollNo?: string },
+    input: { decisionId: string; admissionNoPrefix?: string | undefined;
+             rollNo?: string | undefined },
   ): Promise<{ decision: AdmissionDecision; enrollment: EnrollmentRow }> {
     const result = await withTenant(scope, async (db) => {
       const found = await db.query<{

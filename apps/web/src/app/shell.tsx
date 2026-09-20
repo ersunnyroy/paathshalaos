@@ -30,6 +30,7 @@ const GROUPS: Array<{ title: string; items: Array<{ href: string; label: string;
   {
     title: 'Daily',
     items: [
+      { href: '/admissions', label: 'Admissions', icon: Icon.inbox },
       { href: '/students', label: 'Learners', icon: Icon.learners },
       { href: '/attendance', label: 'Attendance', icon: Icon.attendance },
       { href: '/transport', label: 'Transport', icon: Icon.bus },

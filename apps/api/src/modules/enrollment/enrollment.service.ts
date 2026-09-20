@@ -62,7 +62,8 @@ export const enrollmentService = {
    */
   async changeSection(
     scope: TenantScope,
-    input: { enrollmentId: string; toSectionId: string; reason: string; effectiveOn?: string },
+    input: { enrollmentId: string; toSectionId: string; reason: string;
+             effectiveOn?: string | undefined },
   ): Promise<Enrollment> {
     if (!input.reason.trim()) {
       throw ApiError.make('validation_error', 'reason_required',
@@ -232,14 +233,15 @@ export const enrollmentService = {
 
   async withdraw(
     scope: TenantScope,
-    input: { enrollmentId: string; reason: string; effectiveOn?: string },
+    input: { enrollmentId: string; reason: string; effectiveOn?: string | undefined },
   ): Promise<Enrollment> {
     return this.close(scope, { ...input, to: 'withdrawn', eventType: 'withdrawn' });
   },
 
   async complete(
     scope: TenantScope,
-    input: { enrollmentId: string; reason?: string; effectiveOn?: string },
+    input: { enrollmentId: string; reason?: string | undefined;
+             effectiveOn?: string | undefined },
   ): Promise<Enrollment> {
     return this.close(scope, {
       ...input, reason: input.reason ?? 'Programme completed.',
@@ -250,7 +252,7 @@ export const enrollmentService = {
   async close(
     scope: TenantScope,
     input: {
-      enrollmentId: string; reason: string; effectiveOn?: string;
+      enrollmentId: string; reason: string; effectiveOn?: string | undefined;
       to: 'withdrawn' | 'completed'; eventType: 'withdrawn' | 'completed';
     },
   ): Promise<Enrollment> {

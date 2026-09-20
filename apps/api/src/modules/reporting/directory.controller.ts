@@ -39,6 +39,26 @@ export class DirectoryController {
     };
   }
 
+  /**
+   * Programmes, because two screens now need to name one.
+   *
+   * An enquiry and an application both say which programme a family is asking
+   * about, and until M32 nothing could list them — the same absence as the
+   * staff roster and the admissions pipeline, from the same cause: no screen
+   * had needed it.
+   */
+  @Get('programmes')
+  async programmes() {
+    return {
+      data: await withTenant(currentScope(), async (db) => {
+        const { rows } = await db.query(
+          `SELECT id, code, name, credential_type
+             FROM programme WHERE deleted_at IS NULL ORDER BY name`);
+        return rows;
+      }),
+    };
+  }
+
   @Get('terms')
   async terms(@Query('academicYearId') academicYearId?: string) {
     const parsed = uuid.optional().safeParse(academicYearId);
