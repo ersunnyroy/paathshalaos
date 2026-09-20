@@ -99,6 +99,22 @@ export const schemaVersion = new Gauge({
 });
 
 /**
+ * Migrations applied that THIS build does not ship.
+ *
+ * DO: zero is the steady state. Non-zero during a deploy is the normal
+ * transient — the new version migrated and this instance has not been replaced
+ * yet. Non-zero for longer than a deploy takes means an instance was left
+ * behind, and it is serving traffic against a schema it does not understand.
+ * Pairs with `paathshala_schema_migrations_applied` and M23's
+ * SchemaVersionSplit alert, which compares instances rather than absolutes.
+ */
+export const schemaAhead = new Gauge({
+  name: 'paathshala_schema_migrations_ahead',
+  help: 'Migrations applied to the database that this build does not ship',
+  registers: [registry],
+});
+
+/**
  * Requests refused because a school is past due.
  *
  * DO: this going from zero to hundreds means the billing ladder has caught a

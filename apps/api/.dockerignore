@@ -1,0 +1,19 @@
+# Everything that must not reach the build context.
+#
+# .env first and deliberately: a build context that contains a secrets file
+# puts that file in a layer, and a layer is not deleted by a later `rm`.
+.env
+.env.*
+!.env.example
+
+node_modules
+**/node_modules
+dist
+**/dist
+.next
+**/.next
+coverage
+*.log
+.git
+.DS_Store
+backups

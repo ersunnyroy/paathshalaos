@@ -897,6 +897,55 @@ service check is actually for.
 And breaking the half-day arithmetic failed nothing, because no test approved a half-day
 absence. Half days are the smallest unit any school here tracks.
 
+## M22 — deployment, the half that can be checked
+
+Docker's daemon is unreachable from both environments this was built in, and there is no
+AWS account. So M22 splits: the part whose correctness is a property of the code, which is
+done and tested, and the part whose correctness is a property of a running system, which
+is written and explicitly unverified.
+
+| ID | Part | Status | What it is |
+| --- | --- | --- | --- |
+| M22.1 | The schema guard | Done | The process refuses to start against a database that is **behind** it, reports one that is **ahead**, and refuses either way on a changed checksum |
+| M22.2 | Container images | **Written, never built** | `apps/api/Dockerfile`, multi-stage, non-root, no compiler in the runtime stage. No image of it exists |
+| M22.3 | A local stack | **Written, never run** | `bootstrap → migrate → api` in compose, in that order and for a reason |
+| M22.4 | Cloud infrastructure | **Not done** | Needs an AWS account. Not written either: unverifiable Terraform is worse than none, because it looks like progress |
+
+### Behind is fatal, ahead is not
+
+The asymmetry is the whole design. A process whose migrations have **not been applied**
+will query columns that do not exist — and worse, may write rows into a table missing a
+constraint the pending migration was going to add. There is no legitimate deployment in
+which code runs ahead of its own migrations, so that is a refusal to start.
+
+A database with migrations the process does **not ship** is the ordinary state of a rolling
+deploy: the new version migrated, and old instances keep serving until they are replaced.
+Refusing there would make every deploy fail at its first step. So it is reported —
+to `paathshala_schema_migrations_ahead`, which M23's `SchemaVersionSplit` alert already
+watches, because "an instance was left behind" is a judgement about duration that a boot
+check cannot make and an alert can.
+
+### The comment that described a migration which did not exist
+
+The guard's first version queried `schema_migration` directly, under a comment saying it
+went through a function "so the application role still needs no grant". The platform role
+has no grant on that table — 0070 had already hit the same wall — so the check failed on
+its first run. The comment was describing 0075, which had not been written yet.
+
+Writing the comment first and the code second is how a file ends up documenting an
+intention rather than a behaviour. Fourth time this project has caught a version of that.
+
+### And the compose chain would have failed where M24 said it would
+
+The four application roles are **cluster-level objects**. Nothing in the migration history
+creates them, every `GRANT` in every migration names one, and M24's restore drill found
+exactly this by emptying `roles.sql`. So compose runs `bootstrap` before `migrate` — without
+it the first `GRANT` fails, which reads as a broken migration rather than a missing
+prerequisite.
+
+**Nothing in M22.2 or M22.3 has been built or run.** The first `docker build` will find
+something; that is what a first build is for.
+
 ## The rest of the plan (M20–M31)
 
 The first nineteen milestones were a plan that ran out rather than a plan that finished.
@@ -927,7 +976,7 @@ follow real usage instead of guesses.
 | ID | Milestone | Definition of done |
 | --- | --- | --- |
 | M21 | The parent app — **done, see above** | The mobile app stops being one screen. Attendance, fees, results and messages for a guardian's own children, readable offline. This is where parents actually live, and today they have nothing |
-| M22 | Deployed, reproducibly | Infrastructure as code for the AWS India region, two environments, secrets that are not in a repository, migrations that run as part of a deploy, and a rollback that has been performed rather than described |
+| M22 | Deployed, reproducibly — **schema guard done, rest blocked** | Infrastructure as code for the AWS India region, two environments, secrets that are not in a repository, migrations that run as part of a deploy, and a rollback that has been performed rather than described |
 | M23 | Observability — **done, see above** | Structured logs with a request id that survives across services, metrics, traces, and alerts that fire on the things that would actually hurt — failed migrations, auth error rates, webhook backlog, queue depth |
 | M24 | Backup and restore — **partly done, see above** | Point-in-time recovery, and a **restore drill that has actually been run** with the time it took written down. A backup nobody has restored is a belief, not a backup |
 | M25 | Taking money from schools — **invoicing done, see above** | Subscription invoicing against M16's plans, GST, and one payment provider. M16 deliberately stopped short of this; a metered plan nobody is billed for is a spreadsheet |
@@ -998,6 +1047,7 @@ left to the end.
 | M24 Backup and restore | Partly | drill | 4 damaged restores tried, 3 caught — the 4th found a drill that could not fail. PITR still missing |
 | M25 Invoicing schools | Mostly | 41 | 8 mutations verified; unequal tax halves caught by a CHECK constraint, three tables caught by the M1 RLS invariant, one float right almost always. Payment provider not done |
 | M27 HR and relief cover | Done | 28 | 8 mutations verified; closed a limitation attendance had carried since M6. 2 survivors: a check whose value is its message, and an untested half day |
+| M22 Deploy safety | Partly | 14 | 5 mutations verified. Dockerfile and compose written but never built — no reachable Docker daemon, no AWS account |
 
 Two design decisions were made during M2 that are worth carrying forward:
 

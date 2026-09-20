@@ -9,6 +9,7 @@ const env = loadEnv();
 
 const { AppModule } = await import('./app.module.ts');
 const { logger } = await import('./common/logger.ts');
+const { assertSchemaMatchesCode } = await import('./db/schema-guard.ts');
 const { assertAppRoleCannotBypassRls, closePool } = await import('./db/pool.ts');
 const { assertAuthRoleIsIsolated, closeAuthPool } = await import('./db/auth-pool.ts');
 const { assertHealthRoleIsNarrow, closeHealthPool } = await import('./db/health-pool.ts');
@@ -16,7 +17,9 @@ const { assertPlatformRoleCannotReadTenants, closePlatformPool } =
   await import('./db/platform-pool.ts');
 
 async function bootstrap(): Promise<void> {
-  // Fail fast and loudly rather than serving traffic with broken isolation.
+  // Fail fast and loudly rather than serving traffic with broken isolation,
+  // or against a schema this build does not understand.
+  await assertSchemaMatchesCode();
   await assertAppRoleCannotBypassRls();
   await assertAuthRoleIsIsolated();
   await assertHealthRoleIsNarrow();
