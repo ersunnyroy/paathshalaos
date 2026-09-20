@@ -800,6 +800,58 @@ statements, which holds whatever cluster it runs against.
 A drill that cannot fail is a ritual, and the only way to find out which one you have is
 to break it on purpose. Same rule as the code.
 
+## M25 — taking money from schools
+
+Subscription invoicing against M16's plans, with the tax a document issued in India has
+to carry. **Not** the payment provider: that needs credentials and an account, and
+writing an integration nobody can run would be the same as writing a feature flag that
+guards nothing.
+
+| ID | Part | Status | What it is |
+| --- | --- | --- | --- |
+| M25.1 | The tax arithmetic | Done | Place of supply decides the regime — intra-state splits into CGST and SGST, inter-state is IGST, never both. Each half levied at half the rate, separately rounded |
+| M25.2 | Issuing | Done | One invoice per subscription period, with the parties **copied** onto it rather than joined, because an invoice is a statement about what was true when it was issued |
+| M25.3 | A series without gaps | Done | A locked counter row, not a sequence. A sequence does not roll back, and a hole in a statutory series is a question from an auditor about a document that does not exist |
+| M25.4 | Corrections | Done | Credit notes, with their own series. An issued invoice is frozen by trigger; nothing amends it |
+| M25.5 | A payment provider | **Not done** | Needs an account and credentials. Written down as missing rather than stubbed |
+
+**Not verified by an accountant.** The mechanics — the split, the rounding, the numbering,
+the immutability — are implemented precisely and tested against themselves. The rate and
+the SAC code are inputs rather than constants, deliberately: they are the parts a
+professional has to confirm, and a constant would hide that they were assumed. M31 has the
+review.
+
+### The schema and the code disagreed, loudly, on the first run
+
+The first version computed the whole tax and split it in two. The test run caught it
+immediately: eighteen per cent of 1234.51 is 222.21 paise, which does not halve evenly, so
+the two halves differed by a paise — and `CHECK (cgst = sgst)` in 0071 would have refused
+the insert.
+
+Halving the total is also not the rule. Each component is levied at half the rate: nine per
+cent of 1234.51 is 111.11, twice, summing to 222.22 rather than 222.21. The one-paise gap
+from the inter-state figure is a property of the tax, and the version that looked tidier
+was the wrong one.
+
+### And the M1 isolation invariant caught 0071
+
+`rls_coverage` names every table with a `tenant_id` and no forced policy, and three of the
+new ones were on the list. The tempting answer was to exempt them: they are platform tables
+and the application role has no grant on them, so a school cannot read its own invoice
+whatever happens.
+
+That is a fact about today's `GRANT` statements. The next migration adding a reporting view
+changes it in one line, silently. 0072 gives them RLS with a policy naming only the platform
+role, so the application role is refused even if it is granted the table.
+
+### A float that was right almost always
+
+Breaking the exact quantity arithmetic failed no test. Every value in the suite agreed
+between the exact path and `Number(q) * Number(p)` — they first diverge at 0.29 of
+₹1000.50, which is 290.145 exactly, a half paise that the float lands below. That case is
+in the tests now. Third time this project has found a claim that no test could tell from
+its opposite.
+
 ## The rest of the plan (M20–M31)
 
 The first nineteen milestones were a plan that ran out rather than a plan that finished.
@@ -833,7 +885,7 @@ follow real usage instead of guesses.
 | M22 | Deployed, reproducibly | Infrastructure as code for the AWS India region, two environments, secrets that are not in a repository, migrations that run as part of a deploy, and a rollback that has been performed rather than described |
 | M23 | Observability — **done, see above** | Structured logs with a request id that survives across services, metrics, traces, and alerts that fire on the things that would actually hurt — failed migrations, auth error rates, webhook backlog, queue depth |
 | M24 | Backup and restore — **partly done, see above** | Point-in-time recovery, and a **restore drill that has actually been run** with the time it took written down. A backup nobody has restored is a belief, not a backup |
-| M25 | Taking money from schools | Subscription invoicing against M16's plans, GST, and one payment provider. M16 deliberately stopped short of this; a metered plan nobody is billed for is a spreadsheet |
+| M25 | Taking money from schools — **invoicing done, see above** | Subscription invoicing against M16's plans, GST, and one payment provider. M16 deliberately stopped short of this; a metered plan nobody is billed for is a spreadsheet |
 | M26 | Taking money from parents | A real gateway behind M7's mandates and reconciliation — UPI AutoPay and cards. The ledger, the receipts and the settlement matching already exist and have never seen a live rupee |
 
 ### Everything else named as a gap
@@ -899,6 +951,7 @@ left to the end.
 | M21 Parent app | Done | 84 | 26 mutations verified; a policy pair that recursed for everyone, 4 tests weaker than they looked, 1 comment borrowing a hazard |
 | M23 Observability | Done | 39 | 12 mutations verified; an interceptor blind to guard refusals, and a backlog gauge reporting a confident zero |
 | M24 Backup and restore | Partly | drill | 4 damaged restores tried, 3 caught — the 4th found a drill that could not fail. PITR still missing |
+| M25 Invoicing schools | Mostly | 41 | 8 mutations verified; unequal tax halves caught by a CHECK constraint, three tables caught by the M1 RLS invariant, one float right almost always. Payment provider not done |
 
 Two design decisions were made during M2 that are worth carrying forward:
 

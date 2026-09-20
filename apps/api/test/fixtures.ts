@@ -88,6 +88,13 @@ const TABLE_TEARDOWN_ORDER = [
   'guardian_link', 'student', 'staff', 'programme',
   'role_grant', 'tenant_principal', 'contact_method', 'address',
   'tenant_branding', 'tenant_domain',
+  // platform_invoice_line is not here on purpose: it has no tenant_id (it is
+  // a child of platform_invoice) and is removed by ON DELETE CASCADE. Listing
+  // it produced `column "tenant_id" does not exist`, which failed teardown,
+  // which left subscriptions behind, which broke the NEXT suite's purge on a
+  // foreign key — a teardown bug presenting as somebody else's failure.
+  'platform_credit_note', 'platform_invoice',
+  'tenant_billing_profile',
   'subscription_event', 'subscription',
   'impersonation_session', 'audit_checkpoint',
   'person',
@@ -105,6 +112,10 @@ const TABLE_TEARDOWN_ORDER = [
  */
 const APPEND_ONLY_TRIGGERS: ReadonlyArray<readonly [string, string]> = [
   ['consent_record', 'consent_record_append_only'],
+  ['platform_invoice', 'platform_invoice_no_delete'],
+  ['platform_invoice', 'platform_invoice_frozen'],
+  ['platform_credit_note', 'platform_credit_note_no_delete'],
+  ['platform_credit_note', 'platform_credit_note_no_update'],
   ['subscription_event', 'subscription_event_no_update'],
   ['subscription_event', 'subscription_event_no_delete'],
   ['enrollment_event', 'enrollment_event_no_update'],
@@ -263,6 +274,7 @@ export async function destroyUsers(userIds: string[]): Promise<void> {
         `DELETE FROM kb_article_version WHERE kb_article_id IN (
            SELECT id FROM kb_article WHERE created_by = ANY($1))`, [userIds]);
       await client.query('DELETE FROM kb_article WHERE created_by = ANY($1)', [userIds]);
+
     } finally {
       for (const [table, trigger] of APPEND_ONLY_TRIGGERS) {
         await client.query(`ALTER TABLE ${table} ENABLE TRIGGER ${trigger}`);
@@ -566,10 +578,17 @@ export async function purgeTestData(emailDomain = '%-test.example'): Promise<voi
                        'enquiry', 'lead', 'form_submission', 'form_definition']) {
         await client.query(`DELETE FROM ${t} WHERE tenant_id = ANY($1)`, [tenantIds]);
       }
-      for (const [table, trigger] of APPEND_ONLY_TRIGGERS) {
-        await client.query(`ALTER TABLE ${table} ENABLE TRIGGER ${trigger}`);
-      }
       await client.query('DELETE FROM impersonation_session WHERE tenant_id = ANY($1)', [tenantIds]);
+      // Billing, before the subscriptions the invoices point at, before the
+      // accounts subscription_event names. purgeTestData deletes user
+      // accounts, and subscription_event.actor_user_id references one — a
+      // suite that left a subscription behind made the NEXT suite's purge
+      // fail on that foreign key.
+      for (const t of ['platform_credit_note', 'platform_invoice',
+                       'tenant_billing_profile',
+                       'subscription_event', 'subscription']) {
+        await client.query(`DELETE FROM ${t} WHERE tenant_id = ANY($1)`, [tenantIds]);
+      }
       for (const t of ['schedule_slot', 'course_offering', 'section', 'class_group',
                        'room', 'subject', 'term', 'programme']) {
         await client.query(`DELETE FROM ${t} WHERE tenant_id = ANY($1)`, [tenantIds]);
@@ -625,6 +644,23 @@ export async function purgeTestData(emailDomain = '%-test.example'): Promise<voi
       await client.query('DELETE FROM organization WHERE id = ANY($1)', [tenantIds]);
     }
   } finally {
+    // At the very end, and outside every branch — which is what the comment
+    // above the disable has always said and what the code did not do. The
+    // re-enable sat inside `if (tenantIds.length > 0)`, halfway through it, so
+    // a purge that found no tenants left EVERY append-only trigger disabled
+    // for the rest of the run. The next suite to assert that a published form
+    // cannot be edited then watched the edit succeed.
+    //
+    // In the `finally`, so an exception mid-purge does not leave the database
+    // with its immutability switched off either.
+    try {
+      for (const [table, trigger] of APPEND_ONLY_TRIGGERS) {
+        await client.query(`ALTER TABLE ${table} ENABLE TRIGGER ${trigger}`);
+      }
+    } catch {
+      // The connection is already gone, or the table is. Nothing useful to do
+      // here, and throwing would replace the real error with this one.
+    }
     await client.end();
   }
 }
