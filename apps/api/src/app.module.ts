@@ -38,6 +38,7 @@ import { ConsentController } from './modules/people/consent.controller.ts';
 import { AcademicsController } from './modules/academics/academics.controller.ts';
 import { FamilyController } from './modules/family/family.controller.ts';
 import { LocaleController } from './modules/i18n/locale.controller.ts';
+import { ScheduleController } from './modules/scheduler/schedule.controller.ts';
 
 @Module({
   controllers: [
@@ -51,7 +52,7 @@ import { LocaleController } from './modules/i18n/locale.controller.ts';
     MessagingController, ImportController,
     AssessmentController, ResultRunController,
     AccessController, ConsentController, AcademicsController,
-    FamilyController, LocaleController, MetricsController,
+    FamilyController, LocaleController, ScheduleController, MetricsController,
   ],
   providers: [
     // Every failure gets the contract's shape, including a bare throw.

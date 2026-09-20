@@ -118,6 +118,115 @@ function ConsoleLogin({ onIn }: { onIn: () => void }) {
 
 /* ----------------------------------------------------------------- console */
 
+interface Task {
+  key: string; description: string; enabled: boolean; interval_seconds: number;
+  next_run_at: string; running_since: string | null;
+  last_finished_at: string | null; last_status: string | null; last_error: string | null;
+  consecutive_failures: number;
+  seconds_since_success: string | null;
+  overdue: boolean;
+  failures_this_week: number;
+  implemented: boolean;
+}
+
+/**
+ * What ran, and — the part that matters — what has stopped running (M33.3).
+ *
+ * The column to read is the last one. A task that FAILS is loud: a failed run,
+ * a log line, a metric. A task that has stopped being claimed at all produces
+ * nothing whatsoever, and the only evidence is an age that keeps growing. Every
+ * scheduled job in this product was in that state until M33, including the one
+ * that makes the audit log tamper-evident and the one that deletes children's
+ * documents a year after a school said no.
+ */
+function Schedule() {
+  const [tasks, setTasks] = useState<Task[] | null>(null);
+  const [said, setSaid] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+
+  const load = useCallback(() => {
+    consoleGet<Task[]>('/schedule').then(setTasks).catch(() => setTasks([]));
+  }, []);
+  useEffect(load, [load]);
+
+  const age = (seconds: string | null) => {
+    // Never run is not "0 seconds ago". The two must not look the same, which
+    // is the same rule the metric follows and for the same reason.
+    if (seconds === null) return 'never';
+    const n = Number(seconds);
+    if (n < 3600) return `${Math.floor(n / 60)}m ago`;
+    if (n < 172_800) return `${Math.floor(n / 3600)}h ago`;
+    return `${Math.floor(n / 86_400)}d ago`;
+  };
+
+  async function runNow(key: string) {
+    setBusy(true); setSaid(null);
+    try {
+      await consolePost(`/schedule/${key}/run-now`, {});
+      // Queued, not run. The scheduler picks it up within fifteen seconds; an
+      // endpoint that ran a fleet-wide purge on this request would put it on an
+      // HTTP timeout.
+      setSaid(`${key} is queued — the scheduler will take it within a minute.`);
+      load();
+    } catch (e) {
+      setSaid((e as ApiError).message);
+    } finally { setBusy(false); }
+  }
+
+  return (
+    <Panel title="Scheduled work"
+           hint="A job that fails is loud. A job that stops being claimed is silent — read the last column.">
+      {said ? <div className="note">{said}</div> : null}
+      <div className="scroll">
+        <table>
+          <thead>
+            <tr>
+              <th>Task</th><th>Every</th><th>Last</th><th>Failures (7d)</th>
+              <th>Last success</th><th />
+            </tr>
+          </thead>
+          {tasks === null ? <SkeletonRows cols={6} /> : (
+            <tbody>
+              {tasks.map((t) => (
+                <tr key={t.key}>
+                  <td>
+                    <strong>{t.key}</strong>
+                    {!t.implemented
+                      ? <> <Pill tone="critical">no code</Pill></> : null}
+                    {t.overdue ? <> <Pill tone="critical">overdue</Pill></> : null}
+                    {t.running_since ? <> <Pill tone="warning">running</Pill></> : null}
+                    {!t.enabled ? <> <Pill>off</Pill></> : null}
+                    <span className="reason" title={t.description}>{t.description}</span>
+                  </td>
+                  <td>{Math.round(t.interval_seconds / 3600)}h</td>
+                  <td>
+                    {t.last_status
+                      ? <Pill tone={t.last_status === 'ok' ? undefined : 'critical'}>
+                          {t.last_status}
+                        </Pill>
+                      : <span className="sub">—</span>}
+                    {t.last_error
+                      ? <span className="reason" title={t.last_error}>{t.last_error}</span>
+                      : null}
+                  </td>
+                  <td>{t.failures_this_week}</td>
+                  <td>{age(t.seconds_since_success)}</td>
+                  <td>
+                    <button className="ghost" disabled={busy || !t.enabled}
+                            onClick={() => void runNow(t.key)}>
+                      Run now
+                    </button>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          )}
+        </table>
+      </div>
+    </Panel>
+  );
+}
+
 function Console({ onSignOut }: { onSignOut: () => void }) {
   const [health, setHealth] = useState<Health[] | null>(null);
   const [sessions, setSessions] = useState<SessionRow[] | null>(null);
@@ -274,6 +383,8 @@ function Console({ onSignOut }: { onSignOut: () => void }) {
             </table>
           </div>
         </Panel>
+
+        <Schedule />
       </main>
 
       {target ? (

@@ -88,11 +88,25 @@ export const ledgerService = {
     return entryGroupId;
   },
 
-  /** The nightly integrity job's query: any group that does not sum to zero. */
+  /**
+   * Any group that does not sum to zero — the integrity job's query (M33.2).
+   *
+   * The `WHERE` clause is not redundant. This used to have none, on the
+   * reasonable assumption that `ledger_entry`'s `finance_only` policy would
+   * supply the tenant filter. It does, for a request. The scheduled job runs on
+   * the maintenance connection, where row-level security is bypassed — and
+   * without this line the first run reported one school's broken ledger as
+   * every school's.
+   *
+   * Every query that can run under `db/maintenance.ts` has to name its tenant
+   * itself. A query that leans on a policy for correctness is a query that is
+   * wrong the moment anything runs it with the policy off.
+   */
   async unbalancedGroups(db: TenantClient): Promise<Array<{ entry_group_id: string }>> {
     const { rows } = await db.query<{ entry_group_id: string }>(
       `SELECT entry_group_id
          FROM ledger_entry
+        WHERE tenant_id = app_current_tenant_id()
         GROUP BY entry_group_id
        HAVING sum(debit) <> sum(credit)`,
     );

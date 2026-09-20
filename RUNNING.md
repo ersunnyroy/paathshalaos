@@ -51,6 +51,18 @@ docker exec paathshala-postgres pg_isready -U paathshala_owner -d paathshala
 | Postgres | **5433** | A local 5432 is usually already taken |
 | Redis | **6380** | Same |
 
+### The scheduler
+
+`pnpm --filter @paathshala/api scheduler` runs the jobs of M33 — sealing the
+audit log, purging the documents of applicants who did not enrol, checking the
+ledger balances, and making next month's audit partition. It is a separate
+process, like the webhook relay, so it can be stopped without taking the API
+down. In compose it is the `scheduler` service, behind the same `app` profile.
+
+Nothing breaks if it is not running; that is the problem it was built for.
+Watch `paathshala_scheduled_task_seconds_since_success`, or the last column of
+Scheduled work in the platform console.
+
 Redis carries the public API's rate-limit counters (M30.2) and nothing else. If
 it is not running, the API still starts and still limits — it falls back to
 counting in its own memory, warns once, and increments

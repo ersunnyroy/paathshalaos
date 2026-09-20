@@ -560,3 +560,108 @@ describe('signing in to the console', () => {
     expect(notStaff.body.error.code).toBe(wrongPassword.body.error.code);
   });
 });
+
+/**
+ * M33.3 — the operator's view of the jobs.
+ *
+ * Over HTTP, because M32's whole lesson was that a service test cannot prove
+ * anybody can call the service — and a scheduler nobody can look at is the
+ * same failure as a job nobody runs, one layer up.
+ */
+describe('the schedule, from the console', () => {
+  const consoleToken = () => tokenFor(admin, tenant.orgId, []);
+
+  it('lists every task with the number that matters', async () => {
+    const { status, body } = await req('GET', '/platform/v1/schedule', await consoleToken());
+    expect(status).toBe(200);
+
+    const seal = body.data.find((t: any) => t.key === 'audit.seal');
+    expect(seal).toBeTruthy();
+    // `seconds_since_success` is the one to read: a task that FAILS is loud,
+    // and a task that has stopped being claimed produces nothing at all except
+    // this number growing.
+    expect(seal).toHaveProperty('seconds_since_success');
+    // A decimal string, not a BigInt. The first version of this endpoint
+    // returned `::bigint`, which node-postgres hands back as a JavaScript
+    // BigInt and `JSON.stringify` refuses — a 500 from an endpoint whose every
+    // query was correct, and invisible to any test below HTTP.
+    expect(seal.seconds_since_success === null
+      || typeof seal.seconds_since_success === 'string').toBe(true);
+    expect(seal).toHaveProperty('overdue');
+    expect(seal.implemented).toBe(true);
+  });
+
+  it('marks a task the code no longer implements', async () => {
+    // A compliance job dropped by a deploy otherwise sits in the table looking
+    // perfectly scheduled.
+    await owned((c) => c.query(
+      `INSERT INTO scheduled_task (key, description, interval_seconds)
+       VALUES ('ghost.console', 'Nothing implements this', 3600)
+       ON CONFLICT (key) DO NOTHING`));
+    try {
+      const { body } = await req('GET', '/platform/v1/schedule', await consoleToken());
+      const ghost = body.data.find((t: any) => t.key === 'ghost.console');
+      expect(ghost.implemented).toBe(false);
+    } finally {
+      // Taken away at both ends: `scheduler.spec` compares the table against
+      // the registry, and a row left here fails a suite in another file.
+      await owned((c) => c.query("DELETE FROM task_run WHERE task_key = 'ghost.console'"));
+      await owned((c) => c.query("DELETE FROM scheduled_task WHERE key = 'ghost.console'"));
+    }
+  });
+
+  it('shows the runs of one task across every school', async () => {
+    await owned((c) => c.query(
+      `INSERT INTO task_run (tenant_id, task_key, finished_at, status, detail)
+       VALUES ($1, 'files.pending_erasure', now(), 'ok', '{"pending":0}'::jsonb)`,
+      [tenant.orgId]));
+    const { status, body } = await req(
+      'GET', '/platform/v1/schedule/files.pending_erasure/runs', await consoleToken());
+    expect(status).toBe(200);
+    expect(body.data[0].tenant_name).toBeTruthy();
+  });
+
+  it('refuses "run now" to a console account that can only read', async () => {
+    // `admin` holds support and impersonate. Forcing the fleet-wide retention
+    // purge is a destructive act on every school at once, and read access to
+    // the console must not carry it.
+    const { status } = await req(
+      'POST', '/platform/v1/schedule/retention.applicant_documents/run-now',
+      await consoleToken(), {});
+    expect(status).toBe(404);
+  });
+
+  it('queues a run rather than running it on the request', async () => {
+    // An endpoint that executed a fleet-wide purge inline would put it on an
+    // HTTP timeout, and the first thing anybody would do about a slow one is
+    // press the button again.
+    await owned((c) => c.query(
+      `INSERT INTO platform_admin (user_account_id, capability)
+       VALUES ($1, 'provision') ON CONFLICT DO NOTHING`, [admin.userId]));
+    try {
+      const before = await owned(async (c) => (await c.query<{ n: string }>(
+        `SELECT next_run_at::text AS n FROM scheduled_task
+          WHERE key = 'files.pending_erasure'`)).rows[0]!.n);
+
+      const { status, body } = await req(
+        'POST', '/platform/v1/schedule/files.pending_erasure/run-now',
+        await consoleToken(), {});
+      expect(status).toBe(201);
+      expect(body.data.queued).toBe(true);
+
+      const after = await owned(async (c) => (await c.query<{ n: string }>(
+        `SELECT next_run_at::text AS n FROM scheduled_task
+          WHERE key = 'files.pending_erasure'`)).rows[0]!.n);
+      expect(after).not.toBe(before);
+
+      // ...and an unknown task is a 404 rather than a silent success.
+      const missing = await req(
+        'POST', '/platform/v1/schedule/no.such.task/run-now', await consoleToken(), {});
+      expect(missing.status).toBe(404);
+    } finally {
+      await owned((c) => c.query(
+        `DELETE FROM platform_admin WHERE user_account_id = $1 AND capability = 'provision'`,
+        [admin.userId]));
+    }
+  });
+});

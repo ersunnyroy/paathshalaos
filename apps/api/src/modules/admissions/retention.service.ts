@@ -1,4 +1,4 @@
-import { withTenant, type TenantScope } from '../../db/tenant.ts';
+import { withTenant, type TenantScope, type TenantClient } from '../../db/tenant.ts';
 import { auditService } from '../audit/audit.service.ts';
 
 export interface PurgeResult {
@@ -32,14 +32,61 @@ export const retentionService = {
     scope: TenantScope,
     opts: { retentionDays?: number; dryRun?: boolean } = {},
   ): Promise<PurgeResult> {
+    const result = await withTenant(scope,
+      (db) => retentionService.purgeWithin(db, opts));
+
+    if (!opts.dryRun && result.documentsPurged > 0) {
+      await auditService.record({
+        tenantId: scope.tenantId,
+        actorUserId: scope.actorId,
+        action: 'retention.applicant_documents_purged',
+        resourceType: 'application_document',
+        classification: 'RESTRICTED',
+        after: result,
+        reason: `Retention policy: ${opts.retentionDays ?? 365} days after an unsuccessful decision.`,
+      });
+    }
+    return result;
+  },
+
+  /**
+   * The purge itself, on a caller's connection.
+   *
+   * Split out so the scheduled job can run it on the maintenance connection
+   * (M33.2). Through `withTenant` this query sees nothing at all: `file` and
+   * `application_document` are both `staff_only`, a job has no actor, and the
+   * policy therefore hides every row a purge exists to remove — so the job
+   * would have reported success having deleted nothing, every night, for
+   * years.
+   */
+  async purgeWithin(
+    db: TenantClient,
+    opts: { retentionDays?: number; dryRun?: boolean } = {},
+  ): Promise<PurgeResult> {
     const retentionDays = opts.retentionDays ?? 365;
 
-    const result = await withTenant(scope, async (db) => {
+    const result = await (async () => {
       const candidates = await db.query<{ id: string }>(
+        // Three tenant predicates follow — here, on the file update, and on
+        // the document delete — and only this one is reachable by a test.
+        //
+        // The query used to have none, relying on `application_document` and
+        // `file` being `staff_only`. That is true for a request and false for
+        // the scheduled job, which runs on the maintenance connection with
+        // row-level security bypassed: without a predicate, one school's
+        // nightly purge deletes every school's applicant documents, once per
+        // school. See `db/maintenance.ts` (M33.2).
+        //
+        // With THIS clause in place the other two can never fire, so a mutation
+        // pass cannot kill them individually and no test can. They stay anyway,
+        // recorded here rather than left to be rediscovered: the failure they
+        // guard is an irreversible fleet-wide deletion of children's documents,
+        // and the cost of a redundant WHERE clause is nothing.
         `SELECT a.id
            FROM application a
            JOIN admission_decision d ON d.application_id = a.id AND d.superseded_at IS NULL
-          WHERE d.decided_at < now() - make_interval(days => $1::int)
+          WHERE a.tenant_id = app_current_tenant_id()
+            AND d.decided_at < now() - make_interval(days => $1::int)
             -- Unsuccessful: rejected, or an offer that was declined or lapsed.
             AND (
               d.outcome = 'rejected'
@@ -67,7 +114,8 @@ export const retentionService = {
 
       const files = await db.query<{ id: string }>(
         `UPDATE file SET deleted_at = now()
-          WHERE legal_hold = false
+          WHERE tenant_id = app_current_tenant_id()
+            AND legal_hold = false
             AND deleted_at IS NULL
             AND id IN (
               SELECT ad.file_id FROM application_document ad
@@ -81,7 +129,8 @@ export const retentionService = {
       // deleting the row that points at the held object.
       const docs = await db.query(
         `DELETE FROM application_document
-          WHERE application_id = ANY($1::uuid[])
+          WHERE tenant_id = app_current_tenant_id()
+            AND application_id = ANY($1::uuid[])
             AND (file_id IS NULL OR file_id IN (SELECT id FROM file WHERE deleted_at IS NOT NULL))`,
         [ids],
       );
@@ -91,19 +140,7 @@ export const retentionService = {
         documentsPurged: docs.rowCount,
         filesMarkedDeleted: files.rows.length,
       };
-    });
-
-    if (!opts.dryRun && result.documentsPurged > 0) {
-      await auditService.record({
-        tenantId: scope.tenantId,
-        actorUserId: scope.actorId,
-        action: 'retention.applicant_documents_purged',
-        resourceType: 'application_document',
-        classification: 'RESTRICTED',
-        after: result,
-        reason: `Retention policy: ${retentionDays} days after an unsuccessful decision.`,
-      });
-    }
+    })();
     return result;
   },
 };

@@ -207,3 +207,30 @@ describe('the built output does not reference TypeScript files', () => {
     expect(offenders).toEqual([]);
   });
 });
+
+/**
+ * The scheduler is actually deployed (M33.1).
+ *
+ * The whole of M33 is one failure repeated four times: work that was described
+ * in a comment and never arranged. A scheduler that exists in `src/`, passes
+ * its tests, and is not in the compose file is the fifth instance of exactly
+ * that — so the deployment is asserted rather than assumed.
+ */
+describe('the scheduler ships', () => {
+  it('compiles to an entry point somebody can run', () => {
+    expect(existsSync(join(DIST, 'workers', 'scheduler.js'))).toBe(true);
+    const pkg = JSON.parse(
+      readFileSync(new URL('../package.json', import.meta.url), 'utf8')) as
+      { scripts: Record<string, string> };
+    expect(pkg.scripts['scheduler']).toContain('dist/workers/scheduler.js');
+  });
+
+  it('is a service in the compose file, beside the relay', () => {
+    // Not a thread inside the API. Its own process, so an on-call engineer can
+    // stop a fleet-wide purge without taking a school's app offline.
+    const compose = readFileSync(
+      new URL('../../../docker-compose.yml', import.meta.url), 'utf8');
+    expect(compose).toMatch(/^ {2}scheduler:$/m);
+    expect(compose).toContain('dist/workers/scheduler.js');
+  });
+});

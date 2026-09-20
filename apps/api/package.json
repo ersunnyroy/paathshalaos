@@ -15,7 +15,9 @@
     "db:migrate": "pnpm run build && node dist/db/migrate.js",
     "db:seed": "pnpm run build && node dist/db/seed.js",
     "webhooks:relay": "node dist/workers/webhook-relay.js",
+    "scheduler": "node dist/workers/scheduler.js",
     "webhooks:relay:dev": "pnpm run build && node dist/workers/webhook-relay.js",
+    "scheduler:dev": "pnpm run build && node dist/workers/scheduler.js",
     "db:schema": "pnpm run build && node dist/db/schema-doc.js"
   },
   "dependencies": {

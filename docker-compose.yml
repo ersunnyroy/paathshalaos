@@ -161,6 +161,29 @@ services:
       retries: 6
       start_period: 20s
 
+  # The jobs that had no caller until M33: sealing the audit log, deleting the
+  # documents of applicants who did not enrol, checking the ledger balances, and
+  # making next month's partitions.
+  #
+  # Its own service, not a thread inside the API, for the reason the webhook
+  # relay is one: it can be STOPPED. "Stop the scheduler" is something an
+  # on-call engineer can do at three in the morning without taking a school's
+  # app offline — and a fleet-wide purge is exactly the thing somebody wants to
+  # stop at three in the morning.
+  #
+  # Several copies are safe. Tasks are claimed with an UPDATE, so they share the
+  # work rather than duplicating it; see `scheduler.service.ts`.
+  scheduler:
+    image: paathshala-api:local
+    container_name: paathshala-scheduler
+    profiles: ["app"]
+    environment: *api_env
+    command: ["node", "dist/workers/scheduler.js"]
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+    restart: unless-stopped
+
 volumes:
   pgdata:
   redisdata:

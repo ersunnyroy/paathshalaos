@@ -85,6 +85,11 @@ const TABLE_TEARDOWN_ORDER = [
   'cover_assignment', 'staff_absence', 'leave_balance', 'leave_type',
   'staff_contract',
   'attendance_correction', 'attendance_record', 'attendance_session',
+  // Evidence that a scheduled task ran for this school (M33). Listed here for
+  // the reason this list exists at all: a teardown that misses a table is a
+  // test-suite bug that shows up in an unrelated suite, and this one showed up
+  // in the platform console's.
+  'task_run',
   'leave_request', 'outbox_event',
   'subject_election', 'enrollment_event', 'enrollment',
   'admission_decision', 'application_document', 'application', 'enquiry', 'lead',
@@ -600,6 +605,7 @@ export async function purgeTestData(emailDomain = '%-test.example'): Promise<voi
                        'cover_assignment', 'staff_absence', 'leave_balance',
                        'leave_type', 'staff_contract',
                        'attendance_correction', 'attendance_record', 'attendance_session',
+                       'task_run',
                        'leave_request', 'outbox_event',
                        'subject_election', 'enrollment_event', 'enrollment',
                        'admission_decision', 'application_document', 'application',

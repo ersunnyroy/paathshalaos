@@ -172,6 +172,40 @@ export const syncOutcomes = new Counter({
 });
 
 /**
+ * Scheduled task runs, by task and outcome.
+ *
+ * DO: a rise in `failed` for `ledger.integrity` means the books do not balance
+ * and the job is doing its job. A rise for anything else means a compliance
+ * task is not completing.
+ */
+export const scheduledTaskRuns = new Counter({
+  name: 'paathshala_scheduled_task_runs_total',
+  help: 'Scheduled task runs by outcome',
+  labelNames: ['task', 'status'] as const,
+  registers: [registry],
+});
+
+/**
+ * Seconds since each scheduled task last finished.
+ *
+ * DO: **this is the one that matters.** The failure this whole subsystem was
+ * built for is not a job that crashes — a crash produces a log line and a
+ * failed run — it is a job that silently stops running, which produces nothing
+ * at all. Nothing event-driven can alert on an absence, so this is sampled.
+ * Alert when it exceeds a couple of intervals.
+ *
+ * A task that has NEVER run has no series rather than a zero, for the reason
+ * M23 already paid for: a gauge that cannot read must not report a comfortable
+ * number.
+ */
+export const scheduledTaskAge = new Gauge({
+  name: 'paathshala_scheduled_task_seconds_since_success',
+  help: 'Seconds since a scheduled task last finished',
+  labelNames: ['task'] as const,
+  registers: [registry],
+});
+
+/**
  * Database pool saturation, per role.
  *
  * DO: waiting clients above zero for any length of time means requests are

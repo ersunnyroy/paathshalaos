@@ -1518,6 +1518,166 @@ fix was to rebuild the development database rather than ship a broken migration
 plus a correction — legitimate only because no database in the world had been
 built from it yet.
 
+## M33 — the jobs nobody was running
+
+Not on the original plan. It was found while looking for something buildable
+after M30: four functions in this codebase carry a comment saying a scheduled
+job calls them, and **none of them had a caller anywhere in `src/`.**
+
+| What | Its comment said | What was true |
+| --- | --- | --- |
+| `seal_audit_period` (0007) | "a scheduled job seals each closed period" | `audit_checkpoint` was empty in every database this product had ever built. The audit log was not tamper-evident; it had a function that would have made it so |
+| `retentionService.purgeUnsuccessfulApplicantDocuments` (M18) | "the single largest pile of needless personal data an institute holds" | Nothing had ever purged one. ID proofs and birth certificates belonging to children who never enrolled |
+| `ledgerService.unbalancedGroups` | "the nightly integrity job's query" | There was no nightly integrity job |
+| `ensure_audit_partition` (0007) | "called by a scheduled job; also called defensively on insert failure" | Only the defensive half existed — and it could not work either. See below |
+
+The common cause is recorded elsewhere as a gap: one worker, the webhook relay,
+and no scheduler. Every job was written as something somebody else would arrange
+later.
+
+| ID | Sub-milestone | Status | What shipped |
+| --- | --- | --- | --- |
+| M33.1 | A scheduler | Done | 0082: the schedule is a row, the outcome of every run is a row, and "when did this last succeed" is a query |
+| M33.2 | The four jobs, wired | Done | 0083, 0084, and a named maintenance connection — see below, because the obvious wiring was silently wrong |
+| M33.3 | Somewhere to look | Done | The platform console, and the one number that catches a job which has stopped |
+
+### The outage that had a date on it
+
+`ensure_audit_partition` does CREATE TABLE, GRANT and REVOKE. `paathshala_app`
+and `paathshala_auth` can do none of those, and the function was plain
+`SECURITY INVOKER`. So it was unrunnable by anything that exists — including the
+"defensive" inline call in `audit.service.ts`, whose comment says a missed job
+"degrades into a slow write, never a lost record". It does not: that call runs on
+the auth pool, hits `permission denied`, and the record is lost with a log line.
+
+0007 pre-created **three months** of partitions. This database was migrated on
+20 September 2026 and had partitions through November. On 1 December every audit
+write in this product would have failed, the fallback would have failed too, and
+the only trace would have been `AUDIT WRITE FAILED` in a log.
+
+0083 makes both audit functions `SECURITY DEFINER` with a pinned `search_path`,
+grants EXECUTE narrowly, and tops the partitions up to a year ahead so that a
+deployment which somehow never runs the scheduler still has twelve months
+instead of three.
+
+### A job is not a person, and that is not a detail
+
+The obvious way to run a job for a school is `withTenant({ tenantId })` — the
+shape the webhook relay uses, which works there because the tables it touches
+have tenant-only policies. It is silently wrong for everything else, and the
+tables a compliance job touches are exactly the wrong ones:
+
+    file                  staff_only:   tenant AND app_actor_has_staff_scope()
+    application_document  staff_only:   tenant AND app_actor_has_staff_scope()
+    ledger_entry          finance_only: tenant AND app_actor_has_finance_scope()
+
+A job has no actor. Every one of those predicates is false, every query returns
+nothing, and the job **reports success having examined zero rows**. The retention
+purge would have run every night, deleted nothing, and written
+`applicationsConsidered: 0` into its own evidence trail. The fix for "nobody was
+running the job" would have been "the job runs and does nothing", which is worse
+because it looks finished.
+
+Found because one test asserted that a deliberately broken ledger made the job
+FAIL. Without that assertion every other test passed.
+
+`db/maintenance.ts` is the answer: the owner connection with `app.tenant_id`
+set, no actor, transaction-local, imported by one file — and a test enforces
+that last part rather than a convention.
+
+### ...and the first thing the maintenance connection did
+
+It made three queries wrong. Each had been relying on row-level security for its
+tenant filter, which is correct for a request and catastrophic with the policy
+off:
+
+- `unbalancedGroups` had **no WHERE clause at all**. Its first run reported one
+  school's broken ledger as every school's.
+- The `files.pending_erasure` count would have counted the whole fleet.
+- The retention purge had no tenant predicate anywhere. One school's nightly
+  purge would have deleted **every school's** applicant documents, once per
+  school, irreversibly.
+
+A query that leans on a policy for correctness is wrong the moment anything runs
+it with the policy off. All three now name their tenant, and three tests run a
+job for one school while the school next door holds the poison.
+
+### The number that would have caught all of this
+
+`paathshala_scheduled_task_seconds_since_success`, sampled rather than counted.
+
+A job that fails is loud: a failed run, a log line, a metric. A job that stops
+being claimed produces **nothing at all**, so nothing event-driven can alert on
+it. That is why every one of these went unnoticed for the life of the product,
+and it is why the console's last column and this gauge exist. A task that has
+never run has no series rather than a zero — the lesson M23 already paid for.
+
+### The ledger job is a backstop, not a guard
+
+Worth writing down because the comment it was named after reads like the
+opposite. `ledger_entry_group_balances` already refuses an unbalanced group on
+every ordinary write. The only way one can exist is a write that went round the
+trigger — a migration, a data fix, a restore, anything run with
+`session_replication_role = replica`. That is the class of write nobody watches
+and nobody writes a test for, and it is what this job is for.
+
+### The file sweeper that cannot be written
+
+M18 said the object itself is removed "by a separate sweeper". There is no
+sweeper and there could not be: **nothing in this system has ever opened a
+connection to object storage.** `file.bucket` and `file.object_key` have been
+written since M17 and never read by anything that could act on them.
+
+So `files.pending_erasure` does not pretend to erase. It counts what is waiting
+and how long it has waited, and says in its own run record that it cannot do
+more. Under DPDP a file a school has promised to delete and has not is a
+liability; this turns it into a number. Closing it needs an object-storage
+adapter, which belongs with M22.
+
+### Two bugs only HTTP could find, and one only a second suite could
+
+- `extract(epoch ...)::bigint` comes back as a JavaScript BigInt, which
+  `JSON.stringify` refuses. The console endpoint answered 500 while every query
+  in it was correct.
+- 0082 granted the platform role SELECT, which was right for a read-only view
+  and wrong the moment "run this now" existed. 0085 grants UPDATE on **two
+  columns** — the console may make a task due and clear a stale lease; it may
+  not disable a task or rewrite what it last reported, which are the three ways
+  a console account could make a compliance job stop while the row still looks
+  healthy.
+- `task_run` was missing from `TABLE_TEARDOWN_ORDER`, and it failed the platform
+  console's suite. The state doc records this exact lesson from M28; it was
+  missed again anyway, which is an argument for the guard being a test rather
+  than a sentence.
+
+### The mutation pass, and seven survivors
+
+Twenty-eight mutations. Seven survived, and the first pass was worse than that:
+several apparent kills were one test failing on a `ghost.job` row a previous
+mutation's aborted run had left behind — the same residue problem as M30.1,
+found the same way, and fixed the same way.
+
+The survivors worth naming:
+
+- **A test that passed for the wrong reason.** Putting the retention purge back
+  through `withTenant` broke nothing, because the test handed the job a scope
+  with an ORG_OWNER actor in it. A job never gets one. The suite now has an
+  `asJob()` scope — tenant, no actor — and every job assertion uses it.
+- **An isolation test that proved nothing.** The neighbouring school had a loose
+  file nothing pointed at, so an unfiltered purge would not have touched it
+  either. It now has a full rejected-applicant fixture.
+- **`SKIP LOCKED`**, which is a liveness property: without it the loser blocks,
+  the winner commits, and the loser finds the same nothing. Closed by holding
+  the row lock open in another transaction and setting `lock_timeout`, so
+  waiting is fatal rather than merely slow.
+- **The seal's batch limit and its resume point**, neither exercised until a
+  test gave a school sixty days of backlog.
+- **Two of the retention purge's three tenant predicates cannot be killed
+  individually**, because the first one stops the other two ever firing. They
+  stay, and the source says why: the failure they guard is an irreversible
+  fleet-wide deletion of children's documents, and a redundant WHERE clause
+  costs nothing. Same reasoning as 0080's tenant clause, recorded the same way.
+
 ## The rest of the plan (M20–M31)
 
 The first nineteen milestones were a plan that ran out rather than a plan that finished.
@@ -1553,6 +1713,7 @@ follow real usage instead of guesses.
 | M24 | Backup and restore — **partly done, see above** | Point-in-time recovery, and a **restore drill that has actually been run** with the time it took written down. A backup nobody has restored is a belief, not a backup |
 | M25 | Taking money from schools — **invoicing done, see above** | Subscription invoicing against M16's plans, GST, and one payment provider. M16 deliberately stopped short of this; a metered plan nobody is billed for is a spreadsheet |
 | M26 | Taking money from parents | A real gateway behind M7's mandates and reconciliation — UPI AutoPay and cards. The ledger, the receipts and the settlement matching already exist and have never seen a live rupee |
+| M33 | The jobs nobody was running — **done, see above** | A scheduler, and callers for four functions whose comments described a job that did not exist. One of them was three months from silently losing every audit record |
 | M30 | Scale, where it is real — **done, see above** | `attendance_record` partitioned by month, the rate limiter moved into Redis, and a budget that caught every read still scanning every month |
 | M29 | It speaks the language — **done, see above** | The chain, the catalogue and the settings that set both. `organization.locale` had existed since M1 and nothing had ever read it, which meant a school that does not operate in English could not send messages at all |
 
@@ -1624,6 +1785,7 @@ left to the end.
 | M28 Learning | Done | 38 | 14 mutations verified, no survivors. Closed the last M16 flag that guarded nothing. 1 finding outside the milestone (0077: section scope ignored `section_id`, reaching student records, marks, attendance and transport), 1 guard that covered only UPDATE, 1 test proving a different policy than it named |
 | M29 It speaks the language | Done | 18 API + 26 mobile | 39 mutations verified, 4 survivors closed and 1 shown to be unclosable. `organization.locale` had been unread since M1, which meant a school not operating in English could not send at all. Migration 0079 closed a write policy that let any principal — a parent included — update the organization row; 0080 records the one clause no test can kill |
 | M30 Scale | Done | 30 | 34 mutations verified, 6 survivors closed. `attendance_record` partitioned by month (0081) and the first Redis connection this system has ever opened. The budget test found the partitioning had bought nothing: every read filtered the joined session, not the record. Also caught a declared cascade the database could never perform, and an invariant that would have stopped watching the table it guards |
+| M33 The jobs nobody was running | Done | 42 | 28 mutations verified, 7 survivors closed. Four functions documented as having a scheduled caller had none. `ensure_audit_partition` could not be executed by any role that exists, so the "defensive" fallback could not work either and every database was three months from losing audit records. The obvious wiring — `withTenant({ tenantId })` — would have made all three compliance jobs succeed having examined zero rows; the fix for that then made one school's purge delete the whole fleet's documents until three tenant predicates were added |
 
 Two design decisions were made during M2 that are worth carrying forward:
 
