@@ -11,6 +11,7 @@ const { AppModule } = await import('./app.module.ts');
 const { logger } = await import('./common/logger.ts');
 const { assertSchemaMatchesCode } = await import('./db/schema-guard.ts');
 const { assertAppRoleCannotBypassRls, closePool } = await import('./db/pool.ts');
+const { closeRedis } = await import('./db/redis.ts');
 const { assertAuthRoleIsIsolated, closeAuthPool } = await import('./db/auth-pool.ts');
 const { assertHealthRoleIsNarrow, closeHealthPool } = await import('./db/health-pool.ts');
 const { assertPlatformRoleCannotReadTenants, closePlatformPool } =
@@ -43,6 +44,9 @@ async function bootstrap(): Promise<void> {
     process.on(signal, () => {
       logger.info({ signal }, 'shutting down');
       void app.close().then(closePool).then(closeAuthPool).then(closeHealthPool).then(closePlatformPool)
+        // Redis last, and its own failure does not stop the exit: a cache
+        // that will not say goodbye is not a reason to hang on SIGTERM.
+        .then(closeRedis).catch(() => undefined)
         .then(() => process.exit(0));
     });
   }

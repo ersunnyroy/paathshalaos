@@ -51,6 +51,12 @@ docker exec paathshala-postgres pg_isready -U paathshala_owner -d paathshala
 | Postgres | **5433** | A local 5432 is usually already taken |
 | Redis | **6380** | Same |
 
+Redis carries the public API's rate-limit counters (M30.2) and nothing else. If
+it is not running, the API still starts and still limits — it falls back to
+counting in its own memory, warns once, and increments
+`paathshala_rate_limiter_fallbacks_total`. The only thing you lose locally is
+that the limit is per process, which on one process is the same thing.
+
 `docker compose up -d` deliberately starts the infrastructure and nothing else.
 The API is also in that file, behind a profile:
 

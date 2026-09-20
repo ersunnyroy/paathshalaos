@@ -515,8 +515,11 @@ describe('who can see and change attendance', () => {
     const session = await openSession({ period: 97 });
     const affected = await withTenant(guardian(), async (db) => {
       const r = await db.query(
-        `INSERT INTO attendance_record (tenant_id, attendance_session_id, enrollment_id, state)
-         VALUES (app_current_tenant_id(), $1, $2, 'present')
+        `INSERT INTO attendance_record
+           (tenant_id, attendance_session_id, session_date, enrollment_id, state)
+         VALUES (app_current_tenant_id(), $1,
+                 (SELECT session_date FROM attendance_session WHERE id = $1),
+                 $2, 'present')
          ON CONFLICT DO NOTHING RETURNING id`,
         [session.id, enrollments[learners[0]!.studentId]],
       );

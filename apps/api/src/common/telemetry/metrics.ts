@@ -142,6 +142,22 @@ export const schoolEntries = new Counter({
 });
 
 /**
+ * Requests counted in this process's memory because Redis did not answer.
+ *
+ * DO: anything above zero means the per-key rate limit is per INSTANCE again,
+ * so the effective ceiling is the configured one times the number of API
+ * processes. Not an outage — the product keeps serving, which is the point of
+ * failing open — but it is a limit quietly doing something other than what it
+ * says, and that is exactly the kind of degradation that is never noticed
+ * without a number next to it.
+ */
+export const rateLimiterFallbacks = new Counter({
+  name: 'paathshala_rate_limiter_fallbacks_total',
+  help: 'Rate-limit decisions made from local memory because Redis was unreachable',
+  registers: [registry],
+});
+
+/**
  * Offline batches arriving from a device, by outcome.
  *
  * DO: a rise in `conflict` after a release means the sync contract changed

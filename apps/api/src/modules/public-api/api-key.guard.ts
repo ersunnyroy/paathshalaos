@@ -69,7 +69,10 @@ export class ApiKeyGuard implements CanActivate {
         `This API key is missing the ${missing.join(', ')} scope.`);
     }
 
-    const verdict = consume(rateLimitKey(identity), identity.ratePerMin);
+    // Awaited: the counter lives in Redis now (M30.2) and is shared between
+    // instances. It never throws — a failure counts locally instead — so there
+    // is no infrastructure error path through this guard.
+    const verdict = await consume(rateLimitKey(identity), identity.ratePerMin);
     res.setHeader('x-ratelimit-limit', String(verdict.limit));
     res.setHeader('x-ratelimit-remaining', String(verdict.remaining));
     res.setHeader('x-ratelimit-reset', String(verdict.resetAt));

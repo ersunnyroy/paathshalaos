@@ -153,9 +153,10 @@ beforeAll(async () => {
       for (const [enrol, state] of [[enrolAarav, a], [enrolDiya, d]] as const) {
         await c.query(
           `INSERT INTO attendance_record
-             (tenant_id, attendance_session_id, enrollment_id, state,
+             (tenant_id, attendance_session_id, session_date, enrollment_id, state,
               minutes_late, client_event_id)
-           VALUES ($1, $2, $3, $4,
+           VALUES ($1, $2, (SELECT session_date FROM attendance_session WHERE id = $2),
+                   $3, $4,
                    CASE WHEN $4 = 'late' THEN 12 END, gen_random_uuid())`,
           [tenant.orgId, s.rows[0]!.id, enrol, state]);
       }
@@ -172,8 +173,10 @@ beforeAll(async () => {
       [tenant.orgId, sectionId, offeringId, year.yearId, day(2)]);
     await c.query(
       `INSERT INTO attendance_record
-         (tenant_id, attendance_session_id, enrollment_id, state, client_event_id)
-       VALUES ($1, $2, $3, 'present', gen_random_uuid())`,
+         (tenant_id, attendance_session_id, session_date, enrollment_id, state,
+          client_event_id)
+       VALUES ($1, $2, (SELECT session_date FROM attendance_session WHERE id = $2),
+               $3, 'present', gen_random_uuid())`,
       [tenant.orgId, extra.rows[0]!.id, enrolAarav]);
 
     // Fees: one part-paid invoice each, plus a void one that must not count.

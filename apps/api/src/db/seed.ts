@@ -210,9 +210,10 @@ async function main(): Promise<void> {
         const late = !absent && (seat + index * 5) % 17 === 0;
         await c.query(
           `INSERT INTO attendance_record
-             (tenant_id, attendance_session_id, enrollment_id, state, minutes_late,
-              client_event_id, recorded_by_staff_id)
-           VALUES ($1, $2, $3, $4, $5, $6, $7)`,
+             (tenant_id, attendance_session_id, session_date, enrollment_id, state,
+              minutes_late, client_event_id, recorded_by_staff_id)
+           VALUES ($1, $2, (SELECT session_date FROM attendance_session WHERE id = $2),
+                   $3, $4, $5, $6, $7)`,
           [tenantId, session.id, e.id,
            absent ? 'absent' : late ? 'late' : 'present',
            late ? 10 : null, randomUUID(), teacherStaff.id]);

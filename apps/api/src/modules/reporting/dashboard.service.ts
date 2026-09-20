@@ -101,7 +101,11 @@ async function figuresByCampus(
          FROM attendance_record r
          JOIN attendance_session ses ON ses.id = r.attendance_session_id
          JOIN section_campus sc ON sc.section_id = ses.section_id
-        WHERE ses.session_date = $1::date
+        -- r.session_date, not only ses.session_date: the record table is
+        -- partitioned on its own column and a predicate on the joined session
+        -- prunes nothing (M30.1).
+        WHERE r.session_date = $1::date
+          AND ses.session_date = $1::date
         GROUP BY sc.campus_id
      )
      SELECT c.id AS campus_id,
@@ -251,7 +255,8 @@ export async function dailyTrend(
               count(*) FILTER (WHERE r.state = 'absent')::int AS absent
          FROM attendance_session s
          JOIN attendance_record r ON r.attendance_session_id = s.id
-        WHERE s.session_date BETWEEN $1::date AND $2::date
+        WHERE r.session_date BETWEEN $1::date AND $2::date
+          AND s.session_date BETWEEN $1::date AND $2::date
         GROUP BY 1
      )
      SELECT d.day::text AS day,

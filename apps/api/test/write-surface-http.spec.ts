@@ -30,6 +30,7 @@ import { tokenService } from '../src/modules/auth/token.service.ts';
 import { catalogueService } from '../src/modules/billing-plans/catalogue.service.ts';
 import { subscriptionService } from '../src/modules/billing-plans/subscription.service.ts';
 import { pool } from '../src/db/pool.ts';
+import { closeRedis } from '../src/db/redis.ts';
 import { authPool } from '../src/db/auth-pool.ts';
 
 const PASSWORD = 'correct-horse-battery';
@@ -181,6 +182,7 @@ afterAll(async () => {
   await destroyTenants([tenant.orgId]);
   await destroyUsers([officeUser.userId, teacherUser.userId, platformUser.userId,
                      guardianUser.userId]);
+  await closeRedis();
   await pool.end();
   await authPool.end();
 }, 180_000);

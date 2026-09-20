@@ -95,6 +95,13 @@ export const familyService = {
            JOIN attendance_session s ON s.id = r.attendance_session_id
            JOIN enrollment e ON e.id = r.enrollment_id
           WHERE e.student_id = $1::uuid
+            -- Both sides, and the record's is the one that matters (M30.1).
+            -- attendance_record is partitioned by month on ITS OWN
+            -- session_date; a bound on the joined session prunes nothing,
+            -- because the planner cannot carry a predicate across a join into
+            -- a partition list. The two columns are equal by foreign key, so
+            -- this is the same filter written where it can be used.
+            AND r.session_date BETWEEN $2::date AND $3::date
             AND s.session_date BETWEEN $2::date AND $3::date
           GROUP BY s.session_date
           ORDER BY s.session_date DESC`,

@@ -1342,6 +1342,182 @@ Writing the expiry test also turned up something worth stating: changing a grant
 policy's `expires_at` clause is the second, for a grant that lapses by the passage of time with
 no row touched. Only a token taken out after the row exists can test it.
 
+## M30 — scale, where it is real
+
+Three things, and the third is the one that turned out to matter most.
+
+| ID | Sub-milestone | Status | What shipped |
+| --- | --- | --- | --- |
+| M30.1 | `attendance_record` partitioned by month | Done | Migration 0081. Partitions made on demand by the path that opens a register, because this system has no scheduler |
+| M30.2 | The rate limiter off per-process memory | Done | Into the Redis that had been in the compose file since M0 with nothing ever connecting to it |
+| M30.3 | Query budgets | Done | A guard that captures the queries the product *actually sends* and fails when one stops naming its month, plus a round-trip ratchet on the sync path |
+
+### M30.1 — the deferral was right, and its reasoning was incomplete
+
+0021 wrote down why it did not partition:
+
+> a partitioned table's unique constraints must include the partition key — so
+> `UNIQUE (tenant_id, client_event_id)` would become
+> `UNIQUE (tenant_id, session_date, client_event_id)`, and the offline
+> idempotency guarantee would hold only within a date rather than absolutely.
+
+Correct, and it missed that **a record's date is not a free variable**. It is
+the date of the session the record belongs to, and a replayed batch carries the
+same session id — so it resolves to the same date, lands in the same partition,
+and still collides. The guarantee survives the narrowing intact.
+
+But only while the date cannot be chosen. So it is enforced by a composite
+foreign key to `attendance_session (id, session_date)`: a record may claim only
+a date its own session agrees to, and no caller supplies one — every INSERT
+reads it back out of the session in the same statement.
+
+**What actually changes**, stated rather than discovered: the same
+`client_event_id` submitted for two different learners on two DIFFERENT dates is
+now accepted, where it used to be rejected as a client bug. The same id on the
+same date is still caught, which is where the damage was, and
+`one_per_enrollment` still makes a duplicate mark in one session impossible.
+
+### The trigger that cannot exist
+
+The obvious way to fill in the partition key is a `BEFORE INSERT` trigger. It
+does not work, and the reason is not in the error message anybody will search
+for: tuple routing happens **before** a partitioned table's row triggers fire on
+the chosen partition. A row arriving with a NULL key routes to the default
+partition, the trigger then sets a real date, and PostgreSQL refuses with
+*"moving row to another partition during a BEFORE FOR EACH ROW trigger is not
+supported"*. The key has to be right before the row is routed.
+
+### Partitions without a scheduler
+
+This system has one worker — the webhook relay — and no cron. A partitioned
+table that needs a monthly job to stay writable turns that gap into an outage
+every 1st of the month, in the one hour of the year when every teacher is
+marking a register.
+
+So `ensure_attendance_partition(date)` is called by the path that opens a
+session, which is the only way a record comes into existence. Underneath it
+there is a DEFAULT partition, because *"no partition of relation found"* is an
+outage and a row in the default is a row. The awkward part of having a default —
+PostgreSQL refuses to attach a partition whose range overlaps rows already
+sitting in it — is handled by the factory itself rather than left for whoever
+meets it at the wrong moment.
+
+### Two things that would have gone quietly wrong
+
+**The invariant would have stopped watching.** `rls_coverage` (0004) checks every
+table with a `tenant_id` for RLS, forced RLS and an explicit `WITH CHECK`. It
+selects `WHERE relkind = 'r'`. A partitioned parent is `'p'`, and its partitions
+are `'r'` and each carry a `tenant_id` — so the invariant would have stopped
+looking at the table that matters and started demanding policies on thirty-eight
+that inherit them. It would have failed loudly for the wrong reason, and the 2am
+fix for that is to delete the check. Partitions are now excluded because their
+parent answers for them; partitioned parents are included because they are the
+table.
+
+**A cascade that was never possible.** The old foreign key from
+`attendance_correction` said `ON DELETE CASCADE`, and it could never have run:
+`attendance_correction_append_only` fires BEFORE DELETE for every role and raises
+unconditionally, so the cascade would always have been refused at the far end.
+The schema declared a behaviour the database would never perform. Re-declared as
+`ON DELETE RESTRICT`, which is what actually happens.
+
+### And the defence 0021 asked for
+
+0021 told this migration to remember the lesson from 0009 — that a policy on a
+partitioned parent is not applied to a query naming a partition directly. The
+defence is not a policy on every partition. It is that the application role has
+**no grant on any partition**: privileges are checked against the table the
+query names, so the app cannot name one at all and can only come through the
+parent, where the policies are. Nothing in 0081 grants on a partition, and that
+omission is the mechanism, so it is written down next to it.
+
+### M30.2 — a counter that had been waiting since M0
+
+`rate-limit.ts` said, at the top, that counting in process memory meant two API
+instances allowed twice the configured rate, and that the counter "belongs in
+Redis when there is more than one instance". Redis had been in
+`docker-compose.yml` and the environment schema since M0 with nothing ever
+connecting to it, so "when" had no date on it.
+
+The window is still **fixed**, deliberately. The boundary flaw the old comment
+admitted is still there. Changing where a counter lives and how it counts in one
+step produces a bug nobody can locate; the two implementations now have
+identical semantics, which is the entire point of having a fallback.
+
+**Failing open, and saying so.** If Redis is unreachable the count falls back to
+this process's memory — not to refusing, and not to allowing everything. A rate
+limiter that takes the API down when a cache is down has inverted its own job.
+The cost is exactly the old behaviour, and it is visible:
+`paathshala_rate_limiter_fallbacks_total` counts it, because a degradation
+nobody can see is one nobody fixes.
+
+**`enableOfflineQueue: false` looked like the cautious setting.** With
+`lazyConnect`, it means the first command is rejected before the connection has
+finished opening — so every command failed, every decision fell back to local
+memory, and the limiter behaved exactly as it had before the milestone while
+reporting success. Caught only because one test reads the Redis key rather than
+the verdict.
+
+### M30.3 — the budget that found the milestone was a lie
+
+The partitioning was in place and **every read still scanned every month.** The
+parent app, the dashboard, the trend, the office's day view — all of them
+filtered on `attendance_session.session_date`, the joined table, not on
+`attendance_record`'s own column. The planner cannot carry a predicate across a
+join into a partition list. The answers stayed right, the plans read thirty-eight
+partitions, and nothing in eight hundred tests could tell.
+
+So the guard is two-sided, and neither side is a copy of the queries:
+
+- **Captured.** `pool.connect` is wrapped for the duration of a call, every
+  statement the service issues is recorded with its parameters, and each one
+  that touches `attendance_record` is re-run under `EXPLAIN` (with `ANALYZE` for
+  reads, because a subquery-supplied date prunes at run time). The budget is two
+  partitions, because a parent's thirty-day window straddles a month boundary
+  for all but one start date in the year.
+- **Static.** Every SQL string in `src/` that names the table must constrain
+  **the record's own** `session_date`. Checking for the words alone passes a
+  query that filters the joined session instead — which is the whole mistake —
+  so the check resolves the table's alias. The check is itself tested against
+  known-bad SQL, because the shipped queries all pass it and a version that had
+  stopped working would pass too.
+
+The round-trip half is a ratchet: two statements per mark today, ceiling two.
+Three was tried first and a mutation adding a query inside the loop survived it —
+a loose ceiling is not a safety margin, it is room for a regression.
+
+### The mutation pass, and six survivors
+
+Thirty-four mutations across the three sub-milestones. Six survived, and every
+one named a test that was weaker than it read:
+
+- **Seven kills that were not kills.** The first partitioning pass reported eight
+  dead mutations, and seven of them were one test failing on its own residue —
+  it created a partition for a far-future month and asserted the month had none.
+  A test that only passes on a fresh database fails for the next person and gets
+  "fixed" by deleting the assertion. The suite now detaches and drops what it
+  creates, at both ends.
+- **The dashboard's two other queries and the office's day view** had no coverage
+  at all: removing their date predicates broke nothing, because the dynamic
+  guard only sees the paths it calls and the static one accepted any
+  `session_date` anywhere in the string.
+- **`resetRateLimits` clearing only one of its two counters**, twice — once for
+  the Redis side and once for the local map. The second attempt to close it
+  failed too: the assertion ran a minute later, where the local window has rolled
+  and the entry is replaced whether or not anything was cleared.
+- **Partition pruning switched off in the planner** changed nothing, which was
+  not a finding about the test — the per-partition `CHECK` constraints that let
+  the factory skip its validation scan also let `constraint_exclusion` do the
+  job. With both mechanisms off, the test fails.
+
+One further note, recorded because it cost an hour: the `rls_coverage` view in
+0081 was written out from memory and silently reverted **0016's** correction,
+which exempts DELETE policies from the explicit-`WITH CHECK` rule. The isolation
+suite's own invariant caught it within a minute of the migration applying. The
+fix was to rebuild the development database rather than ship a broken migration
+plus a correction — legitimate only because no database in the world had been
+built from it yet.
+
 ## The rest of the plan (M20–M31)
 
 The first nineteen milestones were a plan that ran out rather than a plan that finished.
@@ -1377,13 +1553,13 @@ follow real usage instead of guesses.
 | M24 | Backup and restore — **partly done, see above** | Point-in-time recovery, and a **restore drill that has actually been run** with the time it took written down. A backup nobody has restored is a belief, not a backup |
 | M25 | Taking money from schools — **invoicing done, see above** | Subscription invoicing against M16's plans, GST, and one payment provider. M16 deliberately stopped short of this; a metered plan nobody is billed for is a spreadsheet |
 | M26 | Taking money from parents | A real gateway behind M7's mandates and reconciliation — UPI AutoPay and cards. The ledger, the receipts and the settlement matching already exist and have never seen a live rupee |
+| M30 | Scale, where it is real — **done, see above** | `attendance_record` partitioned by month, the rate limiter moved into Redis, and a budget that caught every read still scanning every month |
 | M29 | It speaks the language — **done, see above** | The chain, the catalogue and the settings that set both. `organization.locale` had existed since M1 and nothing had ever read it, which meant a school that does not operate in English could not send messages at all |
 
 ### Everything else named as a gap
 
 | ID | Milestone | Definition of done |
 | --- | --- | --- |
-| M30 | Scale, where it is real | `attendance_record` partitioned by period; the rate limiter moved off per-process memory into the Redis that has been running unused since M0; query budgets on the paths that grow with a school's size |
 | M31 | Fit to be trusted | A security review by somebody who did not write this, a DPDP assessment by a lawyer, and a pilot with one real school. The pilot will find more than the other two |
 
 ### What is deliberately NOT on this list
@@ -1447,6 +1623,7 @@ left to the end.
 | M32 The write surface | Done | 68 | Over real HTTP. 19 mutations, none survived. 13 modules made reachable (115 routes → 201), 8 SQL/enum defects only a request could find, 3 author-from-the-body holes closed, 3 comments narrowed to what is true, and one bug only the built server could show |
 | M28 Learning | Done | 38 | 14 mutations verified, no survivors. Closed the last M16 flag that guarded nothing. 1 finding outside the milestone (0077: section scope ignored `section_id`, reaching student records, marks, attendance and transport), 1 guard that covered only UPDATE, 1 test proving a different policy than it named |
 | M29 It speaks the language | Done | 18 API + 26 mobile | 39 mutations verified, 4 survivors closed and 1 shown to be unclosable. `organization.locale` had been unread since M1, which meant a school not operating in English could not send at all. Migration 0079 closed a write policy that let any principal — a parent included — update the organization row; 0080 records the one clause no test can kill |
+| M30 Scale | Done | 30 | 34 mutations verified, 6 survivors closed. `attendance_record` partitioned by month (0081) and the first Redis connection this system has ever opened. The budget test found the partitioning had bought nothing: every read filtered the joined session, not the record. Also caught a declared cascade the database could never perform, and an invariant that would have stopped watching the table it guards |
 
 Two design decisions were made during M2 that are worth carrying forward:
 

@@ -21,6 +21,7 @@ import {
 } from './fixtures.ts';
 import { withTenant } from '../src/db/tenant.ts';
 import { pool } from '../src/db/pool.ts';
+import { closeRedis } from '../src/db/redis.ts';
 import { authPool } from '../src/db/auth-pool.ts';
 import { apiKeyService, parseCredential } from '../src/modules/public-api/api-key.service.ts';
 import { idempotencyService } from '../src/modules/public-api/idempotency.service.ts';
@@ -105,11 +106,12 @@ beforeAll(async () => {
 afterAll(async () => {
   await destroyUsers([owner.userId, teacher.userId, otherOwner.userId]);
   await destroyTenants([tenant.orgId, other.orgId]);
+  await closeRedis();
   await pool.end();
   await authPool.end();
 });
 
-beforeEach(() => resetRateLimits());
+beforeEach(async () => { await resetRateLimits(); });
 
 /* ========================================================================== */
 /* AC-10.1 — retries are idempotent                                           */
@@ -748,14 +750,14 @@ describe('API keys', () => {
     await expect(apiKeyService.authenticate(key.credential)).rejects.toMatchObject({ response: { error: { code: 'invalid_api_key' } } });
   });
 
-  it('counts requests per key, not per client', () => {
+  it('counts requests per key, not per client', async () => {
     // A client with three keys, one of which belongs to a runaway script.
-    for (let i = 0; i < 5; i += 1) consume('key-a', 5);
-    expect(consume('key-a', 5).allowed).toBe(false);
-    expect(consume('key-b', 5).allowed).toBe(true);
+    for (let i = 0; i < 5; i += 1) await consume('key-a', 5);
+    expect((await consume('key-a', 5)).allowed).toBe(false);
+    expect((await consume('key-b', 5)).allowed).toBe(true);
   });
 
-  it('throttles the offending key and leaves its siblings alone', () => {
+  it('throttles the offending key and leaves its siblings alone', async () => {
     // Asserted on the KEY-CHOOSING function rather than on consume(), because
     // the bug this guards against is not a broken counter — it is a correct
     // counter pointed at the wrong identifier, which no test of consume() can
@@ -764,9 +766,9 @@ describe('API keys', () => {
     const two = { apiKeyId: 'key-2', apiClientId: 'client-x' };
     expect(rateLimitKey(one)).not.toBe(rateLimitKey(two));
 
-    for (let i = 0; i < 3; i += 1) consume(rateLimitKey(one), 3);
-    expect(consume(rateLimitKey(one), 3).allowed).toBe(false);
-    expect(consume(rateLimitKey(two), 3).allowed).toBe(true);
+    for (let i = 0; i < 3; i += 1) await consume(rateLimitKey(one), 3);
+    expect((await consume(rateLimitKey(one), 3)).allowed).toBe(false);
+    expect((await consume(rateLimitKey(two), 3)).allowed).toBe(true);
   });
 });
 

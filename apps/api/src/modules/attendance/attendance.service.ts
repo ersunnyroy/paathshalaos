@@ -55,6 +55,18 @@ export const attendanceService = {
     },
   ): Promise<{ id: string; status: string }> {
     return withTenant(scope, async (db) => {
+      // The month's partition of attendance_record, made here rather than by a
+      // scheduler this system does not have (M30.1). Opening a register is the
+      // only way a record comes into existence, so this is the one place that
+      // can guarantee the partition exists before the rows do — and it is
+      // cheap: after the first session of a month it is a catalogue lookup.
+      //
+      // A school running in 2031 therefore never touches the default
+      // partition, and a database nobody has migrated for five years keeps
+      // working rather than answering "no partition of relation found" at
+      // 8:40 on a Monday.
+      await db.query('SELECT ensure_attendance_partition($1::date)', [input.sessionDate]);
+
       const { rows } = await db.query<{ id: string; status: string }>(
         `INSERT INTO attendance_session
            (tenant_id, section_id, course_offering_id, academic_year_id,
@@ -169,9 +181,18 @@ export const attendanceService = {
         // case and not a conflict at all.
         const inserted = await db.query<{ id: string }>(
           `INSERT INTO attendance_record
-             (tenant_id, attendance_session_id, enrollment_id, state, minutes_late,
-              source, client_event_id, device_recorded_at, recorded_by_staff_id)
-           VALUES (app_current_tenant_id(), $1, $2, $3, $4, 'app', $5, $6::timestamptz, $7)
+             (tenant_id, attendance_session_id, session_date, enrollment_id, state,
+              minutes_late, source, client_event_id, device_recorded_at,
+              recorded_by_staff_id)
+           -- session_date is the partition key (M30.1), and it is read back out
+           -- of the session here rather than passed in. A caller that could
+           -- supply it could choose which month partition a replay landed in,
+           -- and the unique index that makes a replay a no-op is scoped to the
+           -- partition. The composite foreign key refuses a wrong pair anyway;
+           -- this is what stops one ever being built.
+           VALUES (app_current_tenant_id(), $1,
+                   (SELECT session_date FROM attendance_session WHERE id = $1),
+                   $2, $3, $4, 'app', $5, $6::timestamptz, $7)
            -- Bare ON CONFLICT, with no target, on purpose. There are TWO unique
            -- indexes this can hit: client_event_id (a replay) and
            -- (session, enrollment) (somebody else marked this learner first).
@@ -204,9 +225,14 @@ export const attendanceService = {
           id: string; state: AttendanceState; enrollment_id: string;
           recorded_by_staff_id: string | null; recorded_at: string;
         }>(
+          // Scoped to the session's own month. Without the date this reads
+          // every partition the school has ever had, once per conflicting
+          // record in a sync batch — and the index it used to use is now
+          // per-partition anyway (M30.1).
           `SELECT id, state, enrollment_id, recorded_by_staff_id, recorded_at::text
-             FROM attendance_record WHERE client_event_id = $1`,
-          [record.clientEventId],
+             FROM attendance_record
+            WHERE client_event_id = $1 AND session_date = $2::date`,
+          [record.clientEventId, session.session_date],
         );
         const sameEvent = byEvent.rows[0];
 
@@ -237,8 +263,9 @@ export const attendanceService = {
         }>(
           `SELECT id, state, client_event_id, recorded_by_staff_id, recorded_at::text
              FROM attendance_record
-            WHERE attendance_session_id = $1 AND enrollment_id = $2`,
-          [session.id, enrollment.id],
+            WHERE attendance_session_id = $1 AND enrollment_id = $2
+              AND session_date = $3::date`,
+          [session.id, enrollment.id, session.session_date],
         );
         const prior = byEnrollment.rows[0];
         if (!prior) {
@@ -441,10 +468,12 @@ export const attendanceService = {
   ): Promise<void> {
     await withTenant(scope, async (db) => {
       const { rows } = await db.query<{
-        id: string; attendance_record_id: string | null; attendance_session_id: string | null;
+        id: string; attendance_record_id: string | null;
+        record_session_date: string | null; attendance_session_id: string | null;
         enrollment_id: string | null; to_state: AttendanceState; status: string;
       }>(
-        `SELECT id, attendance_record_id, attendance_session_id, enrollment_id, to_state, status
+        `SELECT id, attendance_record_id, record_session_date::text,
+                attendance_session_id, enrollment_id, to_state, status
            FROM attendance_correction WHERE id = $1`,
         [input.correctionId],
       );
@@ -459,15 +488,22 @@ export const attendanceService = {
 
       if (correction.attendance_record_id) {
         await db.query(
-          'UPDATE attendance_record SET state = $2 WHERE id = $1',
-          [correction.attendance_record_id, correction.to_state],
+          // Named with its date so the planner touches one month's partition
+          // rather than every month the school has ever run (M30.1). The date
+          // is on the correction row because the record's key has two columns.
+          `UPDATE attendance_record SET state = $2
+            WHERE id = $1 AND session_date = $3::date`,
+          [correction.attendance_record_id, correction.to_state,
+           correction.record_session_date],
         );
       } else if (correction.attendance_session_id && correction.enrollment_id) {
         await db.query(
           `INSERT INTO attendance_record
-             (tenant_id, attendance_session_id, enrollment_id, state, source)
-           VALUES (app_current_tenant_id(), $1, $2, $3, 'app')
-           ON CONFLICT (tenant_id, attendance_session_id, enrollment_id)
+             (tenant_id, attendance_session_id, session_date, enrollment_id, state, source)
+           VALUES (app_current_tenant_id(), $1,
+                   (SELECT session_date FROM attendance_session WHERE id = $1),
+                   $2, $3, 'app')
+           ON CONFLICT (tenant_id, session_date, attendance_session_id, enrollment_id)
            DO UPDATE SET state = EXCLUDED.state`,
           [correction.attendance_session_id, correction.enrollment_id, correction.to_state],
         );
@@ -499,9 +535,20 @@ export const attendanceService = {
       const { rows } = await db.query<{
         id: string; enrollment_id: string; state: string; recorded_at: string;
       }>(
+        // Two statements rather than one, and the reason is measured rather
+        // than assumed. The single-statement version put the date in a scalar
+        // subquery, on the theory that PostgreSQL would prune at run time —
+        // and M30.3's budget test, running EXPLAIN ANALYZE over the query this
+        // code actually sends, showed it reading all thirty-eight partitions.
+        // A cheap lookup first prunes at PLAN time, which is the difference
+        // between one partition and every month the school has ever run.
         `SELECT id, enrollment_id, state, recorded_at::text
-           FROM attendance_record WHERE attendance_session_id = $1 ORDER BY recorded_at`,
-        [sessionId],
+           FROM attendance_record
+          WHERE attendance_session_id = $1 AND session_date = $2::date
+          ORDER BY recorded_at`,
+        [sessionId, (await db.query<{ d: string }>(
+          'SELECT session_date::text AS d FROM attendance_session WHERE id = $1',
+          [sessionId])).rows[0]?.d ?? null],
       );
       return rows;
     });

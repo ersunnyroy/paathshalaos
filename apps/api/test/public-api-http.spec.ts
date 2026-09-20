@@ -27,6 +27,7 @@ import { AppModule } from '../src/app.module.ts';
 import { apiKeyService } from '../src/modules/public-api/api-key.service.ts';
 import { resetRateLimits } from '../src/modules/public-api/rate-limit.ts';
 import { pool } from '../src/db/pool.ts';
+import { closeRedis } from '../src/db/redis.ts';
 import { authPool } from '../src/db/auth-pool.ts';
 
 const PASSWORD = 'correct-horse-battery';
@@ -80,13 +81,14 @@ beforeAll(async () => {
   await app.init();
   await app.listen(0);
   base = await app.getUrl();
-  resetRateLimits();
+  await resetRateLimits();
 });
 
 afterAll(async () => {
   await app?.close();
   await destroyUsers([owner.userId]);
   await destroyTenants([tenant.orgId]);
+  await closeRedis();
   await pool.end();
   await authPool.end();
 });

@@ -190,7 +190,11 @@ export class DirectoryController {
              FROM attendance_session ses
              JOIN section sec ON sec.id = ses.section_id
              JOIN class_group cg ON cg.id = sec.class_group_id
+             -- The date is in the join condition, not the WHERE clause,
+             -- because this is a LEFT JOIN: moving it below would turn an
+             -- unmarked session into no row at all. It still prunes (M30.1).
              LEFT JOIN attendance_record r ON r.attendance_session_id = ses.id
+                                          AND r.session_date = $1::date
             WHERE ses.session_date = $1::date
               AND ($2::uuid IS NULL OR ses.section_id = $2::uuid)
             GROUP BY ses.id, sec.name, cg.name
