@@ -13,6 +13,8 @@
  *   `JSON.parse` would happily turn it into a double, and a fee that has been
  *   through a double is no longer exact. It is formatted from the string.
  */
+import { createClient, ApiError as SharedApiError, type TokenStore } from '@paathshala/api-client';
+
 const API_URL = process.env['NEXT_PUBLIC_API_URL'] ?? 'http://localhost:3001';
 const TENANT_ID = process.env['NEXT_PUBLIC_TENANT_ID'] ?? '';
 
@@ -53,15 +55,15 @@ export function currentToken(): string | null {
   }
 }
 
-export class ApiError extends Error {
-  constructor(
-    readonly status: number,
-    readonly code: string,
-    message: string,
-  ) {
-    super(message);
-  }
-}
+/**
+ * Re-exported rather than redeclared.
+ *
+ * Two classes with the same name and shape are not the same class, and every
+ * `e instanceof ApiError` in this app would quietly become false for anything
+ * thrown by the shared client.
+ */
+export const ApiError = SharedApiError;
+export type ApiError = SharedApiError;
 
 async function parse(response: Response): Promise<unknown> {
   const text = await response.text();
@@ -97,40 +99,53 @@ export async function login(email: string, password: string): Promise<Session> {
   return body.data;
 }
 
-export async function apiGet<T>(path: string): Promise<T> {
-  const token = currentToken();
-  const response = await fetch(`${API_URL}${path}`, {
-    headers: token ? { authorization: `Bearer ${token}` } : {},
-    cache: 'no-store',
-  });
-  const body = (await parse(response)) as
-    { data?: T; error?: { code: string; message: string } } | undefined;
+/**
+ * The shared client, wired to this app's storage.
+ *
+ * Until now this file refreshed nothing: when the ten-minute access token
+ * expired the next request 401'd and the user was bounced to sign-in, even
+ * though the server has rotated refresh tokens with reuse detection since M2.2.
+ * The refresh logic lives in `@paathshala/api-client` because the mobile app
+ * needs exactly the same thing — including the single-flight latch, without
+ * which a screen firing three requests on mount refreshes three times, presents
+ * a spent token twice, and gets the whole family revoked as a suspected theft.
+ */
+const store: TokenStore = {
+  async read() {
+    const accessToken = currentToken();
+    let refreshToken: string | null = null;
+    try { refreshToken = sessionStorage.getItem(REFRESH_KEY); } catch { /* see above */ }
+    return accessToken && refreshToken ? { accessToken, refreshToken } : null;
+  },
+  async write(tokens) { saveSession(tokens); },
+  async clear() { clearSession(); },
+};
 
-  if (!response.ok) {
-    throw new ApiError(response.status, body?.error?.code ?? 'request_failed',
-      body?.error?.message ?? `The request failed (${response.status}).`);
-  }
-  return body?.data as T;
+let signOutHandler: (reason: string) => void = () => undefined;
+
+/** The app shell registers what to do when a session genuinely ends. */
+export function onSignedOut(handler: (reason: string) => void): void {
+  signOutHandler = handler;
 }
 
-export async function apiPost<T>(path: string, payload: unknown): Promise<T> {
-  const token = currentToken();
-  const response = await fetch(`${API_URL}${path}`, {
-    method: 'POST',
-    headers: {
-      'content-type': 'application/json',
-      ...(token ? { authorization: `Bearer ${token}` } : {}),
-    },
-    body: JSON.stringify(payload),
-  });
-  const body = (await parse(response)) as
-    { data?: T; error?: { code: string; message: string } } | undefined;
+const client = createClient({
+  baseUrl: API_URL,
+  tenantId: TENANT_ID,
+  store,
+  onSignedOut: (reason) => signOutHandler(reason),
+});
 
-  if (!response.ok) {
-    throw new ApiError(response.status, body?.error?.code ?? 'request_failed',
-      body?.error?.message ?? `The request failed (${response.status}).`);
-  }
-  return body?.data as T;
+export async function apiGet<T>(path: string): Promise<T> {
+  return client.get<T>(path);
+}
+
+export async function apiPost<T>(path: string, payload?: unknown): Promise<T> {
+  return client.post<T>(path, payload);
+}
+
+/** A deliberate refresh, for when the tab comes back after being hidden. */
+export function refreshSession(): Promise<boolean> {
+  return client.refresh();
 }
 
 /**

@@ -457,6 +457,40 @@ what it does. Likewise the teardown test proved the `stopped` flag while appeari
 prove the listener was removed — deleting `removeEventListener` changed nothing. It now
 asserts the registration is gone.
 
+## M18 — the mobile app
+
+| ID | Milestone | Status | What shipped |
+| --- | --- | --- | --- |
+| M18.1 | A session that survives | Done | `packages/api-client`: rotation-aware refresh with a **single-flight latch**, storage injected, tested in Node. The web app is on it; the mobile app will be |
+| M18.2 | The Expo app | Next | Sign in, the register, the queue badge. Verification has to happen on a real device — see the note below |
+
+**Why this came before the app.** The server has rotated refresh tokens with reuse
+detection since M2.2, and the web client never refreshed at all: when the ten-minute
+access token expired, the next request 401'd and the user was bounced to sign-in. On the
+web that is an irritation. On a phone a teacher opens twice a day it is a sign-in every
+time, which is the difference between an app that gets used and one that does not.
+
+**The part that is easy to get wrong.** Rotation plus reuse detection makes concurrent
+refresh actively dangerous. A screen firing three requests on mount, all of which 401,
+would call refresh three times with the same token — the first rotates it, and the second
+and third look exactly like an attacker replaying a stolen one. The server does the right
+thing and revokes the whole family, so the teacher is signed out mid-register and the
+audit log records a security event that never happened. Refresh is therefore
+single-flight, and that is what most of the package's tests are about; removing the latch
+fails them immediately.
+
+Two smaller decisions worth keeping: a refresh that fails **on the network** does not sign
+anybody out, because a tunnel is not a security event and a queued register should not be
+lost to a lift; and only a closed list of error codes is treated as refreshable, so
+`refresh_token_reused` cannot start a loop against a family that is already gone.
+
+**What M18.2 cannot promise from here.** An Expo app can be written in this environment
+and cannot be *run* in it — no simulator, no device. Everything that is only verifiable by
+launching it (navigation, rendering, SecureStore, push registration) has to be checked on
+a real machine as it is built, so the app lands in reviewable pieces rather than as one
+large untested drop. The logic it depends on — the offline queue and this client — is
+already shared and tested in Node, which is most of what would otherwise be unverifiable.
+
 ### Deliberately out of scope
 
 - **Payment collection from schools.** Metering and status are here; taking the money is a

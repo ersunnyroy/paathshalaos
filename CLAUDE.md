@@ -31,7 +31,7 @@ SQL-level invariants are mutated by running `ALTER POLICY` / `CREATE OR REPLACE 
 against the live database. Editing an already-applied migration file does nothing — the
 runner has a checksum guard and will refuse to start instead.
 
-Tests currently: **582 passing across three packages** (api 557, offline-queue 12, web 13), 64 migrations. If that number drops, something regressed.
+Tests currently: **592 passing across four packages** (api 557, offline-queue 12, api-client 10, web 13), 64 migrations. If that number drops, something regressed.
 
 ## Architecture you must know before touching anything
 
@@ -66,6 +66,12 @@ intended. Do not "fix" it by relaxing the assertion.
 - **Money is an exact decimal string**, never a JSON number. Paise, formatted by string
   surgery — never divided.
 - **Pagination is keyset**, never OFFSET.
+- **Refresh is single-flight, and must stay that way.** The server rotates refresh tokens
+  and revokes the whole family when a spent one is presented — that is what a stolen token
+  looks like. So two concurrent refreshes sign the user out and write an audit row saying
+  reuse was detected. `packages/api-client` holds one in-flight promise that every caller
+  awaits; removing it fails the tests immediately. A refresh that fails on the *network*
+  never signs anybody out: a tunnel is not a security event.
 - **Entitlement is not authorisation.** `app_tenant_has_feature()` returns true for a
   school with no subscription, and row-level security never consults it. Billing decides
   what a school has bought; RLS decides what it may see. Do not merge them.
@@ -137,6 +143,7 @@ packages/offline-queue    The attendance queue. No browser, no React Native, no 
                           storage and transport are injected, so conflict behaviour is
                           tested in Node. Its vocabulary is contract-tested against the
                           server's, at compile time and at runtime.
+packages/api-client       Fetch plus rotation-aware refresh. Token storage injected.
 ```
 
 Each package has its own `vitest`; run all three before calling something done.

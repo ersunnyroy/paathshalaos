@@ -3,7 +3,7 @@
 import { useEffect, useState, type ReactNode } from 'react';
 import { usePathname, useRouter } from 'next/navigation';
 import Link from 'next/link';
-import { apiGet, clearSession, currentToken } from '@/lib/api';
+import { apiGet, clearSession, currentToken, onSignedOut } from '@/lib/api';
 import { Icon, Mark } from '@/components/ui';
 
 interface Me {
@@ -77,6 +77,18 @@ export function Shell({ children }: { children: ReactNode }) {
       if (stored === 'light' || stored === 'dark') setTheme(stored);
     } catch { /* private browsing; the OS setting still applies */ }
   }, []);
+
+  useEffect(() => {
+    // Registered before the first request, so a session that ends mid-screen
+    // lands on sign-in rather than on a page of failed fetches. The shared
+    // client only calls this when the session is genuinely over — a refresh
+    // that fails on the network leaves the user signed in, because a tunnel is
+    // not a security event and a teacher mid-register should not lose it.
+    onSignedOut(() => {
+      clearSession();
+      router.replace('/');
+    });
+  }, [router]);
 
   useEffect(() => {
     if (!currentToken()) {
