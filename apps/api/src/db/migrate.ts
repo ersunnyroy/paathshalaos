@@ -24,14 +24,71 @@ interface Migration {
   checksum: string;
 }
 
+/**
+ * Two migrations claiming the same ordinal.
+ *
+ * Never legitimate, and the runner cannot cope with it: `sort()` orders by the
+ * whole filename, so which of `0059_plans.sql` and `0059_plan_catalogue.sql`
+ * runs first is decided by the suffix — alphabetically, arbitrarily — and both
+ * run. The second then re-executes DDL the first just executed and dies on
+ * Postgres's own words, `relation "plan" already exists`, which reads as a
+ * broken migration rather than as two files that should be one.
+ *
+ * Two ways this happens, and the check is worth having for both:
+ *
+ *   by hand    two branches each number the next migration 0086 and both
+ *              merge. Ordinary, and invisible in a diff of either branch.
+ *
+ *   by build   `dist/db/migrations` used to be merged into rather than
+ *              mirrored, so a migration renamed in `src/` stayed in `dist/`
+ *              forever and every later build shipped both. `copy-assets.mjs`
+ *              now mirrors, but a `dist/` produced by an older build is still
+ *              sitting on developers' machines and in any cached image layer,
+ *              and it is exactly the case that needs naming rather than
+ *              guessing.
+ *
+ * Checked before the first statement runs, because the failure it prevents
+ * happens halfway through a migration run, with earlier ones already committed.
+ *
+ * Exported so the suite can hand it a duplicate. A check that has only ever
+ * seen a correct directory passes whether or not it works — the same trap as
+ * the catalogue audit in M29.2, the month check in M30.3 and the reachability
+ * disagreement in M34.1.
+ */
+export function duplicateOrdinals(names: string[]): string[][] {
+  const byOrdinal = new Map<string, string[]>();
+  for (const name of names) {
+    const ordinal = /^(\d+)/.exec(name)?.[1];
+    if (ordinal === undefined) continue;
+    const existing = byOrdinal.get(ordinal);
+    if (existing) existing.push(name);
+    else byOrdinal.set(ordinal, [name]);
+  }
+  return [...byOrdinal.values()]
+    .filter((group) => group.length > 1)
+    .map((group) => [...group].sort())
+    .sort((a, b) => a[0]!.localeCompare(b[0]!));
+}
+
 function readMigrations(): Migration[] {
-  return readdirSync(MIGRATIONS_DIR)
-    .filter((f) => f.endsWith('.sql'))
-    .sort()
-    .map((name) => {
-      const sql = readFileSync(join(MIGRATIONS_DIR, name), 'utf8');
-      return { name, sql, checksum: createHash('sha256').update(sql).digest('hex') };
-    });
+  const names = readdirSync(MIGRATIONS_DIR).filter((f) => f.endsWith('.sql')).sort();
+
+  const clashes = duplicateOrdinals(names);
+  if (clashes.length > 0) {
+    const described = clashes.map((group) => group.join(' and ')).join('; ');
+    throw new Error(
+      `Two migrations share an ordinal: ${described}. `
+      + 'Both would be applied, in an order decided by the filename suffix. '
+      + `If ${MIGRATIONS_DIR} is a build output, it was produced by a build that `
+      + 'merged into dist/ instead of mirroring src/ — delete it and rebuild. '
+      + 'If it is the source directory, renumber one of them.',
+    );
+  }
+
+  return names.map((name) => {
+    const sql = readFileSync(join(MIGRATIONS_DIR, name), 'utf8');
+    return { name, sql, checksum: createHash('sha256').update(sql).digest('hex') };
+  });
 }
 
 export async function migrate(connectionString = env.DATABASE_OWNER_URL): Promise<number> {

@@ -16,7 +16,10 @@
 import './fixtures.ts';
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import pg from 'pg';
-import { migrate } from '../src/db/migrate.ts';
+import { readdirSync } from 'node:fs';
+import { dirname, join } from 'node:path';
+import { fileURLToPath } from 'node:url';
+import { migrate, duplicateOrdinals } from '../src/db/migrate.ts';
 import { loadEnv } from '../src/config/env.ts';
 
 const owner = loadEnv().DATABASE_OWNER_URL;
@@ -107,4 +110,78 @@ describe('a database whose history this build does not recognise', () => {
     expect(err!.message).toContain('already exists');
     expect(err!.message).not.toContain('different revision of this repository');
   }, 120_000);
+});
+
+/**
+ * The other way `relation "plan" already exists` happens — and the one that
+ * actually happened.
+ *
+ * The suite above assumed a divergent database: a volume carrying schema from
+ * another revision. That diagnosis was half of it. The failure recurred on a
+ * clean checkout against a database whose recorded history was exactly right,
+ * and the divergence warning stayed silent because there was nothing to warn
+ * about — every applied name was shipped by the build.
+ *
+ * The build was shipping too much. `copy-assets.mjs` used `cpSync` into
+ * `dist/db/migrations` without emptying it, and `cpSync` merges: three
+ * migrations renamed in `src/` months earlier were still in `dist/`, invisible
+ * to `git status` and to anyone reading the source. Six files occupied three
+ * ordinals; the runner applied `0059_plans.sql`, then applied
+ * `0059_plan_catalogue.sql`, which creates the same table.
+ *
+ * Locally that is a loud build failure. On a fresh production database it is
+ * silent: SQL that exists nowhere in this repository gets applied and recorded
+ * in `schema_migration` as though it were ours.
+ *
+ * `duplicateOrdinals` is tested here against fabricated names rather than
+ * against `src/db/migrations`, which has no duplicates — a check that has only
+ * ever seen a correct directory passes whether or not it works, and emptying
+ * its filter would have killed nothing.
+ */
+describe('two migrations claiming one ordinal', () => {
+  it('finds the pair, whichever order the directory lists them in', () => {
+    const found = duplicateOrdinals([
+      '0058_platform_capabilities_of.sql',
+      '0059_plan_catalogue.sql',
+      '0059_plans.sql',
+      '0060_plan_actor_fks.sql',
+    ]);
+    expect(found).toEqual([['0059_plan_catalogue.sql', '0059_plans.sql']]);
+
+    const reversed = duplicateOrdinals([
+      '0059_plans.sql', '0059_plan_catalogue.sql',
+    ]);
+    expect(reversed, 'the pair is the pair regardless of listing order')
+      .toEqual([['0059_plan_catalogue.sql', '0059_plans.sql']]);
+  });
+
+  it('finds every clash, not just the first', () => {
+    // The real dist/ carried three of them. A check that returned after the
+    // first would have made the second build failure a fresh mystery.
+    expect(duplicateOrdinals([
+      '0059_plans.sql', '0059_plan_catalogue.sql',
+      '0060_plan_actor_fks.sql', '0060_subscriptions.sql',
+      '0061_event_actor_stays.sql', '0061_entitlement_gates.sql',
+    ])).toHaveLength(3);
+  });
+
+  it('says nothing about a directory that is fine', () => {
+    expect(duplicateOrdinals([
+      '0001_extensions_and_conventions.sql', '0002_tenancy.sql', '0003_rls.sql',
+    ])).toEqual([]);
+  });
+
+  it('does not mistake a longer ordinal for a shorter one', () => {
+    // '0059' and '00590' are different migrations. A prefix match rather than
+    // a full leading-digit match would have paired them.
+    expect(duplicateOrdinals(['0059_plans.sql', '00590_plans.sql'])).toEqual([]);
+  });
+
+  it('agrees that this build ships no duplicates', () => {
+    const names = readdirSync(join(dirname(fileURLToPath(import.meta.url)),
+      '..', 'src', 'db', 'migrations')).filter((f) => f.endsWith('.sql'));
+    expect(names.length, 'reading the real directory, not an empty one')
+      .toBeGreaterThan(80);
+    expect(duplicateOrdinals(names)).toEqual([]);
+  });
 });

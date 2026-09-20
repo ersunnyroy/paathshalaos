@@ -206,6 +206,30 @@ export class MessagingController {
     };
   }
 
+  /**
+   * The exact text each person was sent, or the reason they were not.
+   *
+   * Not a narrower `outcomes`. That route answers "did it arrive" — statuses,
+   * providers, error codes, the operational view. This answers "what did you
+   * say to them", which is the question a guardian asks under the DPDP Act and
+   * the one a school has to be able to answer without reconstructing it from a
+   * template and a set of variables. Reconstruction is not evidence: the
+   * template may have been revised since.
+   *
+   * `rendered_body` is null for a suppressed recipient, and that is correct —
+   * nothing was rendered because nothing was sent, and `suppression_reason`
+   * carries the answer instead.
+   */
+  @Get('requests/:id/recipients')
+  async recipients(@Param('id') id: string) {
+    const requestId = uuid.safeParse(id);
+    if (!requestId.success) throw ApiError.fromZod(requestId.error);
+    return {
+      data: await withTenant(currentScope(), (db) =>
+        dispatchService.recipientsFor(db, requestId.data)),
+    };
+  }
+
   /** Who a past send reached, and who it did not. */
   @Get('requests/:id/outcomes')
   async outcomes(@Param('id') id: string, @Query('limit') limit?: string) {

@@ -378,7 +378,10 @@ export const admissionsService = {
 
   async verifyDocument(
     scope: TenantScope,
-    input: { documentId: string; verifierStaffId: string; accept: boolean; reason?: string },
+    input: {
+      documentId: string; verifierStaffId: string; accept: boolean;
+      reason?: string | undefined;
+    },
   ): Promise<void> {
     if (!input.accept && !input.reason?.trim()) {
       throw ApiError.make('validation_error', 'rejection_needs_reason',

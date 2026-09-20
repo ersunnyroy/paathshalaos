@@ -1785,6 +1785,177 @@ already recorded:
   in both directions — the third time this exact fix has been needed (M29.2's
   catalogue audit, M30.3's month check, and now this).
 
+## M35 — the list, closed
+
+M34 ended with sixty-odd methods written down as unreachable, each with a
+reason. Writing a thing down is not doing it, and a list that sits still for a
+milestone stops being read. So this one went through it.
+
+The first finding was about the list itself: **most of the reasons did not
+survive being read back.**
+
+| ID | Sub-milestone | Status | What shipped |
+| --- | --- | --- | --- |
+| M35.1 | Reconciliation never needed a gateway | Done | Four methods filed under "waiting on a payment provider" that need no provider |
+| M35.2 | Custom domains, from the console | Done | A read surface with no write surface — the second time this exact shape has shipped |
+| M35.3 | Workflow second halves | Done | Ten of them, including the two-person support approval the database has enforced since 0008 |
+| M35.4 | Readers with no screen | Done | Fourteen, each one route away from being useful |
+| M35.5 | What was genuinely dead | Done | Three functions with no caller anywhere, including one whose own comment called it a test helper no test used |
+
+The count went from sixty-four to thirty-two, the routes from 218 to 247, and
+the suite from 984 to 1039.
+
+### The reason that was wrong
+
+`reconciliationService` sat under *"waiting on a payment provider (M26). The
+ledger, the mandates and the settlement matching are built and have never seen a
+live rupee."* Written in M34, by me, and it reads plausibly.
+
+It is wrong about a third of what it covers. Presenting a mandate needs a
+gateway. Taking a card needs a gateway. **Reconciling a settlement does not** —
+it is arithmetic on a file the bank already sent and payments the school already
+recorded, and the unmatched queue is *most* useful precisely when a payment did
+not come through this system. Four working methods sat behind an excuse that
+applied to their neighbours.
+
+The group's reason now says so, and names the correction, because the next
+person to read it should see that the category was once too wide.
+
+### The guarantee that was enforceable and unreachable
+
+`impersonation.service.ts` opens with AC-12's guarantees, and the first is
+*"two people — CHECK constraint (approved_by <> actor_user_id) plus the
+approve() path — the database refuses self-approval even if a future code path
+forgets to check."*
+
+All true. `request` and `approve` had no caller in `src/`. The trigger in 0008
+has been refusing an unapproved support session since the beginning, the suite
+has thirteen tests proving it, and there was no endpoint through which anybody
+could ask. **Enforceable and unreachable at the same time: proved by a suite,
+offered to nobody.**
+
+The tempting read was that `entryService.enter` supersedes it — both write to
+`impersonation_session`, so one of them must be the duplicate. It does not.
+0054 split the table into two entry paths deliberately and wrote the difference
+into the schema rather than into a service:
+
+```sql
+ALTER TABLE impersonation_session
+  ADD CONSTRAINT impersonation_support_needs_approval
+    CHECK (entry_path = 'platform' OR status <> 'active' OR approved_by IS NOT NULL);
+```
+
+A `platform` session is one capability-holder, no ticket, no approver — the
+console, where the friction is removed but the record is not. A `support`
+session is a named ticket and a second person. They are different things with
+different rules, and only one of them had a way in.
+
+`POST /v1/support-access` and `/:id/approve` are that way in, tenant-scoped
+under the school's own token.
+
+### The mutation that survived
+
+Emptying `requireApprover` — the `audit:read` check on who may approve a support
+window — broke no test. Every assertion still passed with the gate wide open.
+
+The suite had a test that the requester cannot approve their own request, and it
+passed for the wrong reason: the database's `approved_by <> actor_user_id` check
+catches that, and it only compares two ids. **Two people is not the control.
+Two people, one of whom is entitled, is** — and nothing was checking the second
+half. A teacher's token would have opened a support window into the school's
+records.
+
+Closed with a test that approves as the teacher and expects 404, and the
+mutation now dies.
+
+### `relation "plan" already exists`, which was not a migration
+
+Reported mid-milestone from a local run: `db:migrate` failing on
+`0059_plan_catalogue.sql`. The database's recorded history was right and every
+migration in `src/` was right.
+
+`dist/db/migrations` had 88 files. `src/db/migrations` has 85.
+
+`copy-assets.mjs` used `cpSync`, which merges — it adds and overwrites and never
+removes. Three migrations renamed in `src/` months earlier were still sitting in
+`dist/`, invisible to `git status` and to anybody reading the source, shipped by
+every build since:
+
+| still in `dist/` | what replaced it in `src/` |
+| --- | --- |
+| `0059_plan_catalogue.sql` | `0059_plans.sql` |
+| `0060_subscriptions.sql` | `0060_plan_actor_fks.sql` |
+| `0061_entitlement_gates.sql` | `0061_event_actor_stays.sql` |
+
+Six files, three ordinals. The runner sorts by filename, so it applied
+`0059_plans.sql`, which creates `plan`, then applied `0059_plan_catalogue.sql`,
+which creates `plan`. Postgres said the only thing it could.
+
+Locally that is a loud build failure. **On a fresh production database it is
+silent** — SQL that exists nowhere in this repository gets applied and recorded
+in `schema_migration` as though it were ours, and the schema diverges from the
+code by exactly the statements nobody can read any more.
+
+Three things changed:
+
+1. `copy-assets.mjs` empties the destination before copying and fails the build
+   if `dist/` is not a file-for-file mirror of `src/`.
+2. `migrate.ts` refuses to start when two migrations share an ordinal, and says
+   that in those words. This also catches the ordinary version — two branches
+   both numbering the next migration 0086 — and it catches a stale `dist/` built
+   before the fix, which is still on machines and in cached image layers.
+3. `packaging.spec.ts` plants a stray file in `dist/` and rebuilds. The passing
+   state is identical either way, so a test that only checked the current
+   directory would have passed against the bug it exists to catch.
+
+M8's note said a build artifact must be self-contained. It also has to be an
+artifact rather than an accumulation.
+
+### The 500 that a loose assertion was hiding
+
+A test asserted `expect(over.status).toBeGreaterThanOrEqual(400)` on a fee
+amount too large for `numeric(14,2)`. The real answer was a **500**: the
+`numeric field overflow` reached the client as `internal_error`.
+
+The bound was the bug. "We broke" tells the person typing the number nothing
+they can act on and sends whoever reads the log to the wrong file. Now a 422
+naming the component, mapped from SQLSTATE 22003 — caught from the database
+rather than bounded in zod on purpose, because the column is the rule and a
+schema bound restating it is a second copy that goes stale the day somebody
+widens the column.
+
+### Deleted, and why each one was safe
+
+- `isApiClientRequest` — no caller anywhere, including tests.
+- `resetEnvCache` — its own comment read *"Test helper. Never called in
+  production code."* Not called in test code either.
+- `forgetRedisWarning` — no caller, and `closeRedis` already clears the flag it
+  resets. A second answer to a question with one caller.
+
+Deliberately **not** deleted: `assessmentService.marksFor`,
+`admissionsService.createApplication`, `formsService.submit` and
+`retentionService.purgeUnsuccessfulApplicantDocuments`. All four are exercised
+and passing, and all four are reached only by the suite. They have their own
+group now, with the reason stated plainly: a method whose only caller is a test
+is a method the product does not have, and a suite proving it works proves
+nothing a school can use. That is a truer entry than either deleting them
+quietly or filing them under something they are not.
+
+`dispatchService.recordReceipt` moved the other way, into the provider group.
+A delivery-receipt endpoint needs a shared secret to check a signature against,
+and one that trusted anything posted to it would let a stranger mark a message
+delivered. That is the same argument `providers.ts` already makes about not
+faking a gateway.
+
+### What is still on the list
+
+Thirty-two methods, in four groups: eight waiting on a gateway we have not
+bought, fifteen superseded by SQL written inline in a controller, four reached
+only by the suite, and five internal seams. The fifteen are the next real piece
+of work — two answers to one question, with the tested one not being the live
+one.
+
+
 ## The rest of the plan (M20–M31)
 
 The first nineteen milestones were a plan that ran out rather than a plan that finished.

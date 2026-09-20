@@ -57,15 +57,33 @@ export const feePlanService = {
 
       let order = 0;
       for (const c of input.components) {
-        await db.query(
-          `INSERT INTO fee_component
-             (tenant_id, fee_plan_id, code, name, amount, frequency,
-              is_refundable, is_optional, tax_rate, gl_code, sort_order)
-           VALUES (app_current_tenant_id(), $1, $2, $3, $4::numeric, $5, $6, $7, $8::numeric, $9, $10)`,
-          [plan.id, c.code, c.name, Money.toDecimalString(c.amountPaise), c.frequency,
-           c.isRefundable ?? false, c.isOptional ?? false, c.taxRate ?? 0, c.glCode ?? null,
-           order++],
-        );
+        try {
+          await db.query(
+            `INSERT INTO fee_component
+               (tenant_id, fee_plan_id, code, name, amount, frequency,
+                is_refundable, is_optional, tax_rate, gl_code, sort_order)
+             VALUES (app_current_tenant_id(), $1, $2, $3, $4::numeric, $5, $6, $7, $8::numeric, $9, $10)`,
+            [plan.id, c.code, c.name, Money.toDecimalString(c.amountPaise), c.frequency,
+             c.isRefundable ?? false, c.isOptional ?? false, c.taxRate ?? 0, c.glCode ?? null,
+             order++],
+          );
+        } catch (err: unknown) {
+          // 22003 is `numeric field overflow`: the amount is a valid decimal
+          // and larger than `numeric(14,2)` can hold. Without this it reached
+          // the client as a 500 — "we broke" rather than "that number is too
+          // big for this field", which sends somebody reading a log to the
+          // wrong file and tells the person typing it nothing they can act on.
+          //
+          // Caught from the database rather than bounded in the schema on
+          // purpose: the column is the rule, and a zod bound restating it is a
+          // second copy that goes stale the day somebody widens the column.
+          if ((err as { code?: string }).code === '22003') {
+            throw ApiError.make('validation_error', 'amount_too_large',
+              `The amount for ${c.code} is larger than a fee component can hold `
+              + '(twelve digits before the decimal point).');
+          }
+          throw err;
+        }
       }
       return plan;
     });

@@ -147,6 +147,62 @@ export class AdmissionsController {
     return { data: await admissionsService.intake(currentScope(), parsed.data) };
   }
 
+  /**
+   * A document against an application. Upsert, not append.
+   *
+   * Re-uploading a birth certificate that was rejected clears the rejection
+   * and the verifier, because the old verdict was about the old file. Keeping
+   * it would leave a document reading "rejected: illegible" next to a legible
+   * scan, which is how a family gets told twice to send what they already sent.
+   */
+  @Post('applications/:id/documents')
+  async attachDocument(@Param('id') id: string, @Body() body: unknown) {
+    const applicationId = uuid.safeParse(id);
+    if (!applicationId.success) throw ApiError.fromZod(applicationId.error);
+    const parsed = z.object({
+      documentType: z.string().min(1).max(60),
+      fileId: uuid,
+    }).safeParse(body);
+    if (!parsed.success) throw ApiError.fromZod(parsed.error);
+    await admissionsService.attachDocument(currentScope(), {
+      applicationId: applicationId.data, ...parsed.data,
+    });
+    return { data: { attached: true } };
+  }
+
+  /**
+   * Accept or reject one uploaded document.
+   *
+   * The verifier comes from the session for the same reason the decider does:
+   * "who checked this certificate" is a question asked when the certificate
+   * turns out to be forged.
+   */
+  @Post('application-documents/:id/verify')
+  async verifyDocument(@Param('id') id: string, @Body() body: unknown) {
+    const documentId = uuid.safeParse(id);
+    if (!documentId.success) throw ApiError.fromZod(documentId.error);
+    const parsed = z.object({
+      accept: z.boolean(),
+      // Deliberately not `.min(1)`: the service refuses a blank reason on a
+      // rejection and accepts its absence on an acceptance. A stricter rule
+      // here would make that service rule unreachable.
+      reason: z.string().max(2000).optional(),
+    }).safeParse(body);
+    if (!parsed.success) throw ApiError.fromZod(parsed.error);
+
+    const scope = currentScope();
+    const staffId = await admissionsService.currentStaffId(scope);
+    if (!staffId) {
+      throw ApiError.make('permission_error', 'not_staff',
+        'Verifying a document is attributed to a member of staff, and this '
+        + 'account is not linked to one.');
+    }
+    await admissionsService.verifyDocument(scope, {
+      documentId: documentId.data, verifierStaffId: staffId, ...parsed.data,
+    });
+    return { data: { verified: parsed.data.accept } };
+  }
+
   @Post('applications/:id/decide')
   async decide(@Param('id') id: string, @Body() body: unknown) {
     const applicationId = uuid.safeParse(id);
@@ -214,11 +270,62 @@ export class AdmissionsController {
  */
 @Controller('v1/enrollments')
 export class EnrollmentController {
+  /**
+   * The enrollment a learner is on right now, or nothing.
+   *
+   * Declared before `:id/history` because `current` is one segment and would
+   * otherwise be read as an enrollment id — and the error would be a 422 about
+   * a malformed uuid, which sends the reader to the wrong file.
+   *
+   * Keyed by student rather than by enrollment, because a caller who already
+   * had the enrollment id would not need to ask. Returns 404 rather than an
+   * empty body: "this learner is not enrolled" is an answer, and a null that
+   * looks like a missing field is not.
+   */
+  @Get('current/:studentId')
+  async current(@Param('studentId') studentId: string) {
+    const parsed = uuid.safeParse(studentId);
+    if (!parsed.success) throw ApiError.fromZod(parsed.error);
+    const found = await enrollmentService.current(currentScope(), parsed.data);
+    if (!found) {
+      throw ApiError.make('not_found', 'not_enrolled',
+        'That learner has no active enrollment.');
+    }
+    return { data: found };
+  }
+
   @Get(':id/history')
   async history(@Param('id') id: string) {
     const parsed = uuid.safeParse(id);
     if (!parsed.success) throw ApiError.fromZod(parsed.error);
     return { data: await enrollmentService.history(currentScope(), parsed.data) };
+  }
+
+  /**
+   * A campus move: the old enrollment ends and a new one opens, linked.
+   *
+   * Not `changeSection` with a different section id. A campus has its own
+   * academic year rows, and 0019's invariant refuses one enrollment spanning
+   * two — so the honest shape is two rows with an event tying them together,
+   * which is also what a transfer certificate has to be printed from.
+   */
+  @Post(':id/transfer')
+  async transferCampus(@Param('id') id: string, @Body() body: unknown) {
+    const enrollmentId = uuid.safeParse(id);
+    if (!enrollmentId.success) throw ApiError.fromZod(enrollmentId.error);
+    const parsed = z.object({
+      toSectionId: uuid,
+      toAcademicYearId: uuid,
+      reason: z.string().max(2000),
+      effectiveOn: isoDate.optional(),
+      rollNo: z.string().max(20).optional(),
+    }).safeParse(body);
+    if (!parsed.success) throw ApiError.fromZod(parsed.error);
+    return {
+      data: await enrollmentService.transferCampus(currentScope(), {
+        enrollmentId: enrollmentId.data, ...parsed.data,
+      }),
+    };
   }
 
   @Post(':id/section')

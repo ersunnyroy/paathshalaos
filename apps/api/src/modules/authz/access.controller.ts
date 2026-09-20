@@ -26,6 +26,7 @@ import { grantsService } from './grants.service.ts';
 // class method — so the built server 500'd on a route every test passed,
 // because the tests run from TypeScript source and never load `dist`.
 import { authzService } from './authz.service.ts';
+import { authService } from '../auth/auth.service.ts';
 import { withTenant } from '../../db/tenant.ts';
 import { currentScope } from '../../common/scope.ts';
 import { ApiError } from '../../common/errors.ts';
@@ -98,6 +99,54 @@ export class AccessController {
     const userAccountId = uuid.safeParse(id);
     if (!userAccountId.success) throw ApiError.fromZod(userAccountId.error);
     return { data: await grantsService.list(currentScope(), userAccountId.data) };
+  }
+
+  /**
+   * Signs one account out everywhere and clears its push tokens.
+   *
+   * The lost-phone button. Revoking a grant already ends access on the next
+   * request — a database trigger bumps `grants_version` and the token stops
+   * verifying — but that is about a role, and a compromised credential is not
+   * a role problem. This ends the sessions themselves.
+   *
+   * **The effect is global, and that is deliberate.** `session` has no tenant
+   * column, because a session is a login and not a tenancy; the tenant travels
+   * in the token. So a person who holds accounts at two schools is signed out
+   * of both. Scoping it to one school is not something this could do with a
+   * narrower query — it is not expressible — and it is not what anybody wants
+   * anyway: a stolen phone is stolen everywhere.
+   *
+   * Gated on the caller holding a live grant for that account **in this
+   * school**, which is what stops one school reaching into another's people.
+   * The check is a tenant-pool read, so it is the school's own row-level
+   * security deciding, not a WHERE clause promising to.
+   */
+  @Post('accounts/:id/sign-out-everywhere')
+  async signOutEverywhere(@Param('id') id: string, @Body() body: unknown) {
+    const userAccountId = uuid.safeParse(id);
+    if (!userAccountId.success) throw ApiError.fromZod(userAccountId.error);
+    const parsed = z.object({ reason: z.string().min(3).max(300).optional() })
+      .safeParse(body ?? {});
+    if (!parsed.success) throw ApiError.fromZod(parsed.error);
+
+    const scope = currentScope();
+    const here = await withTenant(scope, async (db) => {
+      const { rows } = await db.query<{ n: string }>(
+        `SELECT count(*)::text AS n FROM role_grant
+          WHERE user_account_id = $1::uuid AND revoked_at IS NULL`,
+        [userAccountId.data]);
+      return rows[0]!.n !== '0';
+    });
+    if (!here) {
+      // Not 'forbidden'. Whether an account exists elsewhere is not this
+      // school's business to learn from an error message.
+      throw ApiError.make('not_found', 'account_not_found',
+        'No account with a live grant in this school.');
+    }
+
+    const ended = await authService.revokeAllSessions(
+      userAccountId.data, parsed.data.reason ?? 'signed out by an administrator');
+    return { data: { sessionsEnded: ended } };
   }
 
   @Post('grants')

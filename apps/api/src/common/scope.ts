@@ -28,11 +28,6 @@ export function currentScope(): TenantScope {
   };
 }
 
-/** True when this request is a machine integration rather than a person. */
-export function isApiClientRequest(): boolean {
-  return getContext()?.apiClientId !== undefined;
-}
-
 export function currentRoles(): string[] {
   return getContext()?.roles ?? [];
 }

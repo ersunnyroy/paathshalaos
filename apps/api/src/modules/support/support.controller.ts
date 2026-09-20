@@ -28,6 +28,10 @@ const reply = z.object({
   internal: z.boolean().optional(),
 });
 
+const assignment = z.object({
+  staffId: z.string().uuid(),
+});
+
 const status = z.object({
   status: z.enum(['open', 'waiting_on_requester', 'resolved', 'closed']),
 });
@@ -98,6 +102,21 @@ export class SupportController {
     return { data: { status: parsed.data.status } };
   }
 
+  /**
+   * Hands a ticket to a named person.
+   *
+   * The assignee comes from the body rather than the session, unlike an author:
+   * assigning is exactly the act of naming someone who is not you. Whether the
+   * caller is allowed to assign at all is 0043's business, not this method's.
+   */
+  @Post('tickets/:id/assign')
+  async assign(@Param('id') id: string, @Body() body: unknown) {
+    const parsed = assignment.safeParse(body);
+    if (!parsed.success) throw ApiError.fromZod(parsed.error);
+    await ticketService.assign(currentScope(), id, parsed.data.staffId);
+    return { data: { assignedTo: parsed.data.staffId } };
+  }
+
   /* ---------------------------------------------------------------- help */
 
   @Get('help')
@@ -117,12 +136,35 @@ export class SupportController {
     return { data: await kbService.create(currentScope(), parsed.data) };
   }
 
+  @Post('help/:id/revise')
+  async revise(@Param('id') id: string, @Body() body: unknown) {
+    const parsed = z.object({
+      title: z.string().min(1).max(200),
+      body: z.string().min(1).max(100_000),
+    }).safeParse(body);
+    if (!parsed.success) throw ApiError.fromZod(parsed.error);
+    return { data: await kbService.revise(currentScope(), id, parsed.data) };
+  }
+
   @Post('help/:id/publish')
   async publish(@Param('id') id: string, @Body() body: unknown) {
     const parsed = z.object({ version: z.number().int().min(1) }).safeParse(body);
     if (!parsed.success) throw ApiError.fromZod(parsed.error);
     await kbService.publish(currentScope(), id, parsed.data.version);
     return { data: { published: parsed.data.version } };
+  }
+
+  /**
+   * Takes an article off the shelf without deleting a word of it.
+   *
+   * An article that turned out to be wrong stops being served the moment this
+   * returns; every version stays in the table, because a parent who was told
+   * the wrong thing last Tuesday is owed the text they actually read.
+   */
+  @Post('help/:id/unpublish')
+  async unpublish(@Param('id') id: string) {
+    await kbService.unpublish(currentScope(), id);
+    return { data: { published: null } };
   }
 
   /* -------------------------------------------------------------- setup */

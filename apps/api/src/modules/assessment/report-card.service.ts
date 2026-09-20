@@ -176,7 +176,7 @@ export const reportCardService = {
     scope: TenantScope,
     input: {
       cardId: string; newRunId: string; reason: string; byStaffId: string;
-      templateId?: string;
+      templateId?: string | undefined;
     },
   ): Promise<{ id: string; version: number }> {
     if (!input.reason.trim()) {

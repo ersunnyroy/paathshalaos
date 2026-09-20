@@ -147,8 +147,8 @@ export const enrollmentService = {
       toSectionId: string;
       toAcademicYearId: string;
       reason: string;
-      effectiveOn?: string;
-      rollNo?: string;
+      effectiveOn?: string | undefined;
+      rollNo?: string | undefined;
     },
   ): Promise<{ from: Enrollment; to: Enrollment }> {
     if (!input.reason.trim()) {

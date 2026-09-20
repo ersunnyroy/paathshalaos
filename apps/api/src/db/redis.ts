@@ -72,9 +72,6 @@ export function redis(): Redis {
   return client;
 }
 
-/** Lets a later outage warn again, once it has been noticed the first time. */
-export function forgetRedisWarning(): void { warned = false; }
-
 export async function closeRedis(): Promise<void> {
   if (!client) return;
   const c = client;

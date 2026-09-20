@@ -46,6 +46,8 @@ import { feePlanService } from './fee-plan.service.ts';
 import { invoiceService } from './invoice.service.ts';
 import { refundService } from './refund.service.ts';
 import { exportService } from './export.service.ts';
+import { reconciliationService } from './reconciliation.service.ts';
+import { ledgerService } from './ledger.service.ts';
 import { Money } from './money.ts';
 import { withTenant } from '../../db/tenant.ts';
 import { currentScope } from '../../common/scope.ts';
@@ -398,6 +400,111 @@ export class BillingController {
     return { data: { settled: true } };
   }
 
+  // ------------------------------------------------------------- reconciliation
+  //
+  // `reconciliationService` was on M34's unreachable list under "waiting on a
+  // payment provider", and that classification was wrong (M35.1).
+  //
+  // Presenting a mandate and taking a card need a live gateway. **Reconciling a
+  // settlement does not.** An accountant downloads a settlement file from the
+  // bank or the PSP and uploads it; the matching, the queue and the clearing
+  // balance are arithmetic this product already does. Most Indian schools take
+  // most of their money by NEFT, cheque and cash, and every one of those
+  // arrives as a bank statement somebody has to tick off by hand.
+  //
+  // Recorded because the mistake is instructive: a group of methods filed
+  // under one blocker, where only half of them were blocked.
+
+  /**
+   * A settlement file, as lines.
+   *
+   * Money is a decimal string on the way in, like everywhere else in this
+   * module. A JSON number is a double, and a settlement file is the one place
+   * where a hundredth of a rupee turns into an unmatched line somebody spends
+   * an afternoon on.
+   */
+  @Post('settlements')
+  async importSettlement(@Body() body: unknown) {
+    const parsed = z.object({
+      provider: z.string().min(1).max(60),
+      utr: z.string().min(1).max(60),
+      settledOn: isoDate,
+      gross: decimal,
+      fee: decimal,
+      tax: decimal,
+      lines: z.array(z.object({
+        providerPaymentId: z.string().min(1).max(200),
+        amount: decimal,
+        providerFee: decimal,
+      })).min(1).max(5000),
+    }).safeParse(body);
+    if (!parsed.success) throw ApiError.fromZod(parsed.error);
+
+    const { gross, fee, tax, lines, ...rest } = parsed.data;
+    return {
+      data: await reconciliationService.importSettlement(currentScope(), {
+        ...rest,
+        grossMinor: Money.fromDecimalString(gross),
+        feeMinor: Money.fromDecimalString(fee),
+        taxMinor: Money.fromDecimalString(tax),
+        lines: lines.map((l) => ({
+          providerPaymentId: l.providerPaymentId,
+          amountMinor: Money.fromDecimalString(l.amount),
+          providerFeeMinor: Money.fromDecimalString(l.providerFee),
+        })),
+      }),
+    };
+  }
+
+  /**
+   * What did not match, oldest first.
+   *
+   * The work list. A settlement line with no payment behind it is either a
+   * payment this system never recorded or a reference somebody typed wrong,
+   * and both of them are somebody's morning rather than a mystery in a
+   * spreadsheet.
+   */
+  @Get('settlements/unmatched')
+  async unmatched() {
+    return { data: await reconciliationService.unmatchedQueue(currentScope()) };
+  }
+
+  /**
+   * Tying one line to one payment, with the note that says why.
+   *
+   * The note is required by the service. A manual match is somebody asserting
+   * that two records are the same event, and in six months the only evidence
+   * of why is what they typed here.
+   */
+  @Post('settlements/lines/:id/match')
+  async matchLine(@Param('id') id: string, @Body() body: unknown) {
+    const lineId = uuid.safeParse(id);
+    if (!lineId.success) throw ApiError.fromZod(lineId.error);
+    const parsed = z.object({
+      paymentId: uuid,
+      note: z.string().min(1).max(500),
+    }).safeParse(body);
+    if (!parsed.success) throw ApiError.fromZod(parsed.error);
+
+    await reconciliationService.matchManually(currentScope(), {
+      settlementLineId: lineId.data, ...parsed.data,
+    });
+    return { data: { matched: true } };
+  }
+
+  /**
+   * What the ledger thinks is in transit.
+   *
+   * The number to compare against the bank. A clearing balance that does not
+   * come down is money the books believe is on its way and the bank has never
+   * heard of.
+   */
+  @Get('settlements/clearing-balance')
+  async clearingBalance() {
+    const balance = await reconciliationService.clearingBalance(currentScope());
+    return { data: { balance: Money.toDecimalString(balance) } };
+  }
+
   // ------------------------------------------------------- what the accountant needs
   //
   // `exportService` had no caller either. A school's books are kept in Tally
@@ -444,6 +551,79 @@ export class BillingController {
    * An invoice that was issued and then withdrawn is part of the record a
    * school shows an auditor. Deleting it makes the numbering lie.
    */
+  /**
+   * One invoice.
+   *
+   * `installments` above answers "what does this family owe across the year";
+   * this answers "what is invoice INV-2026-00417", which is what somebody
+   * holding a printed receipt actually has in their hand.
+   */
+  @Get('invoices/:id')
+  async invoice(@Param('id') id: string) {
+    const invoiceId = uuid.safeParse(id);
+    if (!invoiceId.success) throw ApiError.fromZod(invoiceId.error);
+    const found = await invoiceService.byId(currentScope(), invoiceId.data);
+    if (!found) {
+      throw ApiError.make('not_found', 'invoice_not_found', 'No such invoice.');
+    }
+    return { data: found };
+  }
+
+  /**
+   * The double entry behind one invoice, payment or refund.
+   *
+   * Grouped by `entry_group_id` so a reader can see each posting balance
+   * rather than a flat list they have to sum themselves — an unbalanced group
+   * is the thing worth spotting, and a list hides it.
+   */
+  @Get('ledger/:sourceType/:sourceId')
+  async ledgerFor(@Param('sourceType') sourceType: string,
+                  @Param('sourceId') sourceId: string) {
+    const parsed = z.object({
+      sourceType: z.enum(['invoice', 'payment', 'refund', 'credit_note', 'settlement']),
+      sourceId: uuid,
+    }).safeParse({ sourceType, sourceId });
+    if (!parsed.success) throw ApiError.fromZod(parsed.error);
+
+    const rows = await withTenant(currentScope(), (db) =>
+      ledgerService.entriesFor(db, parsed.data.sourceType, parsed.data.sourceId));
+
+    const groups = new Map<string, typeof rows>();
+    for (const row of rows) {
+      const existing = groups.get(row.entry_group_id);
+      if (existing) existing.push(row);
+      else groups.set(row.entry_group_id, [row]);
+    }
+    return {
+      data: [...groups].map(([entryGroupId, lines]) => ({
+        entryGroupId,
+        lines,
+        debit: Money.toDecimalString(
+          Money.sum(lines.map((l) => Money.fromDecimalString(l.debit)))),
+        credit: Money.toDecimalString(
+          Money.sum(lines.map((l) => Money.fromDecimalString(l.credit)))),
+      })),
+    };
+  }
+
+  /**
+   * What one enrollment still owes, as a single number.
+   *
+   * Issued and part-paid only: a draft invoice is not a debt and a voided one
+   * never was. The screen that shows a family "₹4,500 outstanding" needs this
+   * to agree exactly with the invoice list beside it, so both come from the
+   * same status set rather than from two opinions about what counts.
+   */
+  @Get('outstanding/:enrollmentId')
+  async outstanding(@Param('enrollmentId') enrollmentId: string) {
+    const parsed = uuid.safeParse(enrollmentId);
+    if (!parsed.success) throw ApiError.fromZod(parsed.error);
+    const due = await invoiceService.outstandingFor(currentScope(), parsed.data);
+    return {
+      data: { enrollmentId: parsed.data, outstanding: Money.toDecimalString(due) },
+    };
+  }
+
   @Post('invoices/:id/void')
   async voidInvoice(@Param('id') id: string, @Body() body: unknown) {
     const invoiceId = uuid.safeParse(id);

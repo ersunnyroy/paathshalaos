@@ -78,6 +78,35 @@ export class ConsentController {
   }
 
   /**
+   * One yes-or-no: may we process this person's data for this purpose?
+   *
+   * Separate from `forPerson` above, which returns the record. A screen
+   * deciding whether to enable a "Send fee reminder" button wants the answer,
+   * not the history, and asking it to derive one from the other means every
+   * caller re-implements the contract-basis rule — `core_education_service`
+   * needs no consent row, because a school teaching an enrolled child is
+   * performing a contract, and a school that had to collect consent for that
+   * could be told to stop teaching.
+   *
+   * Note this can answer true with no consent row at all, which is exactly why
+   * it is not `listFor(...).length > 0` at the call site.
+   */
+  @Get('people/:id/:purpose')
+  async permitted(@Param('id') id: string, @Param('purpose') purpose: string) {
+    const parsed = z.object({ id: uuid, purpose: z.enum(PURPOSES) })
+      .safeParse({ id, purpose });
+    if (!parsed.success) throw ApiError.fromZod(parsed.error);
+    return {
+      data: {
+        personId: parsed.data.id,
+        purpose: parsed.data.purpose,
+        permitted: await consentService.isPermitted(
+          currentScope(), parsed.data.id, parsed.data.purpose),
+      },
+    };
+  }
+
+  /**
    * The gap a school actually has to close: children with no consent on file
    * for a purpose the school wants to use.
    *

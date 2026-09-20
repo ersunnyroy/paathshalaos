@@ -13,6 +13,16 @@ export interface ImpersonationSession {
   expires_at: Date | null;
 }
 
+/** One row of the school's own access log. A superset of the session itself. */
+export interface AccessRow extends ImpersonationSession {
+  actor_email: string | null;
+  target_email: string | null;
+  assumed_role: string | null;
+  entry_path: string;
+  reason: string;
+  revoked_at: Date | null;
+}
+
 const MAX_WINDOW_MINUTES = 60;
 
 /**
@@ -34,7 +44,10 @@ const MAX_WINDOW_MINUTES = 60;
 export const impersonationService = {
   async request(
     scope: TenantScope,
-    input: { targetUserId?: string; reason: string; ticketRef: string; writeRequested?: boolean },
+    input: {
+      targetUserId?: string | undefined; reason: string; ticketRef: string;
+      writeRequested?: boolean | undefined;
+    },
   ): Promise<ImpersonationSession> {
     if (input.reason.trim().length < 10) {
       throw ApiError.make('validation_error', 'reason_too_short',
@@ -161,13 +174,31 @@ export const impersonationService = {
     return session;
   },
 
-  /** Lists sessions against a tenant — how an owner watches one happen. */
-  async listForTenant(scope: TenantScope): Promise<ImpersonationSession[]> {
+  /**
+   * Every session against this school, newest first — how an owner watches one
+   * happen and how they find the one they want to end.
+   *
+   * This used to return five columns while `AccessLogController` ran its own
+   * richer query inline, which is two answers to one question with the tested
+   * one not being the live one. The richer query won and moved here: the
+   * school's screen and the suite now exercise the same SQL.
+   *
+   * `actor_label` rather than a join onto `user_account`: the school's policy
+   * on that table does not admit platform staff and should not, so if the name
+   * is not copied onto the row at entry it is not knowable by the people it
+   * concerns most.
+   */
+  async listForTenant(scope: TenantScope): Promise<AccessRow[]> {
     return withTenant(scope, async (db) => {
-      const { rows } = await db.query<ImpersonationSession>(
-        `SELECT id, tenant_id, actor_user_id, target_user_id, status, write_enabled,
-                started_at, expires_at
-           FROM impersonation_session ORDER BY requested_at DESC LIMIT 100`,
+      const { rows } = await db.query<AccessRow>(
+        `SELECT s.id, s.tenant_id, s.actor_user_id, s.target_user_id, s.status,
+                s.write_enabled, s.started_at, s.expires_at,
+                s.actor_label AS actor_email, target.login_email AS target_email,
+                s.assumed_role, s.entry_path, s.reason, s.revoked_at
+           FROM impersonation_session s
+           LEFT JOIN user_account target ON target.id = s.target_user_id
+          ORDER BY s.requested_at DESC
+          LIMIT 200`,
       );
       return rows;
     });

@@ -19,7 +19,7 @@
  */
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { execFileSync } from 'node:child_process';
-import { existsSync, readdirSync, readFileSync } from 'node:fs';
+import { existsSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import pg from 'pg';
@@ -232,5 +232,54 @@ describe('the scheduler ships', () => {
       new URL('../../../docker-compose.yml', import.meta.url), 'utf8');
     expect(compose).toMatch(/^ {2}scheduler:$/m);
     expect(compose).toContain('dist/workers/scheduler.js');
+  });
+});
+
+/**
+ * The build output is a mirror of the source, not an accumulation of it.
+ *
+ * `copy-assets.mjs` used `cpSync` into `dist/db/migrations` without emptying
+ * it first, and `cpSync` merges: it adds and overwrites, and never removes. So
+ * three migrations renamed in `src/` months earlier were still sitting in
+ * `dist/` — invisible to `git status`, invisible to anyone reading the source,
+ * and shipped by every build since.
+ *
+ * Six files then occupied three ordinals. The runner sorts by filename, so it
+ * applied `0059_plans.sql`, then applied `0059_plan_catalogue.sql`, which
+ * creates the same table, and the build died on Postgres's own words:
+ * `relation "plan" already exists`. That reads as a broken migration. The
+ * migration was fine.
+ *
+ * The local failure is the mild version. On a fresh production database it is
+ * silent — SQL that exists nowhere in this repository gets applied and
+ * recorded in `schema_migration` as though it were ours.
+ *
+ * Asserted by planting a stray file and rebuilding, because the passing state
+ * is indistinguishable either way: `dist/` is correct right now whether the
+ * copier mirrors or merges, so a test that only checked the current directory
+ * would pass against the bug it exists to catch.
+ */
+describe('the build output mirrors the source', () => {
+  const stray = join(DIST, 'db', 'migrations', '0059_a_migration_that_was_renamed.sql');
+
+  afterAll(() => {
+    if (existsSync(stray)) rmSync(stray);
+  });
+
+  it('removes a file that is no longer in src/', () => {
+    writeFileSync(stray, '-- left over from a rename\nSELECT 1;\n');
+    expect(existsSync(stray)).toBe(true);
+
+    execFileSync('node', [join(API_ROOT, 'scripts', 'copy-assets.mjs')],
+      { cwd: API_ROOT, encoding: 'utf8' });
+
+    expect(existsSync(stray), 'dist still carries a migration src/ has not had for months')
+      .toBe(false);
+  });
+
+  it('carries exactly what src/ carries, name for name', () => {
+    const sql = (dir: string) => readdirSync(dir).filter((f) => f.endsWith('.sql')).sort();
+    expect(sql(join(DIST, 'db', 'migrations')))
+      .toEqual(sql(join(API_ROOT, 'src', 'db', 'migrations')));
   });
 });

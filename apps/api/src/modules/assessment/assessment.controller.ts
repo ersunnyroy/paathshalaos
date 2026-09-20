@@ -174,6 +174,18 @@ export class AssessmentController {
     return { data: { published: true } };
   }
 
+  /** One scale, for a screen that is editing it rather than listing them. */
+  @Get('scales/:id')
+  async scale(@Param('id') id: string) {
+    const scaleId = uuid.safeParse(id);
+    if (!scaleId.success) throw ApiError.fromZod(scaleId.error);
+    const found = await gradingService.byId(currentScope(), scaleId.data);
+    if (!found) {
+      throw ApiError.make('not_found', 'scale_not_found', 'No such grading scale.');
+    }
+    return { data: found };
+  }
+
   /** The assessments on an offering, and how far each has got. */
   @Get()
   async list(@Query('courseOfferingId') courseOfferingId?: string,
@@ -229,6 +241,24 @@ export class AssessmentController {
     if (!assessmentId.success) throw ApiError.fromZod(assessmentId.error);
     await assessmentService.open(currentScope(), assessmentId.data);
     return { data: { opened: true } };
+  }
+
+  /**
+   * One assessment.
+   *
+   * `list` above answers "what is on this offering" and carries the counts a
+   * teacher's index needs; this answers "what is this one", which is what a
+   * client holding only an id after a redirect actually has.
+   */
+  @Get(':id')
+  async byId(@Param('id') id: string) {
+    const assessmentId = uuid.safeParse(id);
+    if (!assessmentId.success) throw ApiError.fromZod(assessmentId.error);
+    const found = await assessmentService.byId(currentScope(), assessmentId.data);
+    if (!found) {
+      throw ApiError.make('not_found', 'assessment_not_found', 'No such assessment.');
+    }
+    return { data: found };
   }
 
   /** The mark sheet: every learner in the class, with whatever is entered. */
@@ -372,6 +402,46 @@ export class ResultRunController {
   }
 
   /**
+   * Every version of one learner's card for one term, oldest first.
+   *
+   * Declared before `:id` because `report-cards` is one segment and would
+   * otherwise be read as a run id.
+   */
+  @Get('report-cards')
+  async cardVersions(@Query('enrollmentId') enrollmentId?: string,
+                     @Query('termId') termId?: string) {
+    const parsed = z.object({ enrollmentId: uuid, termId: uuid })
+      .safeParse({ enrollmentId, termId });
+    if (!parsed.success) throw ApiError.fromZod(parsed.error);
+    return {
+      data: await withTenant(currentScope(), (db) =>
+        reportCardService.versionsFor(db, parsed.data.enrollmentId, parsed.data.termId)),
+    };
+  }
+
+  @Get('report-cards/:id')
+  async card(@Param('id') id: string) {
+    const cardId = uuid.safeParse(id);
+    if (!cardId.success) throw ApiError.fromZod(cardId.error);
+    const found = await reportCardService.byId(currentScope(), cardId.data);
+    if (!found) {
+      throw ApiError.make('not_found', 'card_not_found', 'No such report card.');
+    }
+    return { data: found };
+  }
+
+  @Get(':id')
+  async byId(@Param('id') id: string) {
+    const runId = uuid.safeParse(id);
+    if (!runId.success) throw ApiError.fromZod(runId.error);
+    const found = await resultService.byId(currentScope(), runId.data);
+    if (!found) {
+      throw ApiError.make('not_found', 'run_not_found', 'No such result run.');
+    }
+    return { data: found };
+  }
+
+  /**
    * Compute the term's results for a section.
    *
    * `requireCompleteWeights` defaults to true and should: assessments are
@@ -421,6 +491,29 @@ export class ResultRunController {
     return { data: { published: true } };
   }
 
+  /**
+   * The published run this one replaces.
+   *
+   * `:id` is the old run, because that is the row whose meaning changes — the
+   * new run was already computed and reviewed through the ordinary path. The
+   * reason is required by the service and is not defaulted here: a correction
+   * with no stated reason is the thing this endpoint exists to prevent.
+   */
+  @Post(':id/supersede')
+  async supersede(@Param('id') id: string, @Body() body: unknown) {
+    const oldRunId = uuid.safeParse(id);
+    if (!oldRunId.success) throw ApiError.fromZod(oldRunId.error);
+    const parsed = z.object({ newRunId: uuid, reason: z.string().max(1000) })
+      .safeParse(body);
+    if (!parsed.success) throw ApiError.fromZod(parsed.error);
+    const scope = currentScope();
+    await resultService.supersede(scope, {
+      oldRunId: oldRunId.data, ...parsed.data,
+      byStaffId: await requireStaff(scope),
+    });
+    return { data: { superseded: true } };
+  }
+
   @Post(':id/report-cards')
   async issueCards(@Param('id') id: string, @Body() body: unknown) {
     const runId = uuid.safeParse(id);
@@ -443,6 +536,31 @@ export class ResultRunController {
       cardId: cardId.data, publishedByStaffId: await requireStaff(scope),
     });
     return { data: { published: true } };
+  }
+
+  /**
+   * A corrected card: a new version, with the old one kept and readable.
+   *
+   * Not a PATCH, because nothing about the old row changes — a parent who was
+   * shown the wrong grade is owed the text they actually read.
+   */
+  @Post('report-cards/:id/correct')
+  async correctCard(@Param('id') id: string, @Body() body: unknown) {
+    const cardId = uuid.safeParse(id);
+    if (!cardId.success) throw ApiError.fromZod(cardId.error);
+    const parsed = z.object({
+      newRunId: uuid,
+      reason: z.string().max(1000),
+      templateId: uuid.optional(),
+    }).safeParse(body);
+    if (!parsed.success) throw ApiError.fromZod(parsed.error);
+    const scope = currentScope();
+    return {
+      data: await reportCardService.correct(scope, {
+        cardId: cardId.data, ...parsed.data,
+        byStaffId: await requireStaff(scope),
+      }),
+    };
   }
 
   @Post('report-card-templates')

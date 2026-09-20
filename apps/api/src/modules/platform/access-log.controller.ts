@@ -14,25 +14,11 @@ import { Controller, Get, Post, Param, Body } from '@nestjs/common';
 import { z } from 'zod';
 import { withTenant } from '../../db/tenant.ts';
 import { authzService } from '../authz/authz.service.ts';
-import { impersonationService } from './impersonation.service.ts';
+import { impersonationService, type AccessRow } from './impersonation.service.ts';
 import { requireTenantId, getContext } from '../../common/request-context.ts';
 import { ApiError } from '../../common/errors.ts';
 
 const endSession = z.object({ reason: z.string().min(3).max(300).optional() });
-
-interface AccessRow {
-  id: string;
-  actor_email: string | null;
-  target_email: string | null;
-  assumed_role: string | null;
-  entry_path: string;
-  status: string;
-  reason: string;
-  write_enabled: boolean;
-  started_at: string | null;
-  expires_at: string | null;
-  revoked_at: string | null;
-}
 
 @Controller('v1/platform-access')
 export class AccessLogController {
@@ -60,19 +46,7 @@ export class AccessLogController {
   @Get()
   async list() {
     const scope = await this.requireAuditReader();
-    const rows = await withTenant(scope, async (db) => {
-      const { rows } = await db.query<AccessRow>(
-        // actor_label rather than a join: the school's policy on user_account
-        // does not admit platform staff, and should not.
-        `SELECT s.id, s.actor_label AS actor_email, target.login_email AS target_email,
-                s.assumed_role, s.entry_path, s.status, s.reason, s.write_enabled,
-                s.started_at, s.expires_at, s.revoked_at
-           FROM impersonation_session s
-           LEFT JOIN user_account target ON target.id = s.target_user_id
-          ORDER BY s.requested_at DESC
-          LIMIT 200`);
-      return rows;
-    });
+    const rows: AccessRow[] = await impersonationService.listForTenant(scope);
     return {
       data: rows,
       notice: rows.some((r) => r.status === 'active')
@@ -98,5 +72,81 @@ export class AccessLogController {
       scope, id, scope.actorId,
       parsed.data.reason ?? 'Ended by the institute.');
     return { data: { status: 'ended' } };
+  }
+}
+
+/**
+ * The ticketed, two-person support path — 0054's `support` entry path.
+ *
+ * Not a second way to do what the console's `/platform/v1/enter` does. 0054
+ * deliberately split the two and wrote the difference into the schema: a
+ * `platform` session is one capability-holder with no ticket and no approver,
+ * and a `support` session is a named ticket plus a second person, with the
+ * database refusing to let it go active otherwise. That trigger has been in
+ * 0008 since the beginning and had no caller in `src/` until this file, which
+ * means the guarantee AC-12 lists first was enforceable and unreachable at
+ * the same time — proved by a suite, offered to nobody.
+ *
+ * Tenant-scoped, under the school's own token: the requester is somebody who
+ * already holds an account here — an implementation partner, a reseller's
+ * engineer — asking for a window, not a stranger. Approving is gated on
+ * `audit:read`, the same permission that governs seeing the log, because
+ * letting somebody in is not a lesser act than reading about it afterwards.
+ */
+@Controller('v1/support-access')
+export class SupportAccessController {
+  private scope() {
+    const actorId = getContext()?.actorId;
+    if (!actorId) throw new Error('No actor; AuthGuard should have refused this.');
+    return { tenantId: requireTenantId(), actorId };
+  }
+
+  private async requireApprover(): Promise<{ tenantId: string; actorId: string }> {
+    const scope = this.scope();
+    const allowed = await withTenant(scope, async (db) => {
+      const grants = await authzService.grantsFor(db, scope.actorId);
+      return authzService.can(grants, 'audit:read', { type: 'organization', id: null });
+    });
+    if (!allowed) throw ApiError.make('not_found', 'not_found', 'Not found.');
+    return scope;
+  }
+
+  /**
+   * Asks for a window. Grants nothing.
+   *
+   * The requester is the session's actor and comes from the token, never the
+   * body — the database's `approved_by <> actor_user_id` check is only a
+   * two-person rule if the first person cannot be chosen by the caller.
+   */
+  @Post()
+  async request(@Body() body: unknown) {
+    const parsed = z.object({
+      // Deliberately not `.min(10)`: the service refuses a reason shorter than
+      // ten characters after trimming, and a stricter rule here would make the
+      // service's rule unreachable and its test a tautology.
+      reason: z.string().max(2000),
+      ticketRef: z.string().min(1).max(60),
+      targetUserId: z.string().uuid().optional(),
+      writeRequested: z.boolean().optional(),
+    }).safeParse(body);
+    if (!parsed.success) throw ApiError.fromZod(parsed.error);
+    return { data: await impersonationService.request(this.scope(), parsed.data) };
+  }
+
+  /**
+   * The second person. Approving and starting the window are one step, because
+   * an approval nobody uses should expire rather than sit there.
+   */
+  @Post(':id/approve')
+  async approve(@Param('id') id: string, @Body() body: unknown) {
+    const scope = await this.requireApprover();
+    const parsed = z.object({ minutes: z.number().int().min(5).max(60).optional() })
+      .safeParse(body ?? {});
+    if (!parsed.success) throw ApiError.fromZod(parsed.error);
+    return {
+      data: parsed.data.minutes === undefined
+        ? await impersonationService.approve(scope, id, scope.actorId)
+        : await impersonationService.approve(scope, id, scope.actorId, parsed.data.minutes),
+    };
   }
 }

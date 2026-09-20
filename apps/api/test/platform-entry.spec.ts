@@ -665,3 +665,122 @@ describe('the schedule, from the console', () => {
     }
   });
 });
+
+/**
+ * Custom domains (M35.2).
+ *
+ * `domainService` had four methods and no caller anywhere in `src/`. The
+ * school-facing branding controller's own hint told a school to *ask us* to add
+ * a domain they own, and there was no endpoint through which anybody here could
+ * be asked — a read surface with no write surface, which is the shape M19
+ * shipped white-labelling in and nobody noticed for fourteen milestones.
+ *
+ * On the console rather than in the school's settings, because getting a
+ * hostname wrong means serving one school's sign-in page on another school's
+ * domain, and the verification step is not something a school can wave through
+ * for itself.
+ */
+describe('a school can be given a domain it actually owns', () => {
+  const host = `fees${Date.now()}.nalanda-test.example`;
+  let domainId = '';
+
+  /** A console sign-in with no impersonation claim, as the block above uses. */
+  const consoleToken = () => tokenFor(admin, tenant.orgId, []);
+
+  async function provisioner(): Promise<string> {
+    await owned((c) => c.query(
+      `INSERT INTO platform_admin (user_account_id, capability)
+       VALUES ($1, 'provision') ON CONFLICT DO NOTHING`, [admin.userId]));
+    return consoleToken();
+  }
+
+  afterAll(async () => {
+    await owned(async (c) => {
+      await c.query('DELETE FROM tenant_domain WHERE host = $1', [host]);
+      await c.query(
+        `DELETE FROM platform_admin WHERE user_account_id = $1 AND capability = 'provision'`,
+        [admin.userId]);
+    });
+  });
+
+  it('refuses a console account that cannot provision', async () => {
+    // `admin` holds support and impersonate. Pointing a hostname at a school is
+    // not a read.
+    const { status } = await req('POST', '/platform/v1/domains', await consoleToken(),
+      { tenantId: tenant.orgId, host });
+    expect(status).toBe(404);
+  });
+
+  it('adds it unverified, and hands back the record to publish', async () => {
+    const { status, body } = await req('POST', '/platform/v1/domains',
+      await provisioner(), { tenantId: tenant.orgId, host });
+    expect(status).toBe(201);
+    domainId = body.data.id;
+    expect(body.data.verified_at).toBeNull();
+    expect(body.data.record).toBe(`_paathshala-verify.${host}`);
+    expect(body.data.value).toBeTruthy();
+  });
+
+  it('refuses a hostname that is not one', async () => {
+    const { status, body } = await req('POST', '/platform/v1/domains',
+      await provisioner(), { tenantId: tenant.orgId, host: 'not a hostname' });
+    expect(status).toBe(422);
+    expect(body.error.code).toBe('not_a_hostname');
+  });
+
+  it('will not let a subdomain of ours be claimed through the custom path',
+    async () => {
+      // Otherwise the reserved-name list is bypassable: claim
+      // `admin.paathshala.app` as a "custom" domain and it is allocated.
+      const { status, body } = await req('POST', '/platform/v1/domains',
+        await provisioner(), { tenantId: tenant.orgId, host: 'anything.paathshala.app' });
+      expect(status).toBe(422);
+      expect(body.error.code).toBe('not_yours_to_claim');
+    });
+
+  it('does not say which school holds a hostname somebody else registered',
+    async () => {
+      // A 409 that named the tenant would turn this endpoint into a way to ask
+      // who our customers are.
+      const { status, body } = await req('POST', '/platform/v1/domains',
+        await provisioner(), { tenantId: otherTenant.orgId, host });
+      expect(status).toBe(409);
+      expect(body.error.code).toBe('host_taken');
+      expect(JSON.stringify(body)).not.toContain(tenant.orgId);
+    });
+
+  it('will not make an unverified domain primary', async () => {
+    // The whole protection. An unverified domain is a claim, not a route, and
+    // making it primary would route a school's sign-in page to a hostname
+    // nobody has proved they control.
+    const { status, body } = await req('POST', `/platform/v1/domains/${domainId}/primary`,
+      await provisioner(), {});
+    expect(status).toBe(409);
+    expect(body.error.code).toBe('not_verified');
+  });
+
+  it('reports the domain as unverified when the record is not published',
+    async () => {
+      // A real DNS lookup against a hostname in `.example`, which by RFC 2606
+      // resolves to nothing. So this asserts the honest failure rather than
+      // mocking the resolver: no record, no verification.
+      const { status, body } = await req('POST', `/platform/v1/domains/${domainId}/verify`,
+        await provisioner(), {});
+      expect(status).toBeGreaterThanOrEqual(400);
+      expect(body.error.code).not.toBe('internal_error');
+
+      const row = await owned(async (c) => (await c.query<{ verified_at: string | null }>(
+        'SELECT verified_at::text FROM tenant_domain WHERE id = $1', [domainId])).rows[0]!);
+      expect(row.verified_at).toBeNull();
+    });
+
+  it('lists it in the estate', async () => {
+    const { status, body } = await req('GET', '/platform/v1/domains',
+      await provisioner());
+    expect(status).toBe(200);
+    const mine = body.data.find((d: any) => d.id === domainId);
+    expect(mine.host).toBe(host);
+    expect(mine.kind).toBe('custom');
+    expect(mine.is_primary).toBe(false);
+  });
+});

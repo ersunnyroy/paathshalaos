@@ -80,40 +80,18 @@ export function unreachableMethods(): string[] {
  */
 const UNREACHABLE: Array<{ why: string; methods: string[] }> = [
   {
-    why: 'Waiting on a payment provider (M26). The ledger, the mandates and the '
-       + 'settlement matching are built and have never seen a live rupee; '
-       + 'wiring a route to them would be offering a school a button that '
-       + 'cannot work.',
+    why: 'Waiting on a gateway we have not bought. Presenting a mandate, taking '
+       + 'a card and accepting a delivery receipt all need a live provider — a '
+       + 'receipt endpoint in particular needs a shared secret to check a '
+       + 'signature against, and one that trusted anything that posted to it '
+       + 'would let a stranger mark a message delivered. M35 removed the '
+       + 'reconciliation methods from this group: matching a settlement is '
+       + 'arithmetic on rows a school already has, and needs no provider at all.',
     methods: [
       'mandateService.byId', 'mandateService.present', 'mandateService.register',
       'mandateService.transition',
       'paymentService.byId', 'paymentService.createOrder', 'paymentService.handleWebhook',
-      'reconciliationService.clearingBalance', 'reconciliationService.importSettlement',
-      'reconciliationService.matchManually', 'reconciliationService.unmatchedQueue',
-    ],
-  },
-  {
-    why: 'A feature with a read surface and no write surface. The school can see '
-       + 'it and cannot change it, which is worse than not having it — M19 '
-       + 'shipped white-labelling this way and nobody noticed for fourteen '
-       + 'milestones.',
-    methods: [
-      'domainService.addCustom', 'domainService.listAll', 'domainService.setPrimary',
-      'domainService.verify',
-    ],
-  },
-  {
-    why: 'A workflow whose second half has no route. The request exists, the '
-       + 'approval does not, so the thing that makes it safe cannot happen.',
-    methods: [
-      'impersonationService.approve', 'impersonationService.listForTenant',
-      'impersonationService.request',
-      'kbService.revise', 'kbService.unpublish',
-      'ticketService.assign',
-      'reportCardService.correct', 'reportCardService.versionsFor',
-      'resultService.supersede',
-      'enrollmentService.transferCampus',
-      'admissionsService.attachDocument', 'admissionsService.verifyDocument',
+      'dispatchService.recordReceipt',
     ],
   },
   {
@@ -128,24 +106,23 @@ const UNREACHABLE: Array<{ why: string; methods: string[] }> = [
       'peopleRepository.linkGuardian', 'peopleRepository.linkedLearners',
       'peopleRepository.listStudents',
       'tenancyRepository.listAcademicUnits',
-      'admissionsService.createApplication', 'formsService.submit',
       'importService.batch',
       'brandingService.setAsPlatform',
       'entryService.forSchool',
     ],
   },
   {
-    why: 'A reader with no screen behind it yet. Harmless, and the cheapest '
-       + 'group to close — each is one route away from being useful.',
+    why: 'Reached only by the suite. Not dead — every one of these is exercised '
+       + 'and passing — but a method whose only caller is a test is a method the '
+       + 'product does not have, and a suite proving it works proves nothing a '
+       + 'school can use. Each is a standalone wrapper around a path the live '
+       + 'code takes differently: `intake` does the form submission and the '
+       + 'application inside one transaction, the mark sheet reads marks with '
+       + 'the roster joined, and the retention purge runs as a job on the '
+       + 'maintenance connection because the ordinary one cannot see the rows.',
     methods: [
-      'assessmentService.byId', 'assessmentService.marksFor',
-      'gradingService.byId', 'reportCardService.byId', 'resultService.byId',
-      'invoiceService.byId', 'invoiceService.outstandingFor',
-      'ledgerService.entriesFor',
-      'enrollmentService.current',
-      'consentService.isPermitted',
-      'dispatchService.recipientsFor', 'dispatchService.recordReceipt',
-      'authService.revokeAllSessions',
+      'assessmentService.marksFor',
+      'admissionsService.createApplication', 'formsService.submit',
       'retentionService.purgeUnsuccessfulApplicantDocuments',
     ],
   },
@@ -232,6 +209,24 @@ describe('the detector catches what it claims to', () => {
       'peopleRepository.findStudentSensitive', 'peopleRepository.guardiansOf',
       // Wired in M34.4: a school could see its branding and not change it.
       'brandingService.set',
+      // M35.1: reconciling a settlement never needed a payment gateway, and
+      // saying it did kept four working methods behind an excuse.
+      'reconciliationService.importSettlement', 'reconciliationService.matchManually',
+      'reconciliationService.unmatchedQueue', 'reconciliationService.clearingBalance',
+      // M35.2: the white-label domain half that had a read and no write.
+      'domainService.addCustom', 'domainService.verify', 'domainService.setPrimary',
+      // M35.3: workflow second halves. `impersonationService.request` and
+      // `approve` matter most — they are 0054's two-person support path, whose
+      // trigger has refused an unapproved session since 0008 and had nothing
+      // able to ask for one.
+      'impersonationService.request', 'impersonationService.approve',
+      'kbService.revise', 'kbService.unpublish', 'ticketService.assign',
+      'reportCardService.correct', 'resultService.supersede',
+      'enrollmentService.transferCampus',
+      'admissionsService.attachDocument', 'admissionsService.verifyDocument',
+      // M35.4: readers that had no screen.
+      'assessmentService.byId', 'invoiceService.outstandingFor',
+      'consentService.isPermitted', 'authService.revokeAllSessions',
     ]) {
       expect(found, `${wired} is reachable`).not.toContain(wired);
     }

@@ -561,14 +561,22 @@ describe('a school can raise an invoice it can take money against', () => {
       [res.body.data.id]));
     expect(stored.rows[0]!.amount).toBe('999999999999.99');
 
-    // And one paise over it is refused rather than silently rounded.
+    // And one digit over it is refused rather than silently rounded.
+    //
+    // Asserted as a named 422 rather than as `>= 400`, which is how this sat
+    // for three milestones while the real answer was a 500. The loose bound
+    // was the bug: `internal_error` tells the person typing the number nothing
+    // they can act on, and tells whoever reads the log that the server broke.
     const over = await POST('/v1/fees/plans', officeToken, {
       academicUnitId: tenant.unitId, academicYearId, name: 'One too many',
       components: [{
         code: 'X', name: 'Over', amount: '9999999999999.99', frequency: 'annual',
       }],
     });
-    expect(over.status).toBeGreaterThanOrEqual(400);
+    expect(over.status).toBe(422);
+    expect(over.body.error.code).toBe('amount_too_large');
+    // The component's own code, so a plan with eleven lines says which one.
+    expect(over.body.error.message).toContain('X');
   });
 
   it('refuses to assign a learner to a plan nobody has published', async () => {
@@ -685,6 +693,60 @@ describe('a school can raise an invoice it can take money against', () => {
     expect(nothing.body.error.code).toBe('amount_must_be_positive');
   });
 
+  /* ------------------------------------------------- M35.4: readers with a screen */
+
+  it('answers "what is invoice INV-…" for somebody holding a printed receipt',
+    async () => {
+      const res = await GET(`/v1/fees/invoices/${invoiceId}`, officeToken);
+      expect(res.status).toBe(200);
+      expect(res.body.data.id).toBe(invoiceId);
+      expect(res.body.data.invoice_no).toBeTruthy();
+      // Decimal strings, like every other money field here.
+      expect(res.body.data.total).toMatch(/^\d+\.\d{2}$/);
+      expect(res.body.data.amount_paid).toMatch(/^\d+\.\d{2}$/);
+
+      expect((await GET(`/v1/fees/invoices/${randomUUID()}`, officeToken)).status)
+        .toBe(404);
+    });
+
+  it('totals what one enrollment still owes, counting only real debts',
+    async () => {
+      const res = await GET(`/v1/fees/outstanding/${enrolmentForFees}`, officeToken);
+      expect(res.status).toBe(200);
+      expect(res.body.data.outstanding).toMatch(/^\d+\.\d{2}$/);
+
+      // Agrees with the invoices behind it. A screen showing a family
+      // "₹4,500 outstanding" beside a list that adds to something else is the
+      // failure this has to not have.
+      const sum = await owner((c) => c.query<{ due: string }>(
+        `SELECT COALESCE(sum(total - amount_paid), 0)::text AS due
+           FROM invoice
+          WHERE enrollment_id = $1 AND status IN ('issued', 'part_paid')`,
+        [enrolmentForFees]));
+      expect(res.body.data.outstanding).toBe(sum.rows[0]!.due);
+    });
+
+  it('shows the double entry behind an invoice, grouped so each side balances',
+    async () => {
+      const res = await GET(`/v1/fees/ledger/invoice/${invoiceId}`, officeToken);
+      expect(res.status).toBe(200);
+      expect(res.body.data.length).toBeGreaterThan(0);
+
+      for (const group of res.body.data) {
+        expect(group.lines.length).toBeGreaterThan(1);
+        // The assertion worth having. An unbalanced group is the thing a
+        // reader is looking for, and a flat list of entries hides it.
+        expect(group.debit).toBe(group.credit);
+      }
+    });
+
+  it('refuses a source type that is not one of ours', async () => {
+    // The parameter goes into a WHERE clause on `source_type`. An open string
+    // would make this a way to enumerate whatever else is in the ledger.
+    const res = await GET(`/v1/fees/ledger/whatever/${invoiceId}`, officeToken);
+    expect(res.status).toBe(422);
+  });
+
   it('hands the accountant a day book, as rows and as a file', async () => {
     const json = await GET(
       `/v1/fees/exports/day-book?from=${inDays(-30)}&to=${today()}`, officeToken);
@@ -734,6 +796,7 @@ describe('a school can raise an invoice it can take money against', () => {
 });
 
 describe('a school can send a message', () => {
+  let sentRequestId = '';
   let templateId = '';
   let versionId = '';
 
@@ -788,7 +851,33 @@ describe('a school can send a message', () => {
       const outcomes = await GET(
         `/v1/messaging/requests/${res.body.data.requestId}/outcomes`, officeToken);
       expect(outcomes.status).toBe(200);
+      sentRequestId = res.body.data.requestId;
     });
+
+  it('can say what it actually said to each person', async () => {
+    // Not a narrower `outcomes`. That route answers "did it arrive"; this one
+    // answers "what did you say to them", which is the question a guardian
+    // asks under the DPDP Act. Reconstructing it from the template and the
+    // variables is not evidence — the template may have been revised since.
+    const res = await GET(`/v1/messaging/requests/${sentRequestId}/recipients`,
+      officeToken);
+    expect(res.status).toBe(200);
+    expect(res.body.data.length).toBeGreaterThan(0);
+
+    const delivered = res.body.data.filter((r: any) => r.status !== 'suppressed');
+    expect(delivered.length).toBeGreaterThan(0);
+    // The stored text, not a rendering done now.
+    expect(delivered[0].rendered_body).toBeTruthy();
+
+    for (const row of res.body.data) {
+      // Nothing was rendered for a suppressed recipient because nothing was
+      // sent; the reason carries the answer instead.
+      if (row.status === 'suppressed') {
+        expect(row.rendered_body).toBeNull();
+        expect(row.suppression_reason).toBeTruthy();
+      }
+    }
+  });
 
   it('refuses a send that would reach nobody', async () => {
     const res = await POST('/v1/messaging/send', officeToken, {
@@ -1759,5 +1848,524 @@ describe('a school can change its own branding', () => {
       .body.error.code).toBe('not_a_colour');
     expect((await GET('/v1/branding', officeToken)).body.data.primary_colour)
       .toBe('#14B8A6');
+  });
+});
+
+// ---------------------------------------------------------------------------
+
+/**
+ * M35 — the second halves.
+ *
+ * M34 counted sixty service methods with no route and wrote down why each one
+ * had none. Reading that list back, most of the reasons did not survive
+ * contact: "waiting on a payment provider" was guarding four reconciliation
+ * methods that need no provider, and "a workflow whose second half has no
+ * route" was describing a two-person approval the database has been ready to
+ * enforce since 0008.
+ *
+ * Each block below is one of those second halves, tested through `fetch` for
+ * the reason this file exists: a service test proves a function works and
+ * cannot prove anybody can call it.
+ */
+describe('a help article can be revised and taken down, not just published', () => {
+  let articleId = '';
+  const slug = `fees-${randomUUID().slice(0, 8)}`;
+
+  it('publishes version one', async () => {
+    const created = await POST('/v1/help', officeToken, {
+      slug,
+      title: 'How to pay fees',
+      body: 'Pay at the office, or in the app.',
+      audience: 'guardians',
+    });
+    expect(created.status).toBe(201);
+    articleId = created.body.data.id;
+    expect((await POST(`/v1/help/${articleId}/publish`, officeToken, { version: 1 }))
+      .status).toBe(201);
+  });
+
+  it('a revision is a new version, and does not go live on its own', async () => {
+    const revised = await POST(`/v1/help/${articleId}/revise`, officeToken, {
+      title: 'How to pay fees', body: 'Pay in the app. The office no longer takes cash.',
+    });
+    expect(revised.status).toBe(201);
+    expect(revised.body.data.version).toBe(2);
+
+    // Still serving v1. Publishing "the latest" would put a half-written draft
+    // in front of a parent the moment somebody saved it.
+    const stored = await owner((c) => c.query<{ published_version: number | null }>(
+      'SELECT published_version FROM kb_article WHERE id = $1', [articleId]));
+    expect(stored.rows[0]!.published_version).toBe(1);
+  });
+
+  it('unpublishes without deleting a word', async () => {
+    // Asserted through a guardian's token rather than by reading a column,
+    // because the guarantee is "a parent stops seeing it" and 0043's policy is
+    // what delivers that. `published_version` is deliberately NOT cleared —
+    // re-publishing should restore what was there rather than ask somebody to
+    // remember which version it was — so a test that checked the column would
+    // have been asserting the opposite of the design.
+    const before = await GET(`/v1/help/${slug}`, guardianToken);
+    expect(before.status).toBe(200);
+
+    expect((await POST(`/v1/help/${articleId}/unpublish`, officeToken)).status).toBe(201);
+
+    const after = await GET(`/v1/help/${slug}`, guardianToken);
+    expect(after.status).toBe(404);
+
+    // ...and every word of it still there for the school. A parent who was
+    // told the wrong thing last Tuesday is owed the text they actually read.
+    const kept = await owner((c) => c.query<{ n: string; published_version: number | null }>(
+      `SELECT a.published_version,
+              (SELECT count(*)::text FROM kb_article_version v
+                WHERE v.kb_article_id = a.id) AS n
+         FROM kb_article a WHERE a.id = $1`, [articleId]));
+    expect(kept.rows[0]!.n).toBe('2');
+    expect(kept.rows[0]!.published_version).toBe(1);
+  });
+});
+
+describe('a ticket can be handed to somebody', () => {
+  it('assigns, and records who to', async () => {
+    const raised = await POST('/v1/tickets', officeToken, {
+      subject: 'Receipt not generated', body: 'Paid on Tuesday, no receipt.',
+      category: 'fees_and_payments',
+    });
+    expect(raised.status).toBe(201);
+    const ticketId = raised.body.data.id;
+
+    const assigned = await POST(`/v1/tickets/${ticketId}/assign`, officeToken,
+      { staffId: officeStaffId });
+    expect(assigned.status).toBe(201);
+    expect(assigned.body.data.assignedTo).toBe(officeStaffId);
+
+    // The thread unions messages and events; an event row's `kind` is the
+    // literal 'event' and the event's own kind travels in `body`, which is the
+    // shape a screen renders from.
+    const thread = await GET(`/v1/tickets/${ticketId}/thread`, officeToken);
+    expect(thread.body.data.some((e: any) => e.kind === 'event' && e.body === 'assigned'))
+      .toBe(true);
+
+    const stored = await owner((c) => c.query<{ assigned_to_staff_id: string | null }>(
+      'SELECT assigned_to_staff_id FROM support_ticket WHERE id = $1', [ticketId]));
+    expect(stored.rows[0]!.assigned_to_staff_id).toBe(officeStaffId);
+  });
+
+  it('refuses an assignee that is not a uuid, before touching the database', async () => {
+    const raised = await POST('/v1/tickets', officeToken, {
+      subject: 'Another', body: 'Body.', category: 'other',
+    });
+    const res = await POST(`/v1/tickets/${raised.body.data.id}/assign`, officeToken,
+      { staffId: 'meera' });
+    expect(res.status).toBe(422);
+  });
+});
+
+describe('a learner can be moved, and asked about', () => {
+  let studentId = '';
+  let enrollmentId = '';
+
+  beforeAll(async () => {
+    const learner = await createLearnerRaw(tenant.orgId, 'Ishaan', 'WS-M35-1');
+    studentId = learner.studentId;
+    enrollmentId = (await owner((c) => c.query<{ id: string }>(
+      `INSERT INTO enrollment (tenant_id, student_id, section_id, academic_year_id)
+       VALUES ($1, $2, $3, $4) RETURNING id`,
+      [tenant.orgId, studentId, sectionA, academicYearId]))).rows[0]!.id;
+  }, 60_000);
+
+  it('answers "which enrollment is this child on right now"', async () => {
+    const res = await GET(`/v1/enrollments/current/${studentId}`, officeToken);
+    expect(res.status).toBe(200);
+    expect(res.body.data.id).toBe(enrollmentId);
+    expect(res.body.data.status).toBe('active');
+  });
+
+  it('says so plainly when a learner is not enrolled', async () => {
+    const other = await createLearnerRaw(tenant.orgId, 'Nila', 'WS-M35-2');
+    const res = await GET(`/v1/enrollments/current/${other.studentId}`, officeToken);
+    // Not an empty body. A null that looks like a missing field is the shape
+    // a client renders as a blank row rather than as an answer.
+    expect(res.status).toBe(404);
+    expect(res.body.error.code).toBe('not_enrolled');
+  });
+
+  it('refuses a transfer with no reason on it', async () => {
+    const res = await POST(`/v1/enrollments/${enrollmentId}/transfer`, officeToken, {
+      toSectionId: sectionB, toAcademicYearId: academicYearId, reason: '   ',
+    });
+    expect(res.status).toBe(422);
+    expect(res.body.error.code).toBe('reason_required');
+  });
+
+  it('ends the old enrollment and opens a new one, linked', async () => {
+    const res = await POST(`/v1/enrollments/${enrollmentId}/transfer`, officeToken, {
+      toSectionId: sectionB, toAcademicYearId: academicYearId,
+      reason: 'Family moved; joining the Hosur Road campus.',
+    });
+    expect(res.status).toBe(201);
+    expect(res.body.data.from.status).not.toBe('active');
+    expect(res.body.data.to.status).toBe('active');
+    expect(res.body.data.to.id).not.toBe(enrollmentId);
+
+    // `current` now answers with the new one — which is the whole reason a
+    // transfer is two rows and not an UPDATE.
+    const now = await GET(`/v1/enrollments/current/${studentId}`, officeToken);
+    expect(now.body.data.id).toBe(res.body.data.to.id);
+
+    const history = await GET(`/v1/enrollments/${enrollmentId}/history`, officeToken);
+    expect(history.body.data.some((e: any) => e.related_enrollment_id === res.body.data.to.id))
+      .toBe(true);
+  });
+});
+
+describe('consent answers the question a screen actually asks', () => {
+  let personId = '';
+
+  beforeAll(async () => {
+    personId = (await createLearnerRaw(tenant.orgId, 'Aarav', 'WS-M35-C1')).personId;
+  }, 60_000);
+
+  it('permits teaching a child with no consent row anywhere', async () => {
+    // The contract-basis rule, and the reason this endpoint is not
+    // `listFor(...).length > 0` at the call site. A school that had to collect
+    // consent to teach an enrolled child could be told to stop teaching.
+    const res = await GET(`/v1/consent/people/${personId}/core_education_service`,
+      officeToken);
+    expect(res.status).toBe(200);
+    expect(res.body.data.permitted).toBe(true);
+
+    const rows = await GET(`/v1/consent/people/${personId}`, officeToken);
+    expect(rows.body.data).toEqual([]);
+  });
+
+  it('refuses everything else until somebody agrees to it', async () => {
+    const before = await GET(`/v1/consent/people/${personId}/marketing`, officeToken);
+    expect(before.body.data.permitted).toBe(false);
+  });
+
+  it('refuses a purpose that is not one of ours', async () => {
+    const res = await GET(`/v1/consent/people/${personId}/selling_it_on`, officeToken);
+    expect(res.status).toBe(422);
+  });
+});
+
+describe('an account can be signed out of everything', () => {
+  it('will not touch an account with no grant in this school', async () => {
+    // A uuid that is syntactically fine and belongs to nobody here. One school
+    // reaching into another's people is the failure this guards.
+    const res = await POST(`/v1/access/accounts/${randomUUID()}/sign-out-everywhere`,
+      officeToken, { reason: 'Testing.' });
+    expect(res.status).toBe(404);
+    expect(res.body.error.code).toBe('account_not_found');
+  });
+
+  it('ends live sessions and clears the push token', async () => {
+    await owner((c) => c.query(
+      `INSERT INTO session (user_account_id, refresh_token_hash, expires_at)
+       VALUES ($1, $2, now() + interval '30 days')`,
+      [teacherUser.userId, `hash-${randomUUID()}`]));
+
+    const res = await POST(
+      `/v1/access/accounts/${teacherUser.userId}/sign-out-everywhere`,
+      officeToken, { reason: 'Phone left on a bus.' });
+    expect(res.status).toBe(201);
+    expect(res.body.data.sessionsEnded).toBeGreaterThan(0);
+
+    const live = await owner((c) => c.query<{ n: string }>(
+      `SELECT count(*)::text AS n FROM session
+        WHERE user_account_id = $1 AND revoked_at IS NULL`, [teacherUser.userId]));
+    expect(live.rows[0]!.n).toBe('0');
+  });
+});
+
+describe('support access still needs two people', () => {
+  let requestId = '';
+  let agentToken = '';
+  let agentUser: UserFixture;
+
+  beforeAll(async () => {
+    agentUser = await createUser('agent@ws-test.example', PASSWORD);
+    await grantRole(tenant.orgId, agentUser.userId, 'SUPPORT_AGENT', 'organization', null);
+    agentToken = await tokenFor(agentUser, ['SUPPORT_AGENT']);
+  }, 60_000);
+
+  it('a request grants nothing', async () => {
+    const res = await POST('/v1/support-access', agentToken, {
+      reason: 'Investigating ticket SUP-4417: receipt not generated after payment.',
+      ticketRef: 'SUP-4417',
+    });
+    expect(res.status).toBe(201);
+    requestId = res.body.data.id;
+    expect(res.body.data.status).toBe('requested');
+    expect(res.body.data.write_enabled).toBe(false);
+    expect(res.body.data.started_at).toBeNull();
+  });
+
+  it('refuses a reason nobody could act on', async () => {
+    const res = await POST('/v1/support-access', agentToken, {
+      reason: 'debug', ticketRef: 'SUP-1',
+    });
+    // 422 from the SERVICE's ten-character rule, not from the schema. The zod
+    // bound is deliberately wider, or the service's rule would be unreachable
+    // and deleting it would break nothing.
+    expect(res.status).toBe(422);
+    expect(res.body.error.code).toBe('reason_too_short');
+  });
+
+  it('the requester cannot approve their own request', async () => {
+    // `approved_by <> actor_user_id` is a CHECK constraint, so this is refused
+    // by the database even if every layer above it forgot.
+    const res = await POST(`/v1/support-access/${requestId}/approve`, agentToken);
+    expect(res.status).toBeGreaterThanOrEqual(400);
+
+    const still = await owner((c) => c.query<{ status: string }>(
+      'SELECT status FROM impersonation_session WHERE id = $1', [requestId]));
+    expect(still.rows[0]!.status).toBe('requested');
+  });
+
+  it('a second person who is not entitled to approve cannot', async () => {
+    // A mutation pass found this one: emptying `requireApprover` broke no
+    // test, which meant any account in the school with a token could let
+    // somebody into the school's records. Two people is not the control —
+    // two people, one of whom is entitled, is.
+    //
+    // The teacher is a second person by the database's reckoning (the CHECK
+    // only compares ids) and holds no `audit:read`.
+    const res = await POST(`/v1/support-access/${requestId}/approve`, teacherToken);
+    expect(res.status).toBe(404);
+
+    const still = await owner((c) => c.query<{ status: string }>(
+      'SELECT status FROM impersonation_session WHERE id = $1', [requestId]));
+    expect(still.rows[0]!.status).toBe('requested');
+  });
+
+  it('and cannot read the access log either', async () => {
+    // Same permission, same answer — 404 rather than 403, because whether a
+    // support session exists is itself part of what `audit:read` governs.
+    expect((await GET('/v1/platform-access', teacherToken)).status).toBe(404);
+  });
+
+  it('a second person approves, and the window opens', async () => {
+    const res = await POST(`/v1/support-access/${requestId}/approve`, officeToken,
+      { minutes: 30 });
+    expect(res.status).toBe(201);
+    expect(res.body.data.status).toBe('active');
+    expect(res.body.data.started_at).not.toBeNull();
+  });
+
+  it('caps the window at an hour however long is asked for', async () => {
+    const made = await POST('/v1/support-access', agentToken, {
+      reason: 'Second look at the same receipt problem, ticket SUP-4418.',
+      ticketRef: 'SUP-4418',
+    });
+    const res = await POST(`/v1/support-access/${made.body.data.id}/approve`,
+      officeToken, { minutes: 600 });
+    // Refused at the edge rather than silently clamped: a console that asked
+    // for ten hours and was given one should be told.
+    expect(res.status).toBe(422);
+  });
+
+  it('the school sees it in its own access log, and can end it', async () => {
+    const log = await GET('/v1/platform-access', officeToken);
+    expect(log.status).toBe(200);
+    const row = log.body.data.find((r: any) => r.id === requestId);
+    expect(row.entry_path).toBe('support');
+    expect(row.status).toBe('active');
+    expect(log.body.notice).toMatch(/in your records right now/);
+
+    expect((await POST(`/v1/platform-access/${requestId}/end`, officeToken,
+      { reason: 'Not authorised by us.' })).status).toBe(201);
+    const after = await GET('/v1/platform-access', officeToken);
+    expect(after.body.data.find((r: any) => r.id === requestId).status).toBe('revoked');
+  });
+});
+
+describe('an accountant can reconcile a settlement', () => {
+  const utr = `UTR${Date.now()}`;
+
+  it('imports a batch and leaves every line unmatched when no payment matches', async () => {
+    // M34 filed reconciliation under "waiting on a payment provider" and that
+    // was wrong. Presenting a mandate and taking a card need a live gateway.
+    // Reconciling a settlement is arithmetic on rows a school already has, and
+    // the unmatched queue is most useful precisely when the payments did not
+    // come through this system.
+    const res = await POST('/v1/fees/settlements', officeToken, {
+      provider: 'demo-gateway', utr, settledOn: today(),
+      gross: '10000.00', fee: '200.00', tax: '36.00',
+      lines: [
+        { providerPaymentId: 'pay_A1', amount: '6000.00', providerFee: '120.00' },
+        { providerPaymentId: 'pay_A2', amount: '4000.00', providerFee: '80.00' },
+      ],
+    });
+    expect(res.status).toBe(201);
+    expect(res.body.data.matched).toBe(0);
+    expect(res.body.data.unmatched).toBe(2);
+  });
+
+  it('refuses the same UTR twice', async () => {
+    // A settlement file re-uploaded is the ordinary way a day gets counted
+    // twice, and the second count lands in the ledger.
+    const again = await POST('/v1/fees/settlements', officeToken, {
+      provider: 'demo-gateway', utr, settledOn: today(),
+      gross: '10000.00', fee: '200.00', tax: '36.00',
+      lines: [{ providerPaymentId: 'pay_A1', amount: '6000.00', providerFee: '120.00' }],
+    });
+    expect(again.status).toBe(409);
+    expect(again.body.error.code).toBe('settlement_already_imported');
+  });
+
+  it('puts both lines on somebody’s work list', async () => {
+    const queue = await GET('/v1/fees/settlements/unmatched', officeToken);
+    expect(queue.status).toBe(200);
+    const mine = queue.body.data.filter((l: any) => l.utr === utr);
+    expect(mine.map((l: any) => l.provider_payment_id).sort())
+      .toEqual(['pay_A1', 'pay_A2']);
+    expect(mine[0].amount).toBe('6000.00');
+  });
+
+  it('will not take a manual match with no note on it', async () => {
+    const queue = await GET('/v1/fees/settlements/unmatched', officeToken);
+    const line = queue.body.data.find((l: any) => l.utr === utr);
+    const res = await POST(`/v1/fees/settlements/lines/${line.id}/match`, officeToken,
+      { paymentId: randomUUID(), note: '' });
+    // A manual match is somebody asserting two records are the same event. In
+    // six months the only evidence of why is what they typed here.
+    expect(res.status).toBe(422);
+  });
+
+  it('reports what the books think is still in transit', async () => {
+    const res = await GET('/v1/fees/settlements/clearing-balance', officeToken);
+    expect(res.status).toBe(200);
+    // A decimal string, not a float and not paise. The number an accountant
+    // compares against a bank statement.
+    expect(res.body.data.balance).toMatch(/^-?\d+\.\d{2}$/);
+  });
+});
+
+describe('an application can carry documents, and somebody can check them', () => {
+  let applicationId = '';
+  let documentId = '';
+  let fileId = '';
+
+  beforeAll(async () => {
+    const person = await createPersonRaw(tenant.orgId, 'Rhea', { familyName: 'Nair' });
+    const made = await owner(async (c) => {
+      // Draft, with no form submission. `application_submitted_has_form` means
+      // a submitted application must carry the answers it was submitted with,
+      // and documents are attachable long before anybody presses submit —
+      // which is the ordinary order at a counter.
+      const app = await c.query<{ id: string }>(
+        `INSERT INTO application
+           (tenant_id, applicant_person_id, programme_id, academic_year_id,
+            application_no, status)
+         VALUES ($1, $2, $3, $4, $5, 'draft') RETURNING id`,
+        [tenant.orgId, person, programmeId, academicYearId,
+         `WS-APP-${randomUUID().slice(0, 8)}`]);
+      const file = await c.query<{ id: string }>(
+        `INSERT INTO file (tenant_id, bucket, object_key, mime_type, size_bytes,
+                           sha256, classification, virus_scan_state)
+         VALUES ($1, 'paathshala-docs', $2, 'application/pdf', 1024,
+                 repeat('a', 64), 'SENSITIVE', 'clean') RETURNING id`,
+        [tenant.orgId, `apps/${randomUUID()}.pdf`]);
+      return { appId: app.rows[0]!.id, fileId: file.rows[0]!.id };
+    });
+    applicationId = made.appId;
+    fileId = made.fileId;
+  }, 60_000);
+
+  it('attaches a document', async () => {
+    const res = await POST(`/v1/admissions/applications/${applicationId}/documents`,
+      officeToken, { documentType: 'birth_certificate', fileId });
+    expect(res.status).toBe(201);
+
+    documentId = (await owner((c) => c.query<{ id: string }>(
+      `SELECT id FROM application_document
+        WHERE application_id = $1 AND document_type = 'birth_certificate'`,
+      [applicationId]))).rows[0]!.id;
+  });
+
+  it('will not reject one without telling the family why', async () => {
+    const res = await POST(`/v1/admissions/application-documents/${documentId}/verify`,
+      officeToken, { accept: false });
+    expect(res.status).toBe(422);
+    expect(res.body.error.code).toBe('rejection_needs_reason');
+  });
+
+  it('rejects it with a reason a family can act on', async () => {
+    const res = await POST(`/v1/admissions/application-documents/${documentId}/verify`,
+      officeToken, { accept: false, reason: 'The scan is cut off at the date of birth.' });
+    expect(res.status).toBe(201);
+
+    const row = await owner((c) => c.query<{ status: string; rejection_reason: string | null }>(
+      'SELECT status, rejection_reason FROM application_document WHERE id = $1',
+      [documentId]));
+    expect(row.rows[0]!.status).toBe('rejected');
+    expect(row.rows[0]!.rejection_reason).toContain('cut off');
+  });
+
+  it('re-uploading clears the old verdict, because it was about the old file',
+    async () => {
+      const replacement = (await owner((c) => c.query<{ id: string }>(
+        `INSERT INTO file (tenant_id, bucket, object_key, mime_type, size_bytes,
+                           sha256, classification, virus_scan_state)
+         VALUES ($1, 'paathshala-docs', $2, 'application/pdf', 2048,
+                 repeat('b', 64), 'SENSITIVE', 'clean') RETURNING id`,
+        [tenant.orgId, `apps/${randomUUID()}.pdf`]))).rows[0]!.id;
+
+      expect((await POST(`/v1/admissions/applications/${applicationId}/documents`,
+        officeToken, { documentType: 'birth_certificate', fileId: replacement })).status)
+        .toBe(201);
+
+      const row = await owner((c) => c.query<{
+        status: string; rejection_reason: string | null; file_id: string;
+      }>('SELECT status, rejection_reason, file_id FROM application_document WHERE id = $1',
+        [documentId]));
+      // Leaving "rejected: the scan is cut off" beside a legible scan is how a
+      // family gets told twice to send what they already sent.
+      expect(row.rows[0]!.status).toBe('uploaded');
+      expect(row.rows[0]!.rejection_reason).toBeNull();
+      expect(row.rows[0]!.file_id).toBe(replacement);
+    });
+
+  it('names the staff member who checked it, from the session and not the body',
+    async () => {
+      expect((await POST(`/v1/admissions/application-documents/${documentId}/verify`,
+        officeToken, { accept: true })).status).toBe(201);
+
+      const row = await owner((c) => c.query<{ status: string; verified_by: string | null }>(
+        'SELECT status, verified_by FROM application_document WHERE id = $1',
+        [documentId]));
+      expect(row.rows[0]!.status).toBe('verified');
+      // "Who checked this certificate" is a question asked when the
+      // certificate turns out to be forged. A client-supplied answer is one
+      // anybody can forge by editing a field.
+      expect(row.rows[0]!.verified_by).toBe(officeStaffId);
+    });
+});
+
+describe('a correction always names its reason before anything else', () => {
+  // Both services check the reason first, before reading any row. Asserted
+  // with ids that do not exist, which is the cheap way to prove the ordering:
+  // if the row lookup came first these would be 404s.
+  it('a superseded result run needs one', async () => {
+    const res = await POST(`/v1/result-runs/${randomUUID()}/supersede`, officeToken,
+      { newRunId: randomUUID(), reason: '  ' });
+    expect(res.status).toBe(422);
+    expect(res.body.error.code).toBe('reason_required');
+  });
+
+  it('a corrected report card needs one', async () => {
+    const res = await POST(`/v1/result-runs/report-cards/${randomUUID()}/correct`,
+      officeToken, { newRunId: randomUUID(), reason: '' });
+    expect(res.status).toBe(422);
+    expect(res.body.error.code).toBe('reason_required');
+  });
+
+  it('and says so plainly when the run is simply not there', async () => {
+    const res = await POST(`/v1/result-runs/${randomUUID()}/supersede`, officeToken,
+      { newRunId: randomUUID(), reason: 'Marks for two papers were transposed.' });
+    expect(res.status).toBe(404);
+    expect(res.body.error.code).toBe('run_not_found');
   });
 });

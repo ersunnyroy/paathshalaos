@@ -16,7 +16,8 @@ import { SupportController } from './modules/support/support.controller.ts';
 import { OpenApiController } from './modules/public-api/openapi.controller.ts';
 import { PlatformController } from './modules/platform/platform.controller.ts';
 import { ReadOnlyEntryGuard } from './modules/platform/read-only-entry.guard.ts';
-import { AccessLogController } from './modules/platform/access-log.controller.ts';
+import { AccessLogController, SupportAccessController }
+  from './modules/platform/access-log.controller.ts';
 import { EntitlementGuard } from './modules/billing-plans/entitlement.guard.ts';
 import { PlanController } from './modules/billing-plans/plan.controller.ts';
 import { BrandController, BrandingSettingsController }
@@ -41,13 +42,15 @@ import { LocaleController } from './modules/i18n/locale.controller.ts';
 import { ScheduleController } from './modules/scheduler/schedule.controller.ts';
 import { AttendanceController } from './modules/attendance/attendance.controller.ts';
 import { EmergencyController } from './modules/people/emergency.controller.ts';
+import { DomainController } from './modules/branding/domain.controller.ts';
 
 @Module({
   controllers: [
     HealthController, AuthController, TenancyController,
     ReportingController, DirectoryController,
     IntegrationsController, PublicApiController, SupportController,
-    OpenApiController, PlatformController, AccessLogController, PlanController,
+    OpenApiController, PlatformController, AccessLogController, SupportAccessController,
+    PlanController,
     BrandController, BrandingSettingsController, TransportController,
     LearningController, HrController,
     AdmissionsController, EnrollmentController, BillingController,
@@ -55,7 +58,8 @@ import { EmergencyController } from './modules/people/emergency.controller.ts';
     AssessmentController, ResultRunController,
     AccessController, ConsentController, AcademicsController,
     FamilyController, LocaleController, ScheduleController,
-    AttendanceController, EmergencyController, MetricsController,
+    AttendanceController, EmergencyController, DomainController,
+    MetricsController,
   ],
   providers: [
     // Every failure gets the contract's shape, including a bare throw.
