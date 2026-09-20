@@ -34,7 +34,8 @@ export interface RolloverResult {
 export const rolloverService = {
   async rollover(
     scope: TenantScope,
-    input: { fromAcademicYearId: string; toAcademicYearId: string; includeTimetable?: boolean },
+    input: { fromAcademicYearId: string; toAcademicYearId: string;
+             includeTimetable?: boolean | undefined },
   ): Promise<RolloverResult> {
     if (input.fromAcademicYearId === input.toAcademicYearId) {
       throw ApiError.make('validation_error', 'same_year', 'Source and target years must differ.');

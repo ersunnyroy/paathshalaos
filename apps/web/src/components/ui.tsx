@@ -35,6 +35,9 @@ export const Icon = {
   fees: (p: IconProps) => (
     <svg {...base} {...p}><rect x="2.5" y="5.5" width="19" height="13" rx="2.5" /><path d="M2.5 10h19M6 15h4" /></svg>
   ),
+  key: (p: IconProps) => (
+    <svg {...base} {...p}><circle cx="8" cy="15" r="4" /><path d="M10.9 12.1 20 3M17.5 5.5l2 2M15 8l2 2" /></svg>
+  ),
   inbox: (p: IconProps) => (
     <svg {...base} {...p}><path d="M3 13h5l1.5 2.5h5L16 13h5" /><path d="M5.2 5h13.6l2.2 8v4.5A1.5 1.5 0 0 1 19.5 19h-15A1.5 1.5 0 0 1 3 17.5V13z" /></svg>
   ),

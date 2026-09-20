@@ -162,6 +162,12 @@ export async function destroyTenants(orgIds: string[]): Promise<void> {
     }
     try {
       await client.query('DELETE FROM consent_record WHERE tenant_id = ANY($1)', [orgIds]);
+      // And the notices those records point at. M32.6 gave a school a way to
+      // publish one, so a suite that does now leaves a row the organization
+      // delete trips over — the same shape the learning tables had, found the
+      // same way: a teardown failing on a foreign key nobody had added to
+      // this list.
+      await client.query('DELETE FROM notice_version WHERE tenant_id = ANY($1)', [orgIds]);
       for (const table of TABLE_TEARDOWN_ORDER) {
         await client.query(`DELETE FROM ${table} WHERE tenant_id = ANY($1)`, [orgIds]);
       }
@@ -571,6 +577,7 @@ export async function purgeTestData(emailDomain = '%-test.example'): Promise<voi
 
     if (tenantIds.length > 0) {
       await client.query('DELETE FROM consent_record WHERE tenant_id = ANY($1)', [tenantIds]);
+      await client.query('DELETE FROM notice_version WHERE tenant_id = ANY($1)', [tenantIds]);
       for (const t of ['kb_article_version', 'kb_article',
                        'ticket_event', 'ticket_message', 'support_ticket',
                        'webhook_attempt', 'webhook_delivery', 'webhook_endpoint',

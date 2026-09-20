@@ -53,10 +53,10 @@ export const invoicingService = {
     periodStart: string;
     periodEnd: string;
     /** Whole or partial months. "1" for a full month, "0.42" for part of one. */
-    quantity?: string;
-    taxRate?: number;
-    sacCode?: string;
-    issuedOn?: Date;
+    quantity?: string | undefined;
+    taxRate?: number | undefined;
+    sacCode?: string | undefined;
+    issuedOn?: Date | undefined;
   }): Promise<IssuedInvoice> {
     const issuedOn = input.issuedOn ?? new Date();
     const financialYear = financialYearOf(issuedOn);
@@ -174,8 +174,8 @@ export const invoicingService = {
     invoiceId: string;
     reason: string;
     /** Omitted credits the whole invoice. */
-    amount?: Paise;
-    issuedOn?: Date;
+    amount?: Paise | undefined;
+    issuedOn?: Date | undefined;
   }): Promise<{ note_no: string; total: string }> {
     if (input.reason.trim().length < 10) {
       throw ApiError.make('validation_error', 'reason_too_short',

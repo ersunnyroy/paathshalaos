@@ -1115,15 +1115,44 @@ The other two survivors were tests proving less than they named: the admission-a
 assertion passed whether or not the controller read the body, until the body carried one;
 and the money-shape check was never given a malformed amount.
 
-### Still unreachable, and named rather than implied
+### M32.6 — the five that were left
 
-Eight services have no caller anywhere in `src/`. Three are blocked on M26's payment
-gateway — `mandateService`, `reconciliationService`, and the settlement half of the money
-path. The rest are real gaps this milestone did not close: `consentService` (DPDP consent
-recording), `exportService` (day book, Tally XML), `grantsService` (granting a role to a
-user), `refundService`, `rolloverService` (rolling a school into the next academic year),
-`retentionService` (a scheduled purge), and `invoicingService` (the platform billing
-schools, which has a console and no route).
+The list above was written honestly and then worked through. Six of the eight are now
+reachable.
+
+| Was unreachable | Now |
+| --- | --- |
+| `grantsService` | `/v1/access` — every account in this system was made by the seed or a test. A school that hired a teacher in October could not give them a login |
+| `consentService` | `/v1/consent` — every consent decision the product enforces, and `may_message` consults one on every send, came from a row nothing could create |
+| `rolloverService` | `/v1/academic-years/:id/rollover` — AC-3's claim rests on rollover COPYING, and a school with no way to run it would have edited last year's rows instead |
+| `exportService` | The day book, as rows and as CSV, and Tally XML — what an Indian school's accountant actually imports |
+| `refundService` | Money could come in and never go back out |
+| `invoicingService` | `/platform/v1/invoices` — the console could put a school on a plan and had no way to charge it, which for a subscription business is the one thing that has to work |
+
+**201 routes now.** Three services still have no caller, and all three are honest:
+`mandateService` and `reconciliationService` are blocked on M26's gateway, and
+`retentionService` is a scheduled purge with no scheduler to run it — this system has one
+worker, the webhook relay, and no cron. That is a named gap, not a forgotten one.
+
+### The bug the HTTP tests could not see
+
+`/v1/access/delegatable` passed every test and answered 500 in the built server.
+`rewriteRelativeImportExtensions` turns a `.ts` specifier into `.js` on the way out for a
+static import, and for the top-level dynamic ones in `main.ts` — and it left a dynamic
+`import('./authz.service.ts')` inside a class method alone. The suite runs from TypeScript
+source and never loads `dist`, so it could not possibly have caught it. The first page
+render did.
+
+`packaging.spec.ts` now reads the built output and fails on any relative `.ts` specifier
+left in it. Putting the dynamic import back fails that test; the fix passes it.
+
+### Two more findings from the mutation pass
+
+Nineteen mutations across M32. Two survived: the delegatable-roles list passed against a
+hard-coded array because the assertion only checked an owner's list, which contains
+everything; and the refund refusals were proving the zod shape rather than the service,
+because an empty string never reaches it. A teacher's list and a whitespace-only reason
+close both.
 
 ## The rest of the plan (M20–M31)
 
@@ -1227,7 +1256,7 @@ left to the end.
 | M25 Invoicing schools | Mostly | 41 | 8 mutations verified; unequal tax halves caught by a CHECK constraint, three tables caught by the M1 RLS invariant, one float right almost always. Payment provider not done |
 | M27 HR and relief cover | Done | 28 | 8 mutations verified; closed a limitation attendance had carried since M6. 2 survivors: a check whose value is its message, and an untested half day |
 | M22 Deploy safety | Partly | 16 | 5 mutations verified. The container stack has now been BUILT AND RUN on a real Docker daemon — .dockerignore was in the wrong directory, and the migration runner blamed a migration for a database whose history did not match it. AWS still absent |
-| M32 The write surface | Done | 51 | Over real HTTP. 11 mutations, none survived. 7 modules made reachable, 8 SQL/enum defects only a request could find, 3 author-from-the-body holes closed, 3 comments narrowed to what is true |
+| M32 The write surface | Done | 68 | Over real HTTP. 19 mutations, none survived. 13 modules made reachable (115 routes → 201), 8 SQL/enum defects only a request could find, 3 author-from-the-body holes closed, 3 comments narrowed to what is true, and one bug only the built server could show |
 | M28 Learning | Done | 38 | 14 mutations verified, no survivors. Closed the last M16 flag that guarded nothing. 1 finding outside the milestone (0077: section scope ignored `section_id`, reaching student records, marks, attendance and transport), 1 guard that covered only UPDATE, 1 test proving a different policy than it named |
 
 Two design decisions were made during M2 that are worth carrying forward:

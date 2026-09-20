@@ -617,6 +617,107 @@ describe('a school can raise an invoice it can take money against', () => {
     const bare = await POST(`/v1/fees/invoices/${invoiceId}/void`, officeToken, {});
     expect(bare.status).toBe(422);
   });
+
+  it('refunds money, and will not let the asker approve their own request',
+    async () => {
+      const paid = await POST(`/v1/invoices/${invoiceId}/payments`, officeToken, {
+        amount: '500.00', method: 'cash', idempotencyKey: `ws-${randomUUID()}`,
+      });
+      expect(paid.status).toBe(201);
+
+      const asked = await POST('/v1/fees/refunds', officeToken, {
+        paymentId: paid.body.data.paymentId, amount: '500.00',
+        reason: 'Paid twice by mistake.', idempotencyKey: `ws-${randomUUID()}`,
+      });
+      expect(asked.status).toBe(201);
+      const refundId = asked.body.data.id;
+
+      // The only control on money leaving the building, and the office
+      // account is the one that asked.
+      const selfApprove = await POST(`/v1/fees/refunds/${refundId}/approve`, officeToken);
+      expect(selfApprove.status).toBeGreaterThanOrEqual(400);
+      expect(selfApprove.status).toBeLessThan(500);
+
+      const listed = await GET('/v1/fees/refunds?status=requested', officeToken);
+      expect(listed.body.data.map((r: any) => r.id)).toContain(refundId);
+    });
+
+  it('refuses a refund with no reason and a refund of nothing', async () => {
+    const payment = await owner((c) => c.query<{ id: string }>(
+      `SELECT id FROM payment ORDER BY created_at DESC LIMIT 1`));
+
+    // An empty string is refused by the schema before the service sees it —
+    // which means this assertion alone proves the zod shape, not the service
+    // check. A mutation disabling the service's own refusal passed it.
+    const noReason = await POST('/v1/fees/refunds', officeToken, {
+      paymentId: payment.rows[0]!.id, amount: '100.00', reason: '',
+      idempotencyKey: `ws-${randomUUID()}`,
+    });
+    expect(noReason.status).toBe(422);
+
+    // Whitespace gets past `min(1)` and has to be caught by the service. This
+    // is the assertion that actually reaches it.
+    const blank = await POST('/v1/fees/refunds', officeToken, {
+      paymentId: payment.rows[0]!.id, amount: '100.00', reason: '   ',
+      idempotencyKey: `ws-${randomUUID()}`,
+    });
+    expect(blank.status).toBe(422);
+    expect(blank.body.error.code).toBe('reason_required');
+
+    const nothing = await POST('/v1/fees/refunds', officeToken, {
+      paymentId: payment.rows[0]!.id, amount: '0.00', reason: 'Why not',
+      idempotencyKey: `ws-${randomUUID()}`,
+    });
+    expect(nothing.status).toBe(422);
+    expect(nothing.body.error.code).toBe('amount_must_be_positive');
+  });
+
+  it('hands the accountant a day book, as rows and as a file', async () => {
+    const json = await GET(
+      `/v1/fees/exports/day-book?from=${inDays(-30)}&to=${today()}`, officeToken);
+    expect(json.status).toBe(200);
+    expect(json.body.data.length).toBeGreaterThan(0);
+    // Debits and credits as strings, like every other money field: a day book
+    // that has been through a double is a day book an accountant will not
+    // reconcile.
+    expect(typeof json.body.data[0].debit).toBe('string');
+
+    const csv = await GET(
+      `/v1/fees/exports/day-book?from=${inDays(-30)}&to=${today()}&format=csv`,
+      officeToken);
+    expect(csv.status).toBe(200);
+    // Split on \n and trim: the file is CRLF-terminated, which is the CSV
+    // convention and what Excel on a Windows machine in a school office
+    // expects. Asserting the raw line would be asserting the line ending.
+    expect(csv.body.data.content.split('\n')[0]!.trim())
+      .toBe('date,voucher,account,debit,credit,source,narration');
+    expect(csv.body.data.content).toContain('\r\n');
+    expect(csv.body.data.rowCount).toBeGreaterThan(0);
+  });
+
+  it('refuses a day book whose range runs backwards', async () => {
+    const res = await GET(
+      `/v1/fees/exports/day-book?from=${today()}&to=${inDays(-30)}`, officeToken);
+    expect(res.status).toBe(422);
+    expect(res.body.error.code).toBe('bad_range');
+  });
+
+  it('produces Tally XML naming the company Tally will match on', async () => {
+    const res = await GET(
+      `/v1/fees/exports/tally?from=${inDays(-30)}&to=${today()}`
+      + '&companyName=Demo%20Vidyalaya%20Trust', officeToken);
+    expect(res.status).toBe(200);
+    expect(res.body.data.content).toContain('<ENVELOPE>');
+    // Tally matches the import against the company name in the operator's own
+    // file. A mismatch imports nothing and says nothing.
+    expect(res.body.data.content).toContain('Demo Vidyalaya Trust');
+  });
+
+  it('will not export Tally XML with no company named', async () => {
+    const res = await GET(
+      `/v1/fees/exports/tally?from=${inDays(-30)}&to=${today()}`, officeToken);
+    expect(res.status).toBe(422);
+  });
 });
 
 describe('a school can send a message', () => {
@@ -975,6 +1076,209 @@ describe('an exam can be set, marked and published through the product', () => {
     const row = res.body.data.find((r: any) => r.id === runId);
     expect(row.status).toBe('computed');
     expect(row.line_count).toBeGreaterThan(0);
+  });
+});
+
+// ---------------------------------------------------------------------------
+
+describe('a school can give somebody a login, and not lock itself out', () => {
+  let targetUser = '';
+  let grantId = '';
+
+  beforeAll(async () => {
+    targetUser = (await createUser('newteacher@ws-test.example', PASSWORD)).userId;
+  }, 60_000);
+
+  afterAll(async () => {
+    await destroyUsers([targetUser]);
+  }, 60_000);
+
+  it('lists the accounts that can actually sign in, with what they hold', async () => {
+    const res = await GET('/v1/access/accounts', officeToken);
+    expect(res.status).toBe(200);
+    const office = res.body.data.find((a: any) => a.user_account_id === officeUser.userId);
+    expect(office).toBeDefined();
+    expect(office.grants.map((g: any) => g.role)).toContain('ORG_OWNER');
+  });
+
+  it('grants a role, and refuses one the caller does not hold', async () => {
+    const granted = await POST('/v1/access/grants', officeToken, {
+      userAccountId: targetUser, role: 'TEACHER',
+      scopeType: 'campus', scopeId: tenant.campusId,
+    });
+    expect(granted.status).toBe(201);
+
+    const listed = await GET(`/v1/access/accounts/${targetUser}/grants`, officeToken);
+    expect(listed.body.data.map((g: any) => g.role)).toContain('TEACHER');
+    grantId = (await owner((c) => c.query<{ id: string }>(
+      `SELECT id FROM role_grant WHERE user_account_id = $1 AND revoked_at IS NULL`,
+      [targetUser]))).rows[0]!.id;
+
+    // The teacher, now holding only TEACHER, cannot hand out ORG_OWNER. The
+    // rule is the service's `canDelegate`; this asserts it is actually
+    // consulted on the route rather than re-implemented and forgotten.
+    const asTeacher = await tokenFor({ userId: targetUser } as UserFixture, ['TEACHER']);
+    const overreach = await POST('/v1/access/grants', asTeacher, {
+      userAccountId: officeUser.userId, role: 'ORG_OWNER', scopeType: 'organization',
+    });
+    expect(overreach.status).toBe(403);
+    expect(overreach.body.error.code).toBe('cannot_delegate');
+  });
+
+  it('tells a screen which roles the caller may hand out', async () => {
+    const res = await GET('/v1/access/delegatable?scopeType=campus', officeToken);
+    expect(res.status).toBe(200);
+    expect(res.body.data.roles).toContain('TEACHER');
+    expect(res.body.data.held.map((g: any) => g.role)).toContain('ORG_OWNER');
+
+    // The half that matters. The owner's list contains everything, so
+    // asserting only on them passes against a hard-coded array — which is
+    // exactly what a mutation replacing the rule with `[...ROLES]` proved.
+    // A teacher's list has to be shorter than the catalogue.
+    const asTeacher = await tokenFor({ userId: targetUser } as UserFixture, ['TEACHER']);
+    const theirs = await GET('/v1/access/delegatable?scopeType=campus', asTeacher);
+    expect(theirs.status).toBe(200);
+    expect(theirs.body.data.roles).not.toContain('ORG_OWNER');
+    expect(theirs.body.data.roles.length).toBeLessThan(res.body.data.roles.length);
+  });
+
+  it('refuses to revoke the caller\'s own last way back in', async () => {
+    const mine = await owner((c) => c.query<{ id: string }>(
+      `SELECT id FROM role_grant
+        WHERE user_account_id = $1 AND role = 'ORG_OWNER'
+          AND scope_type = 'organization' AND revoked_at IS NULL`,
+      [officeUser.userId]));
+
+    const res = await POST(`/v1/access/grants/${mine.rows[0]!.id}/revoke`, officeToken);
+    // A school with no owner needs a database to fix. The grant row cannot see
+    // who is asking, so this is the one check that has to live above it.
+    expect(res.status).toBe(409);
+    expect(res.body.error.code).toBe('would_lock_yourself_out');
+
+    // And somebody else's grant revokes fine.
+    expect((await POST(`/v1/access/grants/${grantId}/revoke`, officeToken)).status)
+      .toBe(201);
+  });
+});
+
+describe('consent is recorded against the text somebody agreed to', () => {
+  let noticeId = '';
+  let childPersonId = '';
+  let guardianPersonId = '';
+
+  beforeAll(async () => {
+    const child = await createLearnerRaw(tenant.orgId, 'Meher', 'WS-CON-1');
+    childPersonId = child.personId;
+    guardianPersonId = await createPersonRaw(tenant.orgId, 'Zoya',
+      { familyName: 'Khan' });
+    await linkGuardianRaw(tenant.orgId, child.studentId, guardianPersonId);
+
+    noticeId = (await owner((c) => c.query<{ id: string }>(
+      `INSERT INTO notice_version
+         (tenant_id, code, version, locale, title, body, published_at)
+       VALUES ($1, 'privacy', 1, 'en-IN', 'Privacy notice',
+               'How this school uses your data.', now()) RETURNING id`,
+      [tenant.orgId]))).rows[0]!.id;
+  }, 60_000);
+
+  it('offers only published notices', async () => {
+    await owner((c) => c.query(
+      `INSERT INTO notice_version (tenant_id, code, version, locale, title, body)
+       VALUES ($1, 'draft_notice', 1, 'en-IN', 'Not ready', 'Draft.')`,
+      [tenant.orgId]));
+
+    const res = await GET('/v1/consent/notices', officeToken);
+    expect(res.status).toBe(200);
+    expect(res.body.data.map((n: any) => n.id)).toContain(noticeId);
+    expect(res.body.data.map((n: any) => n.code)).not.toContain('draft_notice');
+  });
+
+  it('records a guardian consenting on behalf of a child', async () => {
+    const res = await POST('/v1/consent', officeToken, {
+      personId: childPersonId,
+      givenByPersonId: guardianPersonId,
+      purpose: 'attendance_notifications',
+      noticeVersionId: noticeId,
+      channel: 'paper',
+      evidenceRef: 'Admission pack, signed 2026-04-02',
+    });
+    expect(res.status).toBe(201);
+    // Both people on the record: "who agreed, and on whose behalf" has to be
+    // answerable years later.
+    expect(res.body.data.person_id).toBe(childPersonId);
+    expect(res.body.data.given_by_person_id).toBe(guardianPersonId);
+    expect(res.body.data.basis).toBe('consent');
+  });
+
+  it('will not let a school withdraw what is not consent-based', async () => {
+    const res = await POST('/v1/consent/withdraw', officeToken, {
+      personId: childPersonId, purpose: 'core_education_service',
+    });
+    expect(res.status).toBe(422);
+    expect(res.body.error.code).toBe('purpose_not_consent_based');
+  });
+
+  it('withdraws what is, and takes the child off the gap list either way',
+    async () => {
+      const before = await GET('/v1/consent/gaps?purpose=attendance_notifications',
+        officeToken);
+      expect(before.body.data.map((r: any) => r.person_id)).not.toContain(childPersonId);
+
+      expect((await POST('/v1/consent/withdraw', officeToken, {
+        personId: childPersonId, purpose: 'attendance_notifications',
+        reason: 'Asked at the gate.',
+      })).status).toBe(201);
+
+      // Withdrawn, so back on the list of children a school has not got
+      // permission for — which is the list somebody acts on.
+      const after = await GET('/v1/consent/gaps?purpose=attendance_notifications',
+        officeToken);
+      expect(after.body.data.map((r: any) => r.person_id)).toContain(childPersonId);
+    });
+});
+
+describe('a school can roll into the next year without editing this one', () => {
+  let nextYearId = '';
+
+  beforeAll(async () => {
+    nextYearId = (await createAcademicYear(tenant.orgId, tenant.unitId, '2027-28', 2027,
+      { status: 'planning' })).yearId;
+  }, 60_000);
+
+  it('says what is in each year before anything is copied', async () => {
+    const from = await GET(`/v1/academic-years/${academicYearId}/structure`, officeToken);
+    expect(from.status).toBe(200);
+    expect(from.body.data.class_groups).toBeGreaterThan(0);
+
+    const to = await GET(`/v1/academic-years/${nextYearId}/structure`, officeToken);
+    expect(to.body.data.class_groups).toBe(0);
+    expect(to.body.data.enrolments).toBe(0);
+  });
+
+  it('copies the structure, and leaves the old year untouched', async () => {
+    const before = await owner((c) => c.query<{ h: string }>(
+      `SELECT md5(string_agg(cg.id::text || cg.name, ',' ORDER BY cg.id)) AS h
+         FROM class_group cg WHERE cg.academic_year_id = $1`, [academicYearId]));
+
+    const res = await POST(`/v1/academic-years/${academicYearId}/rollover`, officeToken,
+      { toAcademicYearId: nextYearId });
+    expect(res.status).toBe(201);
+    expect(res.body.data.created.classGroups).toBeGreaterThan(0);
+
+    const after = await owner((c) => c.query<{ h: string }>(
+      `SELECT md5(string_agg(cg.id::text || cg.name, ',' ORDER BY cg.id)) AS h
+         FROM class_group cg WHERE cg.academic_year_id = $1`, [academicYearId]));
+    // AC-3's whole claim: rollover COPIES. Renaming a class next year cannot
+    // alter last year's report cards, because last year's rows are never
+    // touched again.
+    expect(after.rows[0]!.h).toBe(before.rows[0]!.h);
+  });
+
+  it('refuses to roll into a year that already has structure', async () => {
+    const res = await POST(`/v1/academic-years/${academicYearId}/rollover`, officeToken,
+      { toAcademicYearId: nextYearId });
+    expect(res.status).toBeGreaterThanOrEqual(400);
+    expect(res.status).toBeLessThan(500);
   });
 });
 

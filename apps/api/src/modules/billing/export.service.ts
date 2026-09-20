@@ -87,7 +87,7 @@ export const exportService = {
    */
   async dayBook(
     db: TenantClient,
-    range: { from: string; to: string; campusId?: string },
+    range: { from: string; to: string; campusId?: string | undefined },
   ): Promise<DayBookRow[]> {
     assertIsoDate(range.from, 'from');
     assertIsoDate(range.to, 'to');
@@ -117,7 +117,7 @@ export const exportService = {
    */
   async dayBookCsv(
     scope: TenantScope,
-    range: { from: string; to: string; campusId?: string },
+    range: { from: string; to: string; campusId?: string | undefined },
   ): Promise<{ filename: string; content: string; rowCount: number }> {
     const rows = await withTenant(scope, (db) => exportService.dayBook(db, range));
 
@@ -164,7 +164,8 @@ export const exportService = {
    */
   async tallyXml(
     scope: TenantScope,
-    range: { from: string; to: string; campusId?: string; companyName: string },
+    range: { from: string; to: string; campusId?: string | undefined;
+             companyName: string },
   ): Promise<{ filename: string; content: string; voucherCount: number }> {
     const rows = await withTenant(scope, (db) => exportService.dayBook(db, range));
 

@@ -782,6 +782,20 @@ async function main(): Promise<void> {
       `UPDATE grading_scale SET is_published = true, published_at = now()
         WHERE id = $1`, [examScale.id]);
 
+    // ---------------------------------------------------------- a privacy notice
+    //
+    // M32.6 gave consent a screen, and a consent record points at the exact
+    // text somebody agreed to — so a demo with no published notice
+    // demonstrates only the empty state. Published, because the service
+    // refuses a draft.
+    await c.query(
+      `INSERT INTO notice_version
+         (tenant_id, code, version, locale, title, body, published_at)
+       VALUES ($1, 'privacy', 1, 'en-IN', 'Privacy notice (2026-27)',
+               'How Demo Vidyalaya collects, uses and keeps your family''s '
+               || 'information, and what you can ask us to stop.', now())`,
+      [tenantId]);
+
     // -------------------------------------------------------- a notice to send
     //
     // M32.3 gave the messages screen a send button, and a picker with nothing
@@ -1099,7 +1113,8 @@ async function main(): Promise<void> {
     console.log(`  2 lessons and 3 assignments in Class IX, one already marked`);
     console.log(`  3 leave types, one request awaiting a decision, one teacher away`);
     console.log(`  an admission form, 2 enquiries, 2 applications, 1 offer out`);
-    console.log(`  a published grading scale and a term exam half marked\n`);
+    console.log(`  a published grading scale and a term exam half marked`);
+    console.log(`  a published privacy notice, and nobody asked for consent yet\n`);
     await printLogins(c, tenantId);
   } catch (error) {
     await c.query('ROLLBACK');

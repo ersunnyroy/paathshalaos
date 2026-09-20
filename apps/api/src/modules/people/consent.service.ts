@@ -47,8 +47,8 @@ export const consentService = {
       purpose: ConsentPurpose;
       noticeVersionId: string;
       channel: 'app' | 'web' | 'paper' | 'in_person';
-      guardianLinkId?: string;
-      evidenceRef?: string;
+      guardianLinkId?: string | undefined;
+      evidenceRef?: string | undefined;
     },
   ): Promise<ConsentRecord> {
     const basis = CONTRACT_BASIS_PURPOSES.has(input.purpose) ? 'contract' : 'consent';
@@ -101,7 +101,7 @@ export const consentService = {
    */
   async withdraw(
     scope: TenantScope,
-    input: { personId: string; purpose: ConsentPurpose; reason?: string },
+    input: { personId: string; purpose: ConsentPurpose; reason?: string | undefined },
   ): Promise<void> {
     if (CONTRACT_BASIS_PURPOSES.has(input.purpose)) {
       throw ApiError.make('validation_error', 'purpose_not_consent_based',

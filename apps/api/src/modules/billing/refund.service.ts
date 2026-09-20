@@ -192,7 +192,8 @@ export const refundService = {
   /** The provider confirms the money left. Completes the ledger picture. */
   async markSettled(
     scope: TenantScope,
-    input: { refundId: string; providerRefundId: string; settledOn?: string },
+    input: { refundId: string; providerRefundId: string;
+             settledOn?: string | undefined },
   ): Promise<void> {
     await withTenant(scope, async (db) => {
       const found = await db.query<{

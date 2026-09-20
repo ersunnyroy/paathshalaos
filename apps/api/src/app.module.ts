@@ -33,6 +33,9 @@ import { ImportController } from './modules/import/import.controller.ts';
 import {
   AssessmentController, ResultRunController,
 } from './modules/assessment/assessment.controller.ts';
+import { AccessController } from './modules/authz/access.controller.ts';
+import { ConsentController } from './modules/people/consent.controller.ts';
+import { AcademicsController } from './modules/academics/academics.controller.ts';
 import { FamilyController } from './modules/family/family.controller.ts';
 
 @Module({
@@ -46,6 +49,7 @@ import { FamilyController } from './modules/family/family.controller.ts';
     AdmissionsController, EnrollmentController, BillingController,
     MessagingController, ImportController,
     AssessmentController, ResultRunController,
+    AccessController, ConsentController, AcademicsController,
     FamilyController, MetricsController,
   ],
   providers: [

@@ -58,6 +58,8 @@ const GROUPS: Array<{ title: string; items: Array<{ href: string; label: string;
   {
     title: 'Setup',
     items: [
+      { href: '/access', label: 'Access', icon: Icon.key },
+      { href: '/consent', label: 'Consent', icon: Icon.shield },
       { href: '/setup', label: 'Getting started', icon: Icon.check },
       { href: '/support', label: 'Support', icon: Icon.help },
       { href: '/integrations', label: 'Integrations', icon: Icon.plug },

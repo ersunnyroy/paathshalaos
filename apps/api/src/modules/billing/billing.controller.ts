@@ -44,6 +44,8 @@ import { Controller, Get, Post, Body, Param, Query } from '@nestjs/common';
 import { z } from 'zod';
 import { feePlanService } from './fee-plan.service.ts';
 import { invoiceService } from './invoice.service.ts';
+import { refundService } from './refund.service.ts';
+import { exportService } from './export.service.ts';
 import { Money } from './money.ts';
 import { withTenant } from '../../db/tenant.ts';
 import { currentScope } from '../../common/scope.ts';
@@ -282,6 +284,158 @@ export class BillingController {
     }).safeParse(body);
     if (!parsed.success) throw ApiError.fromZod(parsed.error);
     return { data: await invoiceService.issueForInstallment(currentScope(), parsed.data) };
+  }
+
+  // ------------------------------------------------------------- refunds
+  //
+  // `refundService` had no caller in `src/`. Money could come in and never go
+  // back out, which for a school means the family who overpaid or withdrew in
+  // April gets a cheque written outside the system and a ledger that never
+  // knows about it.
+  //
+  // Requested by one person and approved by another, like a concession and for
+  // the same reason: it is the only control on money leaving.
+
+  @Get('refunds')
+  async refunds(@Query('status') status?: string) {
+    const parsed = z.enum(['requested', 'approved', 'rejected', 'settled'])
+      .optional().safeParse(status ?? undefined);
+    if (!parsed.success) throw ApiError.fromZod(parsed.error);
+    return {
+      data: await withTenant(currentScope(), async (db) => {
+        const { rows } = await db.query(
+          `SELECT r.id, r.payment_id, r.amount::text, r.reason, r.status,
+                  r.created_at, r.approved_at, r.settled_on::text,
+                  p.method, p.amount::text AS payment_amount,
+                  per.given_name, per.family_name, st.admission_no,
+                  rq.id AS requested_by_staff_id,
+                  rqp.given_name AS requested_by_name
+             FROM refund r
+             JOIN payment p ON p.id = r.payment_id
+             LEFT JOIN invoice inv ON inv.id = p.target_invoice_id
+             LEFT JOIN enrollment e ON e.id = inv.enrollment_id
+             LEFT JOIN student st ON st.id = e.student_id
+             LEFT JOIN person per ON per.id = st.person_id
+             LEFT JOIN staff rq ON rq.id = r.requested_by
+             LEFT JOIN person rqp ON rqp.id = rq.person_id
+            WHERE ($1::text IS NULL OR r.status = $1)
+            ORDER BY r.created_at DESC`,
+          [parsed.data ?? null]);
+        return rows;
+      }),
+    };
+  }
+
+  @Post('refunds')
+  async requestRefund(@Body() body: unknown) {
+    const parsed = z.object({
+      paymentId: uuid,
+      amount: decimal,
+      reason: z.string().min(1).max(2000),
+      idempotencyKey: z.string().min(8).max(200),
+    }).safeParse(body);
+    if (!parsed.success) throw ApiError.fromZod(parsed.error);
+    const scope = currentScope();
+    return {
+      data: await refundService.request(scope, {
+        paymentId: parsed.data.paymentId,
+        amountMinor: Money.fromDecimalString(parsed.data.amount),
+        reason: parsed.data.reason,
+        idempotencyKey: parsed.data.idempotencyKey,
+        requestedByStaffId: await requireStaff(scope),
+      }),
+    };
+  }
+
+  /** The service refuses the person who asked. That is the whole control. */
+  @Post('refunds/:id/approve')
+  async approveRefund(@Param('id') id: string) {
+    const refundId = uuid.safeParse(id);
+    if (!refundId.success) throw ApiError.fromZod(refundId.error);
+    const scope = currentScope();
+    return {
+      data: await refundService.approve(scope, {
+        refundId: refundId.data, approverStaffId: await requireStaff(scope),
+      }),
+    };
+  }
+
+  @Post('refunds/:id/reject')
+  async rejectRefund(@Param('id') id: string, @Body() body: unknown) {
+    const refundId = uuid.safeParse(id);
+    if (!refundId.success) throw ApiError.fromZod(refundId.error);
+    const parsed = z.object({ reason: z.string().min(1).max(2000) }).safeParse(body);
+    if (!parsed.success) throw ApiError.fromZod(parsed.error);
+    const scope = currentScope();
+    await refundService.reject(scope, {
+      refundId: refundId.data,
+      reason: parsed.data.reason,
+      rejectedByStaffId: await requireStaff(scope),
+    });
+    return { data: { rejected: true } };
+  }
+
+  /**
+   * Settled OUTSIDE this system, and recorded here.
+   *
+   * There is no gateway (M26), so an approved refund leaves the building as a
+   * cheque or a bank transfer somebody makes by hand. This is where that comes
+   * back, with the reference, so the ledger closes. Pretending to push the
+   * refund to a provider would be the same fiction as a fabricated SMS receipt.
+   */
+  @Post('refunds/:id/settled')
+  async settleRefund(@Param('id') id: string, @Body() body: unknown) {
+    const refundId = uuid.safeParse(id);
+    if (!refundId.success) throw ApiError.fromZod(refundId.error);
+    const parsed = z.object({
+      providerRefundId: z.string().min(1).max(200),
+      settledOn: isoDate.optional(),
+    }).safeParse(body);
+    if (!parsed.success) throw ApiError.fromZod(parsed.error);
+    await refundService.markSettled(currentScope(), {
+      refundId: refundId.data, ...parsed.data,
+    });
+    return { data: { settled: true } };
+  }
+
+  // ------------------------------------------------------- what the accountant needs
+  //
+  // `exportService` had no caller either. A school's books are kept in Tally
+  // or by an accountant with a spreadsheet, and a fee system that cannot hand
+  // either of them a day book is a fee system that gets reconciled by hand
+  // every month — which is how the two sets of numbers start to differ.
+
+  @Get('exports/day-book')
+  async dayBook(@Query() query: unknown) {
+    const parsed = z.object({
+      from: isoDate, to: isoDate, campusId: uuid.optional(),
+      format: z.enum(['json', 'csv']).default('json'),
+    }).safeParse(query ?? {});
+    if (!parsed.success) throw ApiError.fromZod(parsed.error);
+    const { format, ...range } = parsed.data;
+    const scope = currentScope();
+
+    if (format === 'csv') {
+      return { data: await exportService.dayBookCsv(scope, range) };
+    }
+    return { data: await withTenant(scope, (db) => exportService.dayBook(db, range)) };
+  }
+
+  /**
+   * Tally XML, which is what an Indian school's accountant actually imports.
+   *
+   * `companyName` has to be the name of the company in THEIR Tally file, not
+   * the school's name in this system: Tally matches on it, and a mismatch
+   * imports nothing with no error anybody can see.
+   */
+  @Get('exports/tally')
+  async tally(@Query() query: unknown) {
+    const parsed = z.object({
+      from: isoDate, to: isoDate, campusId: uuid.optional(),
+      companyName: z.string().min(1).max(200),
+    }).safeParse(query ?? {});
+    if (!parsed.success) throw ApiError.fromZod(parsed.error);
+    return { data: await exportService.tallyXml(currentScope(), parsed.data) };
   }
 
   /**

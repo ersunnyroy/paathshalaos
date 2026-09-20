@@ -4,7 +4,7 @@ import { useEffect, useState } from 'react';
 import Link from 'next/link';
 import { Shell, PageHead } from '../shell';
 import { Panel, Pill, Icon } from '@/components/ui';
-import { apiGet, rupees } from '@/lib/api';
+import { apiGet, apiPost, rupees } from '@/lib/api';
 
 interface Step {
   key: string; title: string; why: string;
@@ -12,6 +12,132 @@ interface Step {
 }
 interface Setup {
   steps: Step[]; done: number; total: number; ready: boolean; next: Step | null;
+}
+
+interface YearStructure {
+  id: string; label: string; status: string; academic_unit_id: string;
+  terms: number; class_groups: number; sections: number;
+  course_offerings: number; schedule_slots: number; enrolments: number;
+}
+interface YearRow { id: string; label: string; status: string }
+
+/**
+ * Rolling into next year (M32.6).
+ *
+ * `rolloverService` had no caller in `src/`. AC-3's whole claim — that
+ * renaming Class X to Grade 10 next year cannot alter last year's report cards
+ * — rests on rollover COPYING the structure rather than editing it, and a
+ * school with no way to run it would have edited last year's rows instead.
+ *
+ * Both sides are shown before anything is copied, because rollover writes
+ * class groups, sections and offerings in one transaction and a school that
+ * picked the wrong pair of years finds out afterwards.
+ */
+function Rollover() {
+  const [years, setYears] = useState<YearRow[]>([]);
+  const [from, setFrom] = useState('');
+  const [to, setTo] = useState('');
+  const [fromInfo, setFromInfo] = useState<YearStructure | null>(null);
+  const [toInfo, setToInfo] = useState<YearStructure | null>(null);
+  const [timetable, setTimetable] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [said, setSaid] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    apiGet<YearRow[]>('/v1/academic-years').then(setYears).catch(() => setYears([]));
+  }, []);
+
+  useEffect(() => {
+    setFromInfo(null);
+    if (from) {
+      apiGet<YearStructure>(`/v1/academic-years/${from}/structure`)
+        .then(setFromInfo).catch(() => setFromInfo(null));
+    }
+  }, [from, said]);
+
+  useEffect(() => {
+    setToInfo(null);
+    if (to) {
+      apiGet<YearStructure>(`/v1/academic-years/${to}/structure`)
+        .then(setToInfo).catch(() => setToInfo(null));
+    }
+  }, [to, said]);
+
+  const targetHasStructure = (toInfo?.class_groups ?? 0) > 0;
+
+  return (
+    <Panel title="Roll into the next year"
+           hint="Copies the structure. Last year's rows are never touched, which
+                 is what makes last year's report cards safe to rename around">
+      {error ? <div className="note bad" style={{ margin: '0 0 12px' }}>{error}</div> : null}
+      {said ? <div className="note ok" style={{ margin: '0 0 12px' }}>{said}</div> : null}
+
+      <div className="row-form">
+        <select value={from} onChange={(e) => setFrom(e.target.value)}>
+          <option value="">Copy from…</option>
+          {years.map((y) => <option key={y.id} value={y.id}>{y.label}</option>)}
+        </select>
+        <select value={to} onChange={(e) => setTo(e.target.value)}>
+          <option value="">Into…</option>
+          {years.filter((y) => y.id !== from)
+            .map((y) => <option key={y.id} value={y.id}>{y.label}</option>)}
+        </select>
+        <label className="sub">
+          <input type="checkbox" checked={timetable}
+                 onChange={(e) => setTimetable(e.target.checked)} />
+          Bring the timetable too
+        </label>
+        <button disabled={busy || !from || !to || targetHasStructure}
+                onClick={() => {
+                  setBusy(true); setError(null); setSaid(null);
+                  void apiPost<{ created: Record<string, number> }>(
+                    `/v1/academic-years/${from}/rollover`,
+                    { toAcademicYearId: to, includeTimetable: timetable })
+                    .then((r) => setSaid(
+                      `Copied ${r.created.classGroups} classes, `
+                      + `${r.created.sections} sections and `
+                      + `${r.created.courseOfferings} subject offerings.`))
+                    .catch((e: Error) => setError(e.message))
+                    .finally(() => setBusy(false));
+                }}>
+          Roll over
+        </button>
+      </div>
+
+      {fromInfo || toInfo ? (
+        <table style={{ marginTop: 12 }}>
+          <thead>
+            <tr>
+              <th>Year</th><th className="n">Terms</th><th className="n">Classes</th>
+              <th className="n">Sections</th><th className="n">Subjects</th>
+              <th className="n">Learners</th>
+            </tr>
+          </thead>
+          <tbody>
+            {[fromInfo, toInfo].filter(Boolean).map((y) => (
+              <tr key={y!.id}>
+                <td><strong>{y!.label}</strong> <span className="sub">{y!.status}</span></td>
+                <td className="n">{y!.terms}</td>
+                <td className="n">{y!.class_groups}</td>
+                <td className="n">{y!.sections}</td>
+                <td className="n">{y!.course_offerings}</td>
+                <td className="n">{y!.enrolments}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      ) : null}
+
+      {targetHasStructure ? (
+        <p className="sub" style={{ marginTop: 10 }}>
+          {toInfo!.label} already has classes in it. Rollover only builds an
+          empty year — a second pass would duplicate every class, and there is
+          no safe way to tell the copies apart afterwards.
+        </p>
+      ) : null}
+    </Panel>
+  );
 }
 
 export default function SetupPage() {
@@ -95,6 +221,8 @@ export default function SetupPage() {
               ))}
             </ol>
           </Panel>
+
+          <Rollover />
         </>
       ) : (
         <div className="skel" style={{ height: 280 }} />

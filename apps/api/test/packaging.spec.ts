@@ -170,3 +170,40 @@ describe('the typecheck covers the tests', () => {
       .toContain('tsconfig.test.json');
   });
 });
+
+/**
+ * Nothing in the build still asks for a `.ts` file.
+ *
+ * `rewriteRelativeImportExtensions` turns a `.ts` specifier into `.js` on the
+ * way out — for static imports, and for the top-level dynamic ones in
+ * `main.ts`. It did NOT rewrite a dynamic `import('./authz.service.ts')`
+ * inside a class method, and the built server answered that route with a 500
+ * while every test passed: the suite runs from TypeScript source and never
+ * loads `dist`.
+ *
+ * This is the cheapest possible guard against the whole class. It reads the
+ * built output rather than the source, which is the only place the mistake is
+ * visible.
+ */
+describe('the built output does not reference TypeScript files', () => {
+  it('has no .ts specifier left in any emitted module', () => {
+    const offenders: string[] = [];
+
+    const walk = (dir: string): void => {
+      for (const entry of readdirSync(dir, { withFileTypes: true })) {
+        const full = join(dir, entry.name);
+        if (entry.isDirectory()) { walk(full); continue; }
+        if (!entry.name.endsWith('.js')) continue;
+        const text = readFileSync(full, 'utf8');
+        // Only relative specifiers: a package called something.ts is not our
+        // problem, and neither is the word `.ts` in a comment or a string of
+        // SQL, which is why the quote and the leading dot are both required.
+        const bad = text.match(/from\s+['"]\.[^'"]*\.ts['"]|import\(\s*['"]\.[^'"]*\.ts['"]/g);
+        if (bad) offenders.push(`${full.slice(DIST.length + 1)}: ${bad[0]}`);
+      }
+    };
+    walk(DIST);
+
+    expect(offenders).toEqual([]);
+  });
+});

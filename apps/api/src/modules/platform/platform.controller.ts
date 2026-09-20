@@ -14,6 +14,8 @@ import { PlatformGuard, RequiresCapability } from './platform.guard.ts';
 import { provisioningService } from './provisioning.service.ts';
 import { platformAdminService } from './platform-admin.service.ts';
 import { entryService } from './entry.service.ts';
+import { invoicingService } from '../platform-billing/invoicing.service.ts';
+import { Money } from '../billing/money.ts';
 import { consoleService } from './console.service.ts';
 import { platformAuthService } from './platform-auth.service.ts';
 import { catalogueService } from '../billing-plans/catalogue.service.ts';
@@ -305,6 +307,72 @@ export class PlatformController {
     const parsed = moveInput.safeParse(body);
     if (!parsed.success) throw ApiError.fromZod(parsed.error);
     return { data: await subscriptionService.moveToVersion(actor(), parsed.data) };
+  }
+
+  // ------------------------------------------------- billing the schools
+  //
+  // M25 built GST invoicing for the platform — place of supply, CGST/SGST or
+  // IGST, a locked counter for the serial, credit notes — and `invoicingService`
+  // had no caller anywhere in `src/`. The console could put a school on a plan
+  // and had no way to charge it, which for a subscription business is the one
+  // thing that has to work.
+  //
+  // `billing` capability, like every other money action here. An operator who
+  // can provision a school is not thereby allowed to invoice one.
+
+  @Get('tenants/:id/invoices')
+  @RequiresCapability('billing')
+  async tenantInvoices(@Param('id') id: string) {
+    const tenantId = z.string().uuid().safeParse(id);
+    if (!tenantId.success) throw ApiError.fromZod(tenantId.error);
+    return { data: await invoicingService.invoicesFor(tenantId.data) };
+  }
+
+  @Post('invoices')
+  @RequiresCapability('billing')
+  async issueInvoice(@Body() body: unknown) {
+    const parsed = z.object({
+      tenantId: z.string().uuid(),
+      subscriptionId: z.string().uuid(),
+      periodStart: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
+      periodEnd: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
+      // A decimal string, because a part-month is 0.42 of one and a float
+      // would make the taxable value depend on how it was typed.
+      quantity: z.string().regex(/^\d+(\.\d{1,4})?$/).optional(),
+      taxRate: z.number().min(0).max(100).optional(),
+      sacCode: z.string().max(20).optional(),
+    }).safeParse(body);
+    if (!parsed.success) throw ApiError.fromZod(parsed.error);
+    return { data: await invoicingService.issueForPeriod(parsed.data) };
+  }
+
+  /**
+   * Credited, never edited.
+   *
+   * A GST invoice that has been issued carries a serial from a locked counter,
+   * and editing one makes the numbering lie to a tax authority. The reason has
+   * a minimum length because "adjustment" is not a reason somebody reading the
+   * ledger a year from now can act on.
+   */
+  @Post('invoices/:id/credit-note')
+  @RequiresCapability('billing')
+  async creditNote(@Param('id') id: string, @Body() body: unknown) {
+    const invoiceId = z.string().uuid().safeParse(id);
+    if (!invoiceId.success) throw ApiError.fromZod(invoiceId.error);
+    const parsed = z.object({
+      reason: z.string().min(10).max(2000),
+      amount: z.string().regex(/^\d+(\.\d{1,2})?$/).optional(),
+    }).safeParse(body);
+    if (!parsed.success) throw ApiError.fromZod(parsed.error);
+
+    return {
+      data: await invoicingService.creditNote({
+        invoiceId: invoiceId.data,
+        reason: parsed.data.reason,
+        ...(parsed.data.amount === undefined
+          ? {} : { amount: Money.fromDecimalString(parsed.data.amount) }),
+      }),
+    };
   }
 
   @Post('subscriptions/status')
