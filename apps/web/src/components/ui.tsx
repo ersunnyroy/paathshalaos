@@ -47,6 +47,9 @@ export const Icon = {
   out: (p: IconProps) => (
     <svg {...base} {...p}><path d="M15 4.5h3A2.5 2.5 0 0 1 20.5 7v10a2.5 2.5 0 0 1-2.5 2.5h-3M10 8l-4 4 4 4M6 12h10" /></svg>
   ),
+  bus: (p: IconProps) => (
+    <svg {...base} {...p}><rect x="3.5" y="4" width="17" height="12.5" rx="2.5" /><path d="M3.5 11.5h17M8 4v7.5M16 4v7.5M7 20v-3.5M17 20v-3.5" /><circle cx="7.5" cy="19" r="1.2" /><circle cx="16.5" cy="19" r="1.2" /></svg>
+  ),
   check: (p: IconProps) => (
     <svg {...base} {...p}><path d="M4.5 12.5l5 5 10-11" /></svg>
   ),

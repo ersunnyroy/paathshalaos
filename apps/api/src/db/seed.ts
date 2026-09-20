@@ -128,6 +128,7 @@ async function main(): Promise<void> {
     const guardianNames = ['Sunita', 'Rajesh', 'Lakshmi', 'Manoj', 'Fatima',
       'Deepak', 'Kavita', 'Imran', 'Shalini', 'Arun', 'Nisha'];
     const enrollments: Array<{ id: string; sectionId: string }> = [];
+    const studentIds: string[] = [];
 
     for (let i = 0; i < 40; i++) {
       const section = sections[i % sections.length]!;
@@ -137,15 +138,22 @@ async function main(): Promise<void> {
         [tenantId, givenNames[i % givenNames.length],
          familyNames[(i * 7) % familyNames.length],
          `201${(i % 4) + 1}-0${(i % 9) + 1}-1${i % 9}`]);
+      // lifecycle_status, explicitly. The column defaults to 'enquiry' — right
+      // for the admissions funnel, wrong for forty children who are in sections
+      // with attendance and invoices. The demo ran for ten milestones with every
+      // learner sitting in 'enquiry', which nothing read until M16 started
+      // metering billable learners and M20 filtered a bus manifest by it: the
+      // school metered as zero learners and the driver's list came back empty.
       const student = await one<{ id: string }>(c,
-        `INSERT INTO student (tenant_id, person_id, admission_no)
-         VALUES ($1, $2, $3) RETURNING id`,
+        `INSERT INTO student (tenant_id, person_id, admission_no, lifecycle_status)
+         VALUES ($1, $2, $3, 'enrolled') RETURNING id`,
         [tenantId, person.id, `DEMO-${String(i + 1).padStart(4, '0')}`]);
       const enrollment = await one<{ id: string }>(c,
         `INSERT INTO enrollment (tenant_id, student_id, section_id, academic_year_id)
          VALUES ($1, $2, $3, $4) RETURNING id`,
         [tenantId, student.id, section.id, year.id]);
       enrollments.push({ id: enrollment.id, sectionId: section.id });
+      studentIds.push(student.id);
 
       // The guardian shares the learner's family name, as a parent usually
       // does. "Guardian1 Kumar" was the same index-suffix artefact the learner
@@ -288,13 +296,19 @@ async function main(): Promise<void> {
       ['principal@demo.school', 'ORG_OWNER', 'organization', null],
       ['teacher@demo.school', 'TEACHER', 'campus', campus.id],
       ['accounts@demo.school', 'ACCOUNTANT', 'campus', campus.id],
+      // The driver is here because M20's whole claim is that this account sees
+      // the children on their route and nothing else. A demo that cannot sign
+      // in as the driver cannot show it.
+      ['driver@demo.school', 'TRANSPORT', 'campus', campus.id],
     ];
+    let driverUserId = '';
     let ownerUserId = '';
     for (const [email, role, scopeType, scopeId] of users) {
       const user = await one<{ id: string }>(c,
         `INSERT INTO user_account (login_email, password_hash, status)
          VALUES ($1, $2, 'active') RETURNING id`, [email, passwordHash]);
       if (role === 'ORG_OWNER') ownerUserId = user.id;
+      if (role === 'TRANSPORT') driverUserId = user.id;
       await c.query(
         `INSERT INTO role_grant (tenant_id, user_account_id, role, scope_type, scope_id)
          VALUES ($1, $2, $3, $4, $5)`,
@@ -312,16 +326,20 @@ async function main(): Promise<void> {
         `INSERT INTO person (tenant_id, given_name, family_name, user_account_id)
          VALUES ($1, $2, $3, $4) RETURNING id`,
         [tenantId,
-         role === 'ORG_OWNER' ? 'Anjali' : role === 'TEACHER' ? 'Suresh' : 'Priya',
-         role === 'ORG_OWNER' ? 'Menon' : role === 'TEACHER' ? 'Iyer' : 'Desai',
+         role === 'ORG_OWNER' ? 'Anjali' : role === 'TEACHER' ? 'Suresh'
+           : role === 'TRANSPORT' ? 'Ramesh' : 'Priya',
+         role === 'ORG_OWNER' ? 'Menon' : role === 'TEACHER' ? 'Iyer'
+           : role === 'TRANSPORT' ? 'Yadav' : 'Desai',
          user.id]);
       await c.query(
         `INSERT INTO staff (tenant_id, person_id, campus_id, employee_code,
                             designation, joined_on)
          VALUES ($1, $2, $3, $4, $5, '2021-04-01')`,
         [tenantId, person.id, campus.id,
-         `EMP-1${role === 'ORG_OWNER' ? '01' : role === 'TEACHER' ? '02' : '03'}`,
-         role === 'ORG_OWNER' ? 'Principal' : role === 'TEACHER' ? 'Teacher' : 'Accountant']);
+         `EMP-1${role === 'ORG_OWNER' ? '01' : role === 'TEACHER' ? '02'
+           : role === 'TRANSPORT' ? '04' : '03'}`,
+         role === 'ORG_OWNER' ? 'Principal' : role === 'TEACHER' ? 'Teacher'
+           : role === 'TRANSPORT' ? 'Driver' : 'Accountant']);
     }
 
     // --- an integration, so the Integrations screen has something real on it ---
@@ -548,12 +566,129 @@ async function main(): Promise<void> {
                now() - interval '3 days', now() - interval '3 days')`,
       [tenantId, campus.id, ownerStaff.id]);
 
+    // --- an address and a brand ---------------------------------------------
+    //
+    // M19 made the web app resolve the school from the host it was reached on
+    // and deleted NEXT_PUBLIC_TENANT_ID. This seed was not updated with it, so
+    // a fresh clone reached a sign-in screen that said "no school is registered
+    // at this address" and stopped there — the whole demo, unreachable, because
+    // the school existed and its address did not.
+    //
+    // Verified immediately, unlike a custom domain: a managed subdomain is ours
+    // to allocate, so there is nothing to prove.
+    await c.query(
+      `INSERT INTO tenant_domain (tenant_id, host, kind, is_primary, verified_at)
+       VALUES ($1, $2, 'managed', true, now())`,
+      [tenantId, `demo.${process.env['PAATHSHALA_DOMAIN'] ?? 'paathshala.app'}`]);
+
+    // Deliberately NOT our teal. A demo that renders in the vendor's colours
+    // proves nothing about white-labelling; this one is recognisably somebody
+    // else's school.
+    await c.query(
+      `INSERT INTO tenant_branding (tenant_id, app_name, primary_colour, ink_colour,
+                                    support_email, support_phone)
+       VALUES ($1, 'Demo Vidyalaya', '#B45309', '#1C1917',
+               'office@demo.school', '+91 80 4000 1234')`,
+      [tenantId]);
+
+    // --- transport ---------------------------------------------------------
+    //
+    // Shaped to show what M20 is about rather than a happy path: two routes, so
+    // "only your route" has something to fail against; a bus whose insurance
+    // has already lapsed, because the compliance screen exists for the day
+    // somebody has stopped noticing; and one child marked as not at their stop,
+    // which is the row a transport office actually acts on.
+
+    const driverPerson = await one<{ id: string }>(c,
+      `SELECT id FROM person WHERE user_account_id = $1 AND tenant_id = $2`,
+      [driverUserId, tenantId]);
+
+    const demoDriver = await one<{ id: string }>(c,
+      `INSERT INTO driver (tenant_id, person_id, licence_number, licence_expires_on,
+                           background_checked_on)
+       VALUES ($1, $2, 'KA-2019-0044821', CURRENT_DATE + 380, CURRENT_DATE - 300)
+       RETURNING id`, [tenantId, driverPerson.id]);
+
+    const busOne = await one<{ id: string }>(c,
+      `INSERT INTO vehicle (tenant_id, campus_id, registration, display_name, capacity,
+                            fitness_expires_on, insurance_expires_on, permit_expires_on)
+       VALUES ($1, $2, 'KA 01 MJ 4412', 'Bus 1', 42,
+               CURRENT_DATE + 26, CURRENT_DATE - 4, CURRENT_DATE + 190)
+       RETURNING id`, [tenantId, campus.id]);
+
+    const busTwo = await one<{ id: string }>(c,
+      `INSERT INTO vehicle (tenant_id, campus_id, registration, display_name, capacity,
+                            fitness_expires_on, insurance_expires_on, permit_expires_on)
+       VALUES ($1, $2, 'KA 01 MJ 7719', 'Bus 2', 36,
+               CURRENT_DATE + 220, CURRENT_DATE + 150, CURRENT_DATE + 300)
+       RETURNING id`, [tenantId, campus.id]);
+
+    const routes: Array<{ id: string; stops: string[] }> = [];
+    const routePlan: Array<[string, string, string[][]]> = [
+      ['R1', 'Jayanagar loop',
+        [['4th Block', '07:05', '15:45'], ['9th Main', '07:18', '15:32'],
+         ['Ashoka Pillar', '07:31', '15:19']]],
+      ['R2', 'Whitefield loop',
+        [['ITPL gate', '06:52', '16:08'], ['Hope Farm', '07:09', '15:51']]],
+    ];
+    for (const [code, name, stops] of routePlan) {
+      const route = await one<{ id: string }>(c,
+        `INSERT INTO route (tenant_id, campus_id, code, name, direction)
+         VALUES ($1, $2, $3, $4, 'both') RETURNING id`,
+        [tenantId, campus.id, code, name]);
+      const stopIds: string[] = [];
+      for (const [i, stop] of stops.entries()) {
+        const row = await one<{ id: string }>(c,
+          `INSERT INTO route_stop (tenant_id, route_id, name, sequence_no,
+                                   pickup_time, drop_time)
+           VALUES ($1, $2, $3, $4, $5::time, $6::time) RETURNING id`,
+          [tenantId, route.id, stop[0], i + 1, stop[1], stop[2]]);
+        stopIds.push(row.id);
+      }
+      routes.push({ id: route.id, stops: stopIds });
+    }
+
+    // Only route 1 has a crew. Route 2 shows what an unassigned route looks
+    // like on the screen, which is a state a transport office is often in.
+    await c.query(
+      `INSERT INTO route_assignment (tenant_id, route_id, vehicle_id, driver_id,
+                                     effective_from)
+       VALUES ($1, $2, $3, $4, CURRENT_DATE - 45)`,
+      [tenantId, routes[0]!.id, busOne.id, demoDriver.id]);
+    void busTwo;
+
+    // Twelve of the forty ride a bus, which is about the real proportion.
+    const riders = studentIds.slice(0, 12);
+    for (const [i, studentId] of riders.entries()) {
+      const route = routes[i < 8 ? 0 : 1]!;
+      const stopId = route.stops[i % route.stops.length]!;
+      await c.query(
+        `INSERT INTO transport_enrolment
+           (tenant_id, student_id, route_id, stop_id, direction, effective_from)
+         VALUES ($1, $2, $3, $4, 'both', CURRENT_DATE - 40)`,
+        [tenantId, studentId, route.id, stopId]);
+    }
+
+    // This morning's run on route 1, recorded the way the device would: an
+    // event id per child, minted once. Six boarded, one was not at the stop.
+    for (const [i, studentId] of riders.slice(0, 7).entries()) {
+      await c.query(
+        `INSERT INTO boarding_event
+           (tenant_id, student_id, route_id, vehicle_id, on_date, direction, kind,
+            client_event_id, device_recorded_at, recorded_by)
+         VALUES ($1, $2, $3, $4, CURRENT_DATE, 'pickup', $5, $6,
+                 CURRENT_DATE + time '07:14', $7)`,
+        [tenantId, studentId, routes[0]!.id, busOne.id,
+         i === 6 ? 'no_show' : 'boarded', randomUUID(), driverUserId]);
+    }
+
     await c.query('COMMIT');
 
     console.log('\nSeeded a demo school.\n');
     console.log(`  API key (test, shown once): ${demoCredential}`);
     console.log(`  tenantId: ${tenantId}`);
-    console.log(`  40 learners, 4 sections, 24 invoices, today's attendance for one section\n`);
+    console.log(`  40 learners, 4 sections, 24 invoices, today's attendance for one section`);
+    console.log(`  2 bus routes, 12 riders, this morning's run recorded\n`);
     await printLogins(c, tenantId);
   } catch (error) {
     await c.query('ROLLBACK');
@@ -565,10 +700,14 @@ async function main(): Promise<void> {
 
 async function printLogins(c: pg.Client, tenantId: string): Promise<void> {
   console.log('  Sign in with:');
-  for (const email of ['principal@demo.school', 'teacher@demo.school', 'accounts@demo.school']) {
+  for (const email of ['principal@demo.school', 'teacher@demo.school',
+                       'accounts@demo.school', 'driver@demo.school']) {
     console.log(`    ${email.padEnd(24)} ${PASSWORD}`);
   }
-  console.log(`\n  The web app needs the tenant id: ${tenantId}\n`);
+  console.log(`\n  The web app finds the school by host. For local work, put this in`);
+  console.log(`  apps/web/.env.local:\n`);
+  console.log(`    NEXT_PUBLIC_BRAND_HOST=demo.${process.env['PAATHSHALA_DOMAIN'] ?? 'paathshala.app'}\n`);
+  void tenantId;
 }
 
 async function one<T extends pg.QueryResultRow>(

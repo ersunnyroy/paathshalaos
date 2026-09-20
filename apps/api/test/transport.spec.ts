@@ -438,6 +438,15 @@ describe('papers that expire', () => {
     expect(kinds).not.toContain('vehicle_permit');
   });
 
+  it('hands back a calendar day, not an instant', async () => {
+    // A `date` that crosses as a JavaScript Date is midnight UTC, which in IST
+    // is the evening before — so a certificate expiring on the 16th reaches
+    // the school as the 15th. The column is a calendar day and has no business
+    // becoming a timestamp on the way out.
+    const due = await transportService.complianceDue(office(), 45);
+    expect(due[0]!.expires_on).toMatch(/^\d{4}-\d{2}-\d{2}$/);
+  });
+
   it('includes a licence that expires inside the window', async () => {
     // The former driver's licence has 30 days on it.
     const due = await transportService.complianceDue(office(), 45);

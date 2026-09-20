@@ -89,19 +89,20 @@ pnpm db:migrate     # 44 migrations, applied in order and checksummed
 pnpm db:seed        # a demo school: 40 learners, fees, help articles, a ticket
 ```
 
-The seed prints a tenant id and a one-time API key. Put the tenant id where the
-web app can see it:
+The seed prints four logins, a one-time API key, and the address the demo school
+lives at. Point the web app at that address:
 
 ```bash
 cat > apps/web/.env.local <<ENV
 NEXT_PUBLIC_API_URL=http://localhost:3001
-NEXT_PUBLIC_TENANT_ID=<paste the tenantId here>
+NEXT_PUBLIC_BRAND_HOST=demo.paathshala.app
 ENV
 ```
 
-The tenant id is configuration rather than something the login form guesses: one
-email can exist in more than one school, and picking one for the user is how
-somebody ends up looking at the wrong institute's children.
+In production this variable does not exist. The school is whoever owns the
+hostname the browser arrived on, so one deployment serves many schools, each at
+its own address and in its own colours. Locally there is only `localhost`, which
+belongs to nobody, and this stands in for the `Host` header.
 
 ---
 
@@ -266,10 +267,10 @@ database the demo is in.
 every run, so run it again — the check firing is the isolation model doing its
 job, not a misconfiguration to work around.
 
-**`NEXT_PUBLIC_TENANT_ID is empty` on the login page**
-`apps/web/.env.local` is missing or the tenant id was not pasted in. Re-run the
-seed to print it again — it says "already exists" and prints the id without
-touching your data.
+**"No school is registered at this address" on the login page**
+`apps/web/.env.local` is missing, or `NEXT_PUBLIC_BRAND_HOST` does not match a
+host the seed registered. Re-run the seed to print it again — it says "already
+exists" and prints the address without touching your data.
 
 **The login page loads but signing in fails**
 The API is not running, or it is on a different port than `NEXT_PUBLIC_API_URL`.

@@ -9,7 +9,7 @@
  * colour is a perfectly good place to hide something that is not one.
  */
 import { describe, it, expect } from 'vitest';
-import { brandHost, safeColour, brandVariables, type Brand } from '../src/lib/brand.ts';
+import { brandHost, safeColour, brandVariables, contrast, type Brand } from '../src/lib/brand.ts';
 
 describe('which host identifies the school', () => {
   it('uses the address bar in production', () => {
@@ -70,5 +70,64 @@ describe('a colour cannot carry a payload', () => {
 
   it('sets nothing at all when there is no brand', () => {
     expect(brandVariables(null)).toEqual({});
+  });
+});
+
+describe('the palette derived from a school’s one colour', () => {
+  const withColour = (hex: string) => brandVariables({
+    tenantId: 't', name: 'School', logoUrl: null, logoDarkUrl: null,
+    primaryColour: hex, inkColour: null,
+    supportEmail: null, supportPhone: null, poweredBy: 'paathshalaOS',
+  } as Brand);
+
+  it('sets every brand token the stylesheet reads', () => {
+    // The first version set `--brand` alone. Buttons, the active navigation
+    // item and every pill are drawn with the other five, so a school picked a
+    // colour and almost nothing changed. Naming them here is what stops that
+    // regressing when a token is added to the stylesheet.
+    expect(Object.keys(withColour('#B45309')).sort()).toEqual([
+      '--brand', '--brand-ink', '--brand-soft', '--brand-solid',
+      '--brand-track', '--brand-wash',
+    ]);
+  });
+
+  it('keeps the school’s colour exactly, as the mark', () => {
+    expect(withColour('#B45309')['--brand']).toBe('#B45309');
+    // Three-digit hex is valid CSS and must survive the round trip.
+    expect(withColour('#f90')['--brand']).toBe('#f90');
+  });
+
+  it('guarantees white text is readable on the solid colour', () => {
+    // The whole reason the palette is derived rather than copied. A school
+    // that picks lemon yellow must not be handed unreadable buttons.
+    for (const hex of ['#FFFF00', '#00FF00', '#7DD3FC', '#B45309', '#0F172A', '#fff']) {
+      const solid = withColour(hex)['--brand-solid']!;
+      const rgb = {
+        r: parseInt(solid.slice(1, 3), 16),
+        g: parseInt(solid.slice(3, 5), 16),
+        b: parseInt(solid.slice(5, 7), 16),
+      };
+      expect(contrast(rgb, { r: 255, g: 255, b: 255 })).toBeGreaterThanOrEqual(4.5);
+    }
+  });
+
+  it('leaves a colour that is already dark enough alone', () => {
+    // A school that picked a deep navy gets their navy back, not a black
+    // approximation of it. Darkening what does not need darkening is how a
+    // palette quietly converges on the same grey for everybody.
+    expect(withColour('#0F172A')['--brand-solid']).toBe('#0f172a');
+  });
+
+  it('makes the washes light enough to put text on', () => {
+    for (const hex of ['#FFFF00', '#0F172A', '#B45309']) {
+      const wash = withColour(hex)['--brand-wash']!;
+      const rgb = {
+        r: parseInt(wash.slice(1, 3), 16),
+        g: parseInt(wash.slice(3, 5), 16),
+        b: parseInt(wash.slice(5, 7), 16),
+      };
+      // Dark ink on the wash, which is what a pill actually is.
+      expect(contrast(rgb, { r: 15, g: 23, b: 42 })).toBeGreaterThanOrEqual(4.5);
+    }
   });
 });

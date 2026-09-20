@@ -29,17 +29,18 @@ pnpm db:migrate
 pnpm db:seed                         # a demo school: 40 learners, fees, today's register
 ```
 
-`pnpm db:seed` prints a **tenant id** and three logins. Put the tenant id in
-`apps/web/.env.local`:
+`pnpm db:seed` prints four logins and the address the demo school lives at. Put that
+address in `apps/web/.env.local`:
 
 ```
 NEXT_PUBLIC_API_URL=http://localhost:3001
-NEXT_PUBLIC_TENANT_ID=<the id the seed printed>
+NEXT_PUBLIC_BRAND_HOST=demo.paathshala.app
 ```
 
-The tenant id is configuration rather than something the login form guesses. An email can
-exist in more than one school, and picking one for the user is how somebody ends up looking at
-the wrong institute's children.
+In production nothing goes here: the school is whoever owns the hostname the app was
+reached on, which is what makes one deployment serve many schools, each at its own
+address, each in its own colours. Locally there is only `localhost`, which belongs to
+nobody — so this one variable stands in for the `Host` header and nothing else reads it.
 
 Then, in two terminals:
 

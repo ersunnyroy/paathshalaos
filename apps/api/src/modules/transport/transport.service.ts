@@ -247,6 +247,11 @@ export const transportService = {
    * A bus with lapsed fitness is not a data-quality problem, it is a bus that
    * should not be carrying children — so this is a first-class screen rather
    * than a column somebody notices.
+   *
+   * Every date crosses as text. A `date` handed to the driver as a JavaScript
+   * Date is midnight UTC, which in IST is the evening before — so a fitness
+   * certificate expiring on the 16th renders to a school as the 15th. The
+   * column is a calendar day and has no business becoming an instant.
    */
   async complianceDue(scope: TenantScope, withinDays = 45): Promise<Array<{
     kind: string; subject: string; expires_on: string; days_left: number;
@@ -257,26 +262,26 @@ export const transportService = {
       }>(
         `SELECT * FROM (
            SELECT 'vehicle_fitness' AS kind, v.registration AS subject,
-                  v.fitness_expires_on AS expires_on,
+                  v.fitness_expires_on::text AS expires_on,
                   (v.fitness_expires_on - CURRENT_DATE) AS days_left
              FROM vehicle v
             WHERE v.deleted_at IS NULL AND v.status <> 'retired'
               AND v.fitness_expires_on IS NOT NULL
            UNION ALL
-           SELECT 'vehicle_insurance', v.registration, v.insurance_expires_on,
+           SELECT 'vehicle_insurance', v.registration, v.insurance_expires_on::text,
                   (v.insurance_expires_on - CURRENT_DATE)
              FROM vehicle v
             WHERE v.deleted_at IS NULL AND v.status <> 'retired'
               AND v.insurance_expires_on IS NOT NULL
            UNION ALL
-           SELECT 'vehicle_permit', v.registration, v.permit_expires_on,
+           SELECT 'vehicle_permit', v.registration, v.permit_expires_on::text,
                   (v.permit_expires_on - CURRENT_DATE)
              FROM vehicle v
             WHERE v.deleted_at IS NULL AND v.status <> 'retired'
               AND v.permit_expires_on IS NOT NULL
            UNION ALL
            SELECT 'driver_licence', p.given_name || ' ' || COALESCE(p.family_name, ''),
-                  d.licence_expires_on, (d.licence_expires_on - CURRENT_DATE)
+                  d.licence_expires_on::text, (d.licence_expires_on - CURRENT_DATE)
              FROM driver d JOIN person p ON p.id = d.person_id
             WHERE d.deleted_at IS NULL AND d.status = 'active'
               AND d.licence_expires_on IS NOT NULL
