@@ -31,7 +31,7 @@ SQL-level invariants are mutated by running `ALTER POLICY` / `CREATE OR REPLACE 
 against the live database. Editing an already-applied migration file does nothing — the
 runner has a checksum guard and will refuse to start instead.
 
-Tests currently: **592 passing across four packages** (api 557, offline-queue 12, api-client 10, web 13), 64 migrations. If that number drops, something regressed.
+Tests currently: **606 passing across five packages** (api 557, offline-queue 12, api-client 10, web 13, mobile 14), 64 migrations. If that number drops, something regressed.
 
 ## Architecture you must know before touching anything
 
@@ -66,6 +66,12 @@ intended. Do not "fix" it by relaxing the assertion.
 - **Money is an exact decimal string**, never a JSON number. Paise, formatted by string
   surgery — never divided.
 - **Pagination is keyset**, never OFFSET.
+- **Do not set `node-linker=hoisted`.** It is the obvious fix for Metro and it was tried
+  and reverted: this workspace holds two React majors on purpose (React Native 0.76 needs
+  React 18, the web app is on 19), and one hoisted root gives one of them the wrong copy —
+  the web build dies with a null `useRef` during prerender. `apps/mobile/metro.config.js`
+  teaches Metro about the workspace instead, which affects only the app that needs it.
+  The web tsconfig points the `react` type specifier at its own copy for the same reason.
 - **Refresh is single-flight, and must stay that way.** The server rotates refresh tokens
   and revokes the whole family when a spent one is presented — that is what a stolen token
   looks like. So two concurrent refreshes sign the user out and write an audit row saying
@@ -144,9 +150,14 @@ packages/offline-queue    The attendance queue. No browser, no React Native, no 
                           tested in Node. Its vocabulary is contract-tested against the
                           server's, at compile time and at runtime.
 packages/api-client       Fetch plus rotation-aware refresh. Token storage injected.
+apps/mobile               Expo (expo-router). Screens are thin on purpose: the logic is
+                          in the shared packages, and the two device adapters take their
+                          native module as an argument so they test in Node.
 ```
 
-Each package has its own `vitest`; run all three before calling something done.
+Each package has its own `vitest`; run all five before calling something done. For the
+mobile app also run `npx expo export --platform android` — it builds the whole Metro
+graph without a device and catches resolution errors a typecheck cannot.
 
 Brand colours: teal `#14B8A6`, deep navy `#0F172A`, slate `#334155`, light gray
 `#E2E8F0`, off-white `#F8FAFC`.

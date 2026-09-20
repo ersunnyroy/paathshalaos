@@ -26,9 +26,18 @@
     "paths": {
       "@/*": [
         "./src/*"
+      ],
+      "react": [
+        "./node_modules/@types/react"
+      ],
+      "react-dom": [
+        "./node_modules/@types/react-dom"
       ]
     },
-    "allowImportingTsExtensions": true
+    "allowImportingTsExtensions": true,
+    "typeRoots": [
+      "./node_modules/@types"
+    ]
   },
   "include": [
     "next-env.d.ts",

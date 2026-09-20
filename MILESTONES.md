@@ -462,7 +462,7 @@ asserts the registration is gone.
 | ID | Milestone | Status | What shipped |
 | --- | --- | --- | --- |
 | M18.1 | A session that survives | Done | `packages/api-client`: rotation-aware refresh with a **single-flight latch**, storage injected, tested in Node. The web app is on it; the mobile app will be |
-| M18.2 | The Expo app | Next | Sign in, the register, the queue badge. Verification has to happen on a real device — see the note below |
+| M18.2 | The Expo app | Built, unrun | `apps/mobile`: sign-in and the register, on the shared client and the shared queue. It typechecks and it **bundles** — `expo export` builds the full graph — but nothing has launched it |
 
 **Why this came before the app.** The server has rotated refresh tokens with reuse
 detection since M2.2, and the web client never refreshed at all: when the ten-minute
@@ -484,12 +484,32 @@ anybody out, because a tunnel is not a security event and a queued register shou
 lost to a lift; and only a closed list of error codes is treated as refreshable, so
 `refresh_token_reused` cannot start a loop against a family that is already gone.
 
-**What M18.2 cannot promise from here.** An Expo app can be written in this environment
-and cannot be *run* in it — no simulator, no device. Everything that is only verifiable by
-launching it (navigation, rendering, SecureStore, push registration) has to be checked on
-a real machine as it is built, so the app lands in reviewable pieces rather than as one
-large untested drop. The logic it depends on — the offline queue and this client — is
-already shared and tested in Node, which is most of what would otherwise be unverifiable.
+**What is verified, and what is not.** The app cannot be launched here — no simulator, no
+device — so the shape of it is arranged to make that gap small. Two adapters bind the
+shared packages to the phone, both take their native module as an argument, and both are
+tested against fakes: a locked keychain returns null rather than crashing the app on
+launch, half a session counts as no session, a sign-out that fails to delete the access
+token still deletes the refresh token, and a corrupt queue file starts empty rather than
+making the register unusable forever. The register's own decisions — which rows to send,
+what a tap does, what the teacher is told afterwards — live in `src/lib/register.ts` and
+are tested too. What remains unverified is rendering and navigation.
+
+**Bundling was worth more than reading.** `expo export` builds the whole graph without a
+device, and it found three things a typecheck could not: `@babel/runtime` and
+`query-string` are undeclared transitive dependencies that Metro cannot reach under pnpm's
+isolated linking, and the two shared packages needed a `main` field because Metro reads it
+before `exports`.
+
+**The linker, and a change that was reverted.** The obvious fix for Metro is
+`node-linker=hoisted`, and it was tried and taken back out. This workspace holds two React
+majors deliberately — React Native 0.76 requires React 18, the web app is on 19 — and a
+single hoisted root gives one of them the wrong copy: the web build died with a null
+`useRef` during prerender, which is a duplicate React by another name. Configuring Metro
+instead (`apps/mobile/metro.config.js`) is the contained change: only the app that needs
+it is affected, and every other package keeps the strict linking that stops it importing
+what it never declared. Two React majors still need one narrow accommodation — the web
+app's tsconfig points the `react` type specifier at its own copy, because a package's
+`/// <reference types="react" />` reaches past `typeRoots`.
 
 ### Deliberately out of scope
 
