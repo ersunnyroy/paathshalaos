@@ -49,7 +49,12 @@ services:
   # moving tag is the honest trade until somebody pins one they have actually
   # pulled.
   minio:
-    image: minio/minio:latest
+    # `quay.io/minio/minio`, not `minio/minio`. MinIO moved their primary
+    # publishing to quay.io and the Docker Hub mirror refuses anonymous pulls
+    # for many networks with "repository does not exist or may require 'docker
+    # login'" — misleading, and exactly what a person running this hit twice.
+    # quay.io is MinIO's own registry and takes anonymous pulls.
+    image: quay.io/minio/minio:latest
     container_name: paathshala-minio
     restart: unless-stopped
     command: ["server", "/data", "--console-address", ":9001"]
@@ -82,7 +87,10 @@ services:
   # treats a scanner that is not there as "failed", never "clean", so the rest
   # of the product works while it warms up.
   clamav:
-    image: clamav/clamav:latest
+    # `stable`, not `latest`. ClamAV's Docker Hub tag layout puts the current
+    # released version under `stable` and reserves `latest` for a rolling build
+    # that has been broken more than once.
+    image: clamav/clamav:stable
     container_name: paathshala-clamav
     restart: unless-stopped
     ports:
