@@ -91,6 +91,12 @@ services:
     # released version under `stable` and reserves `latest` for a rolling build
     # that has been broken more than once.
     image: clamav/clamav:stable
+    # ClamAV publish only an amd64 image, so this runs under Rosetta on an
+    # M-series Mac. Slow, and it does not matter here: the daemon spends its
+    # first ten minutes downloading signature databases whatever it is running
+    # on, and the API treats a scanner that is not yet ready as `failed` rather
+    # than `clean`, so nothing else waits on it.
+    platform: linux/amd64
     container_name: paathshala-clamav
     restart: unless-stopped
     ports:
