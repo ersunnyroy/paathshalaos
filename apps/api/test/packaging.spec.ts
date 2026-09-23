@@ -305,13 +305,36 @@ describe('a local setup can actually store a file', () => {
     new URL('../../../docker-compose.yml', import.meta.url), 'utf8');
   const runLocal = readFileSync(
     new URL('../../../run-local.sh', import.meta.url), 'utf8');
+  const pkg = JSON.parse(readFileSync(
+    new URL('../package.json', import.meta.url), 'utf8')) as
+    { scripts: Record<string, string> };
 
-  it('starts an S3-compatible store and creates the bucket', () => {
-    expect(compose).toMatch(/^ {2}minio:$/m);
-    // A one-shot container rather than an entrypoint script, so a failure to
-    // create the bucket is a failed container somebody can see.
-    expect(compose).toMatch(/^ {2}minio-bucket:$/m);
-    expect(compose).toContain('mc mb --ignore-existing local/paathshala');
+  it('starts an S3-compatible store, and creates the bucket with our own client',
+    () => {
+      expect(compose).toMatch(/^ {2}minio:$/m);
+
+      // **Not a second image.** The first version ran `minio/mc` as a one-shot
+      // container to create the bucket, pinned to a tag that did not exist, and
+      // `compose up` died on "pull access denied ... may require 'docker
+      // login'" — which is not the problem and sends somebody to the wrong
+      // place entirely.
+      //
+      // The bucket is made by `storage:bootstrap`, using the same S3 client the
+      // product uploads with. That is the stronger guarantee: a separate tool
+      // can reach the store with different credentials, a different endpoint or
+      // a different addressing style and still report success while the API
+      // cannot write a byte.
+      expect(compose).not.toContain('minio/mc');
+      expect(runLocal).toContain('storage:bootstrap');
+      expect(pkg.scripts['storage:bootstrap']).toContain('dist/storage/bootstrap.js');
+    });
+
+  it('pulls images before it starts anything', () => {
+    // So a tag that does not resolve is its own line rather than a wall of
+    // compose output. Added because a tag WAS wrong, and the error it produced
+    // named authentication.
+    expect(runLocal).toContain('compose pull');
+    expect(runLocal).toContain('the line above names it');
   });
 
   it('writes credentials that match the ones MinIO is started with', () => {
@@ -351,5 +374,60 @@ describe('a local setup can actually store a file', () => {
           .not.toContain('clamav');
       }
     }
+  });
+});
+
+/**
+ * The console has somebody to sign in as.
+ *
+ * `/console` was built in M15. The guard was built. `platform_admin` was built,
+ * with six capabilities and a CHECK constraint explaining each one. And the
+ * seed created five school logins and **zero** platform accounts — so a person
+ * running the demo could reach the console's sign-in page and had nothing to
+ * type. Every test made its own account, which is exactly why nobody noticed:
+ * the same shape as every other finding in the last six milestones.
+ *
+ * Asserted against the seed's source rather than by running it, because the
+ * seed is a one-shot script against a database this suite does not own. What
+ * is checked is the thing that was missing: that it creates the account at all,
+ * grants a capability set that can actually do something, and prints the
+ * credentials — a seeded account nobody is told about is the same as no
+ * account.
+ */
+describe('a local demo can be driven from the platform console', () => {
+  const seed = readFileSync(
+    new URL('../src/db/seed.ts', import.meta.url), 'utf8');
+
+  it('creates a platform admin', () => {
+    expect(seed).toContain('platform_admin');
+    expect(seed).toContain('console@paathshala.app');
+  });
+
+  it('grants a capability set that can do more than grant capabilities', () => {
+    // 0055: "superadmin grants capabilities but does not confer them, so no
+    // single account both authorises and acts." An account seeded with only
+    // `superadmin` could hand out access and do nothing, which somebody would
+    // reasonably read as broken.
+    for (const capability of ['provision', 'support', 'billing', 'impersonate',
+                              'superadmin']) {
+      expect(seed, `${capability} is not seeded`).toContain(`'${capability}'`);
+    }
+  });
+
+  it('does not grant the one that changes a school', () => {
+    // Entering to look is one capability; changing a school's records is
+    // another. The demo defaults to the one that cannot alter a school by
+    // accident — and says so, so it reads as a decision rather than an
+    // oversight.
+    const capabilities = /const CONSOLE_CAPABILITIES = \[([\s\S]*?)\]/.exec(seed)?.[1] ?? '';
+    expect(capabilities).not.toContain('impersonate_write');
+    expect(seed).toContain('impersonate_write — entering to look is one');
+  });
+
+  it('prints the credentials, and where to use them', () => {
+    // A seeded account nobody is told about is the same as no account, which
+    // is how this one went missing for six milestones.
+    expect(seed).toContain('/console');
+    expect(seed).toMatch(/PLATFORM CONSOLE/);
   });
 });

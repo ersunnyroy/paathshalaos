@@ -14,6 +14,7 @@
     "db:bootstrap": "pnpm run build && node dist/db/bootstrap.js",
     "db:migrate": "pnpm run build && node dist/db/migrate.js",
     "db:seed": "pnpm run build && node dist/db/seed.js",
+    "storage:bootstrap": "node dist/storage/bootstrap.js",
     "webhooks:relay": "node dist/workers/webhook-relay.js",
     "scheduler": "node dist/workers/scheduler.js",
     "webhooks:relay:dev": "pnpm run build && node dist/workers/webhook-relay.js",

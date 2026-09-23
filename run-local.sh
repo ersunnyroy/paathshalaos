@@ -109,13 +109,29 @@ ok "pnpm $(pnpm -v)"
 
 # ------------------------------------------------------------------ containers
 
-step "2. Postgres and Redis"
+step "2. Postgres, Redis, object storage and the scanner"
 
 if [ "${1:-}" = "reset" ]; then
   warn "reset: removing the containers AND their data volumes"
   stop_servers
   compose down -v || die "could not bring the containers down"
 fi
+
+# Pulled before `up`, so a tag that does not resolve is its own error line.
+#
+# This is here because a tag WAS wrong: the object-storage services were first
+# added pinned to release tags written from memory, and `compose up` failed with
+# "pull access denied ... repository does not exist or may require 'docker
+# login'". That reads as an authentication problem and is not one — the image
+# simply is not there — and it took the whole stack down with it.
+printf '  pulling images (first run downloads a few hundred MB)'
+if ! compose pull --quiet >/tmp/paathshala-pull.log 2>&1; then
+  echo
+  sed 's/^/  /' /tmp/paathshala-pull.log
+  die "could not pull one of the images — the line above names it"
+fi
+echo
+ok "images present"
 
 compose up -d || die "docker compose up failed"
 
@@ -131,6 +147,32 @@ echo
 [ -n "$PG_READY" ] || { compose logs --tail 30 postgres; die "Postgres did not become healthy — log above"; }
 ok "postgres ready on localhost:$PG_PORT"
 ok "redis ready on localhost:$REDIS_PORT"
+
+printf '  waiting for object storage'
+MINIO_READY=""
+for _ in $(seq 1 60); do
+  if curl -fsS http://localhost:9000/minio/health/live >/dev/null 2>&1; then
+    MINIO_READY=1; break
+  fi
+  printf '.'; sleep 1
+done
+echo
+[ -n "$MINIO_READY" ] || { compose logs --tail 30 minio; die "MinIO did not come up — log above"; }
+ok "object storage ready on localhost:9000 (console on 9001)"
+
+# Deliberately NOT waited on. ClamAV downloads a few hundred megabytes of virus
+# signatures on first start and can take ten minutes; the API treats a scanner
+# that is not there as "failed", never "clean", so everything else works while
+# it warms up. Uploads are stored and not served until it is ready, which is
+# 0017's rule doing its job rather than a fault.
+if docker exec paathshala-clamav clamdcheck.sh >/dev/null 2>&1; then
+  ok "virus scanner ready on localhost:3310"
+  CLAMAV_READY=1
+else
+  warn "virus scanner still downloading signatures — uploads will be stored and"
+  warn "  not served until it is ready. Check with: docker logs -f paathshala-clamav"
+  CLAMAV_READY=""
+fi
 
 # The compose file creates the paathshala database and the owner role for us;
 # db:bootstrap below creates the two unprivileged roles the API actually uses.
@@ -153,10 +195,7 @@ OBJECT_STORE_ENDPOINT=http://localhost:9000
 OBJECT_STORE_ACCESS_KEY_ID=paathshala
 OBJECT_STORE_SECRET_ACCESS_KEY=paathshala-local-only
 OBJECT_STORE_FORCE_PATH_STYLE=true
-# Uncomment once clamav reports healthy — it downloads a few hundred megabytes
-# of signatures on first start. Until then uploads are stored and not served,
-# which is 0017's rule working rather than a bug.
-# CLAMD_HOST=localhost
+CLAMD_HOST=localhost
 PORT=3001
 NODE_ENV=development
 WEB_ORIGINS=http://localhost:3000
@@ -182,6 +221,10 @@ OBJECT_STORE_SECRET_ACCESS_KEY=paathshala-local-only
 OBJECT_STORE_FORCE_PATH_STYLE=true
 STORE
     added="$added OBJECT_STORE_*"
+  fi
+  if ! grep -q "CLAMD_HOST" apps/api/.env; then
+    echo "CLAMD_HOST=localhost" >> apps/api/.env
+    added="$added CLAMD_HOST"
   fi
   for role in health platform; do
     var="DATABASE_$(printf '%s' "$role" | tr '[:lower:]' '[:upper:]')_URL"
@@ -245,6 +288,13 @@ EXPLAIN
   fi
   die "db:migrate failed"
 fi
+
+# The bucket, through the product's own S3 client rather than a second image.
+# If this succeeds the API's uploads will too, which a separate tool cannot
+# promise: it can reach the store with different credentials, a different
+# endpoint or a different addressing style and still report success.
+pnpm --filter @paathshala/api storage:bootstrap 2>&1 | sed 's/^/  /' \
+  || die "could not create the object storage bucket"
 
 SEED_OUT=$(pnpm db:seed 2>&1)
 echo "$SEED_OUT" | sed 's/^/  /'

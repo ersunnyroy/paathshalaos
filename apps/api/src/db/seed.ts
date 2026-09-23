@@ -36,10 +36,24 @@ async function main(): Promise<void> {
       'SELECT id FROM organization WHERE display_name = $1', [ORG_NAME],
     );
     if (existing.rows[0]) {
-      console.log(`${ORG_NAME} already exists. Nothing to do.`);
+      console.log(`${ORG_NAME} already exists. Leaving the school alone.`);
       console.log(`  tenantId: ${existing.rows[0].id}`);
+      // The console account is created on this path too, and that is the whole
+      // reason this branch does more than print.
+      //
+      // A platform admin belongs to no school, so "the demo school already
+      // exists" says nothing about whether one is there. Every database seeded
+      // before M38 has the school and no console account, and a seed that only
+      // works on an empty database is a seed that cannot fix the machine it is
+      // being run on — the person would have to drop their data to get a login
+      // for a screen that was always supposed to have one.
+      //
+      // Idempotent, so running it again on a database that already has the
+      // account changes nothing.
+      const { passwordService } = await import('../modules/auth/password.service.ts');
+      await seedPlatformAdmin(c, await passwordService.hash(PASSWORD));
       await printLogins(c, existing.rows[0].id);
-    await c.query('COMMIT');
+      await c.query('COMMIT');
       return;
     }
 
@@ -1116,6 +1130,7 @@ async function main(): Promise<void> {
     console.log(`  an admission form, 2 enquiries, 2 applications, 1 offer out`);
     console.log(`  a published grading scale and a term exam half marked`);
     console.log(`  a published privacy notice, and nobody asked for consent yet\n`);
+    await seedPlatformAdmin(c, passwordHash);
     await printLogins(c, tenantId);
   } catch (error) {
     await c.query('ROLLBACK');
@@ -1125,13 +1140,77 @@ async function main(): Promise<void> {
   }
 }
 
+/**
+ * The platform console account. Us, not a school.
+ *
+ * **The console has had no way in since M15.** `/console` was built, the guard
+ * was built, `platform_admin` was built with six capabilities and a CHECK
+ * constraint explaining each one — and the seed created five school logins and
+ * zero platform accounts. Every test made its own; a person running the demo
+ * could reach the sign-in page and had nothing to type. The same shape as every
+ * other finding in the last six milestones: built, tested, unreachable.
+ *
+ * `superadmin` is granted alongside the others rather than instead of them,
+ * which 0055 is explicit about: *"superadmin grants capabilities but does not
+ * confer them, so no single account both authorises and acts."* A seed that
+ * gave only `superadmin` would produce an account that can hand out access and
+ * do nothing, and somebody would reasonably read that as broken.
+ *
+ * `impersonate_write` is deliberately **not** granted. Entering a school to
+ * look is one capability and changing their records is another, and the demo
+ * should default to the one that cannot alter a school by accident. Adding it
+ * is one INSERT, printed below so it is discoverable rather than hidden.
+ */
+async function seedPlatformAdmin(c: pg.Client, passwordHash: string): Promise<void> {
+  const existing = await c.query<{ id: string }>(
+    'SELECT id FROM user_account WHERE login_email = $1', [CONSOLE_EMAIL]);
+  const userId = existing.rows[0]?.id ?? (await one<{ id: string }>(c,
+    `INSERT INTO user_account (login_email, password_hash, status)
+     VALUES ($1, $2, 'active') RETURNING id`, [CONSOLE_EMAIL, passwordHash])).id;
+
+  for (const capability of CONSOLE_CAPABILITIES) {
+    await c.query(
+      `INSERT INTO platform_admin (user_account_id, capability, note)
+       VALUES ($1, $2, 'seeded for local development')
+       ON CONFLICT DO NOTHING`,
+      [userId, capability]);
+  }
+}
+
+/**
+ * No `role_grant` anywhere, and that is the point.
+ *
+ * A console account holds capabilities on the platform and belongs to no
+ * school. It cannot read a learner, a fee or an attendance mark — the tenant
+ * policies decide by `app.actor_id` and this account has no grant in any
+ * tenant, so every one of them returns nothing. The only way in is `/enter`,
+ * which writes a row the school can see and end.
+ */
+const CONSOLE_EMAIL = 'console@paathshala.app';
+const CONSOLE_CAPABILITIES = [
+  'provision', 'support', 'billing', 'impersonate', 'superadmin',
+] as const;
+
 async function printLogins(c: pg.Client, tenantId: string): Promise<void> {
-  console.log('  Sign in with:');
+  console.log('  Sign in to the school at http://localhost:3000 with:');
   for (const email of ['principal@demo.school', 'teacher@demo.school',
                        'accounts@demo.school', 'driver@demo.school',
                        'parent@demo.school']) {
     console.log(`    ${email.padEnd(24)} ${PASSWORD}`);
   }
+
+  console.log(`\n  Sign in to the PLATFORM CONSOLE at http://localhost:3000/console with:`);
+  console.log(`    ${CONSOLE_EMAIL.padEnd(24)} ${PASSWORD}`);
+  console.log(`    capabilities: ${CONSOLE_CAPABILITIES.join(', ')}`);
+  // Named rather than silently absent, so somebody looking for it knows it is
+  // a decision and not an oversight.
+  console.log(`    not granted:  impersonate_write — entering to look is one`);
+  console.log(`                  capability, changing a school's records is another.`);
+  console.log(`                  Add it with:`);
+  console.log(`                    INSERT INTO platform_admin (user_account_id, capability)`);
+  console.log(`                    SELECT id, 'impersonate_write' FROM user_account`);
+  console.log(`                     WHERE login_email = '${CONSOLE_EMAIL}';`);
+
   console.log(`\n  The web app finds the school by host. For local work, put this in`);
   console.log(`  apps/web/.env.local:\n`);
   console.log(`    NEXT_PUBLIC_BRAND_HOST=demo.${process.env['PAATHSHALA_DOMAIN'] ?? 'paathshala.app'}\n`);

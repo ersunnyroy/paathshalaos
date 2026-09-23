@@ -39,11 +39,17 @@ services:
   # `OBJECT_STORE_FORCE_PATH_STYLE`, which MinIO needs because virtual-host
   # addressing would require DNS for every bucket.
   #
-  # It is here rather than optional because M37's whole finding was that this
-  # product had no object-storage client at all. A local setup where uploads
-  # silently do not work is how that happens again.
+  # **The tag is floating, and that is a correction.** The first version of this
+  # file pinned `RELEASE.2025-04-22T22-12-26Z` — a tag that does not exist,
+  # because it was written from memory rather than looked up, and `docker
+  # compose up` failed on the pull with "repository does not exist or may
+  # require 'docker login'", which reads like an authentication problem and is
+  # not one. A wrong pin is worse than no pin: it fails at the registry with an
+  # error that names the wrong cause. This is a local development stack, so a
+  # moving tag is the honest trade until somebody pins one they have actually
+  # pulled.
   minio:
-    image: minio/minio:RELEASE.2025-04-22T22-12-26Z
+    image: minio/minio:latest
     container_name: paathshala-minio
     restart: unless-stopped
     command: ["server", "/data", "--console-address", ":9001"]
@@ -56,42 +62,27 @@ services:
     volumes:
       - miniodata:/data
     healthcheck:
-      test: ["CMD", "mc", "ready", "local"]
+      # `mc` is not in the server image, so this asks MinIO's own liveness
+      # endpoint over the port it already serves. The previous version shelled
+      # out to `mc ready`, which is a different image.
+      test: ["CMD-SHELL", "curl -fsS http://localhost:9000/minio/health/live || exit 1"]
       interval: 5s
       timeout: 5s
       retries: 30
-
-  # Creates the bucket once MinIO is up, then exits.
-  #
-  # A separate one-shot container rather than an entrypoint script, so a
-  # failure to create the bucket is a failed container somebody can see instead
-  # of a log line inside a service that stays green.
-  minio-bucket:
-    image: minio/mc:RELEASE.2025-04-16T18-13-26Z
-    container_name: paathshala-minio-bucket
-    depends_on:
-      minio:
-        condition: service_healthy
-    entrypoint: >
-      /bin/sh -c "
-      mc alias set local http://minio:9000 paathshala paathshala-local-only &&
-      mc mb --ignore-existing local/paathshala &&
-      echo 'bucket paathshala ready'
-      "
 
   # ClamAV, so the scan gate 0017 wrote into the schema can actually be
   # satisfied locally.
   #
   # `virus_scan_state` defaults to 'pending' and nothing is served until a scan
-  # clears it. Without this container every local upload would store fine and
-  # never be downloadable, which looks like a bug and is the rule working.
+  # clears it. Without this container every local upload stores fine and is
+  # never downloadable, which looks like a bug and is the rule working.
   #
-  # It is slow to start — it downloads signature databases on first run, which
-  # is a few hundred megabytes — so the healthcheck is patient and nothing
-  # depends on it. The API treats a scanner that is not there as "failed", not
-  # as "clean", so the rest of the product works while it warms up.
+  # Slow to start — it downloads signature databases on first run, a few hundred
+  # megabytes — so the healthcheck is patient and NOTHING depends on it. The API
+  # treats a scanner that is not there as "failed", never "clean", so the rest
+  # of the product works while it warms up.
   clamav:
-    image: clamav/clamav:1.4
+    image: clamav/clamav:latest
     container_name: paathshala-clamav
     restart: unless-stopped
     ports:
@@ -103,7 +94,7 @@ services:
       interval: 30s
       timeout: 10s
       retries: 20
-      start_period: 300s
+      start_period: 600s
 
   # A browser client for the database, on http://localhost:8081.
   #
