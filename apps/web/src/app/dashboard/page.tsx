@@ -4,6 +4,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { Shell, PageHead } from '../shell';
 import { Tile, Panel, Pill, SkeletonRows, Icon } from '@/components/ui';
 import { Sparkline, AreaChart, type Point } from '@/components/chart';
+import { localIsoDate } from '@/lib/dates';
 import { apiGet, rupees, rupeesCompact } from '@/lib/api';
 
 interface Campus {
@@ -62,7 +63,9 @@ export default function DashboardPage() {
   useEffect(() => {
     Promise.all([
       apiGet<Figures>('/v1/dashboard'),
-      apiGet<Today>('/v1/dashboard/today'),
+      // The date is sent, not left to the server, whose default is UTC: before
+      // 5:30 a.m. in India that is yesterday's registers.
+      apiGet<Today>(`/v1/dashboard/today?on=${localIsoDate()}`),
       apiGet<TrendPoint[]>('/v1/dashboard/trend?days=28'),
     ])
       .then(([f, t, tr]) => { setFigures(f); setToday(t); setTrend(tr); })

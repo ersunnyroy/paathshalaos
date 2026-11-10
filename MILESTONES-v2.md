@@ -303,13 +303,34 @@ the family attendance window) use `new Date().toISOString()`, so they are UTC wh
 server runs. The web now always sends the date, which hides it. The real fix is the
 school's timezone, which `organization` does not yet carry into these queries.
 
+## M40.4 — the bell, and the staff roster on the shared table
+
+**The bell.** The five "needs attention" counts lived at the bottom of the dashboard, which
+a teacher no longer lands on. They are now a bell in the top bar on every screen for
+people who work at the school: a number when something is waiting, nothing at all when
+nothing is, and each item links to the screen that deals with it. An item is offered only
+if that screen is one the person is shown — a count somebody can do nothing about is a
+number that never goes away. It asks once a minute. Seen live: "1 result run to review,
+1 message failed to send".
+
+This is not push, and not per-person notifications (M43): it is the queue the school
+already computes, put where people will see it.
+
+The dashboard also now sends today's date to `dashboard/today` instead of leaving it to
+the server's UTC default.
+
+**Staff roster** on the shared table: sort, filter, export, with Designation and Joined
+as optional columns.
+
+`lib/attention.ts`: 5 mutations, all caught. Web tests 190.
+
 ## Status
 
 | ID | State |
 | --- | --- |
 | M39 | tokens done; typed client moved to M39.1 |
 | M39.1 | not started |
-| M40 | shell, palette, query cache, shared data table (Learners, Fees invoices). 15 pages still to move; no notification bell |
+| M40 | shell, palette, query cache, bell, shared data table (Learners, Fees invoices, Staff roster). 14 pages still to move |
 | M42.5 | all existing routes have screens; revenue added. Left: lifecycle pipeline, school health and usage, 2FA, cross-school support desk |
 | M41 | learner profile, structure screens, guardian names, offerings (on the timetable page) done; web file upload and activity timeline not started |
 | M42 | timetable view, add, move and remove done; free-teacher suggestions for cover not started |

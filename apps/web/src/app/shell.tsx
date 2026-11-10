@@ -7,7 +7,8 @@ import { apiGet, clearSession, currentToken, onSignedOut, loadBrand } from '@/li
 import { brandVariables, type Brand } from '@/lib/brand';
 import { Icon, Mark } from '@/components/ui';
 import { Palette } from '@/components/palette';
-import { GROUPS, navFor, homeFor } from '@/lib/nav';
+import { GROUPS, navFor, homeFor, screensFor } from '@/lib/nav';
+import { Bell } from '@/components/bell';
 
 interface Me {
   tenantId: string;
@@ -173,6 +174,10 @@ export function Shell({ children }: { children: ReactNode }) {
         <Icon.slash />
         <span className="here">{here?.label ?? 'Dashboard'}</span>
         <span className="spacer" />
+        {/* For people who work at the school. A parent has no queue of the
+            school's work, and the counts are about the office's day. */}
+        {me && (me.impersonation || homeFor(me.roles) !== '/family')
+          ? <Bell allowed={me.impersonation ? null : screensFor(me.roles)} /> : null}
         <button className="palette-open" type="button" onClick={() => setPaletteOpen(true)}
                 aria-label="Search and jump (Ctrl+K)">
           <Icon.search />

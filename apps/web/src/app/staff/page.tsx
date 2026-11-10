@@ -18,6 +18,7 @@ import { useCallback, useEffect, useState } from 'react';
 import { Shell, PageHead } from '../shell';
 import { Empty, Panel, Pill, SkeletonRows, Tile } from '@/components/ui';
 import { localIsoDate } from '@/lib/dates';
+import { DataTable } from '@/components/data-table';
 import { apiGet, apiPost } from '@/lib/api';
 
 interface StaffRow {
@@ -325,57 +326,57 @@ export default function StaffPage() {
         ) : null}
       </Panel>
 
-      <Panel title="Roster" hint="The contract in force today, and leave taken">
-        <table>
-          <thead>
-            <tr>
-              <th>Name</th><th>Code</th><th>Contract</th>
-              <th className="num">Leave taken</th><th>State</th>
-            </tr>
-          </thead>
-          {staff === null ? <SkeletonRows rows={4} cols={5} /> : (
-            <tbody>
-              {staff.map((s) => (
-                <tr key={s.staff_id}>
-                  <td>
-                    <strong>{who(s)}</strong>
-                    {s.designation
-                      ? <span className="sub" style={{ display: 'block' }}>{s.designation}</span>
-                      : null}
-                  </td>
-                  <td>{s.employee_code}</td>
-                  <td>
-                    {s.contract_kind ? (
-                      <>
-                        {s.contract_kind.replace('_', ' ')}
-                        {s.weekly_hours
-                          ? <span className="sub"> · {Number(s.weekly_hours)}h</span>
-                          : null}
-                      </>
-                    ) : <span className="sub">No contract recorded</span>}
-                  </td>
-                  <td className="num">
-                    {s.entitlement_days
-                      ? `${Number(s.taken_days ?? 0)} / ${Number(s.entitlement_days)}`
-                      : <span className="sub">—</span>}
-                  </td>
-                  <td>
-                    {s.left_on ? <Pill>Left {s.left_on}</Pill>
-                      : s.away_today ? <Pill tone="warning">Away today</Pill>
-                      : <Pill tone="good">In</Pill>}
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          )}
-        </table>
-        {staff?.length === 0 ? (
+      <DataTable<StaffRow>
+        id="staff-roster"
+        title="Roster"
+        rows={staff}
+        rowKey={(s) => s.staff_id}
+        empty={(
           <Empty title="No staff recorded yet">
             Staff arrive with the roster import, or are added when an account is
             created for them.
           </Empty>
-        ) : null}
-      </Panel>
+        )}
+        columns={[
+          {
+            key: 'name', label: 'Name', required: true, text: who,
+            render: (s) => (
+              <>
+                <strong>{who(s)}</strong>
+                {s.designation
+                  ? <span className="sub" style={{ display: 'block' }}>{s.designation}</span>
+                  : null}
+              </>
+            ),
+          },
+          { key: 'designation', label: 'Designation', optional: true, text: (s) => s.designation ?? '' },
+          { key: 'code', label: 'Code', text: (s) => s.employee_code },
+          {
+            key: 'contract', label: 'Contract',
+            text: (s) => (s.contract_kind ? s.contract_kind.replace(/_/g, ' ') : ''),
+            render: (s) => (s.contract_kind ? (
+              <>
+                {s.contract_kind.replace(/_/g, ' ')}
+                {s.weekly_hours ? <span className="sub"> · {Number(s.weekly_hours)}h</span> : null}
+              </>
+            ) : <span className="sub">No contract recorded</span>),
+          },
+          { key: 'joined', label: 'Joined', optional: true, text: (s) => s.joined_on },
+          {
+            key: 'leave', label: 'Leave taken', align: 'right',
+            // "3 / 10" as text, so the export says what the screen says.
+            text: (s) => (s.entitlement_days
+              ? `${Number(s.taken_days ?? 0)} / ${Number(s.entitlement_days)}` : ''),
+          },
+          {
+            key: 'state', label: 'State',
+            text: (s) => (s.left_on ? `Left ${s.left_on}` : s.away_today ? 'Away today' : 'In'),
+            render: (s) => (s.left_on ? <Pill>Left {s.left_on}</Pill>
+              : s.away_today ? <Pill tone="warning">Away today</Pill>
+              : <Pill tone="good">In</Pill>),
+          },
+        ]}
+      />
     </Shell>
   );
 }

@@ -985,3 +985,15 @@ ol.day .time .sub, ol.day .what .sub { display: block; font-weight: 400; }
 ol.day .what { flex: 1; min-width: 0; }
 ol.day li.is-done { opacity: 0.55; }
 ol.day li.is-now { background: var(--brand-soft); box-shadow: inset 3px 0 0 var(--brand); }
+
+/* ================================================================== bell */
+
+.bell { position: relative; padding: 5px 8px; color: var(--ink-2); background: transparent; border-color: transparent; }
+.bell .badge {
+  position: absolute; top: -3px; right: -3px; min-width: 16px; height: 16px; padding: 0 4px;
+  border-radius: 999px; background: var(--critical); color: #fff;
+  font: 700 10px/16px var(--sans); text-align: center;
+}
+.menu.wide { min-width: 280px; }
+.menu a { padding: 6px 4px; border-radius: 6px; color: var(--ink); font-size: 13px; }
+.menu a:hover { background: var(--surface-hover); text-decoration: none; }
