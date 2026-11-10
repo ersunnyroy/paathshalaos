@@ -1,6 +1,7 @@
 'use client';
 
 import { useEffect, useState } from 'react';
+import Link from 'next/link';
 import { Shell, PageHead } from '../shell';
 import { Panel, Empty, SkeletonRows, Avatar, Pill, Icon } from '@/components/ui';
 import { useApiQuery } from '@/lib/query';
@@ -83,7 +84,7 @@ export default function StudentsPage() {
                           <span className="who2">
                             <Avatar name={name} />
                             <span>
-                              <span className="nm">{name}</span>
+                              <Link className="nm" href={`/students/${s.id}`}>{name}</Link>
                               <span className="sub" style={{ display: 'block' }}>
                                 {s.admission_no}
                               </span>

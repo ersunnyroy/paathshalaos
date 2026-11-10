@@ -34,8 +34,8 @@ Mutation pass: the fail-open rule, the 4xx retry rule and the stale-stylesheet c
 each broken and each caught. **One mutation changed nothing** — removing the de-duplication
 in `matchScreens` — so a test was added for a screen whose label and synonym both match.
 
-Web tests 25 → 42, ui-tokens 5. Typecheck and `next build` pass. **Not yet looked at in a
-browser**: the session that built this could not start Docker, so nobody has clicked it.
+Web tests 25 → 42, ui-tokens 5. Typecheck and `next build` pass. Checked in Chrome on 10 Nov once the stack was running: palette, learner search and
+role-filtered navigation all work.
 API tests were not run (no Postgres in that session); nothing under `apps/api` changed.
 
 Found on the way: `apps/mobile/test/learning.spec.ts` ("counts anything before midnight
@@ -44,11 +44,68 @@ tonight as today") fails when the machine clock is UTC. Pre-existing, not fixed 
 Still to do in M40: move the remaining pages onto `useApiQuery`, the shared data table with
 saved views and export, the notification bell.
 
+## M38.3, M38.4 — the local demo, again
+
+- MinIO withdrew its public images (Docker Hub, then quay.io: 401 for every tag). One
+  optional image took the whole stack down. `run-local.sh` now pulls object storage and
+  the scanner separately and a failure is a warning: **file upload is off locally until
+  MinIO is replaced** with another S3-compatible store. SeaweedFS was the candidate; it
+  could not be tested from the building session, so nothing untested was swapped in.
+- The sign-in page said "No school is registered at this address" on a fresh demo: since
+  M19 the web app finds its school from the host and `run-local.sh` never wrote
+  `NEXT_PUBLIC_BRAND_HOST`. It does now, read from the seed's own output.
+
+## M42.5 — the business console (part 1)
+
+The console had routes for plans, subscriptions, invoices and platform admins and a screen
+for none of them. It now has tabs: **Schools, Plans, Billing, Team, Operations.**
+
+- Schools: headline counts, suspend and resume.
+- Plans: every version with price, limits, features and subscriber count; a form that
+  creates the plan, drafts a version and sets its terms; publish and retire.
+- Billing: a school's platform invoices with exact totals, credit notes, and "put on a
+  plan" (with trial days).
+- Team: one row per person, capabilities held now, grant and revoke.
+- Anything that cannot be undone uses a two-click button that disarms after four seconds.
+
+Exercised in a real browser against the running API: a plan was drafted, a bad hard cap
+was refused, the plan was published, the demo school was subscribed. **The demo school is
+now on a plan called Everything (all features, no limits, 14-day trial)**; a second plan,
+Starter, exists with no subscribers.
+
+Not built (needs new API, so Postgres tests on the Mac): revenue dashboard, school
+lifecycle pipeline, usage and health per school, two-factor for staff, the support desk
+across schools, moving a school between plans and changing subscription status from the
+screen (routes exist, no form yet), creating a school from the screen.
+
+Found: the zod comment on plan prices says "paise"; the column is `numeric(14,2)` and the
+invoice maths treats it as rupees. The screen treats it as rupees. The comment is wrong.
+
+## M41 — learner 360 (part 1)
+
+`/students/<id>`: header, then Overview, Attendance, Fees, Results, Classwork, Guardians.
+Reached from the roster and from the command palette. Every read is an existing route —
+the `family/children/:id/*` routes answer for staff as well as guardians because RLS, not
+the route, decides. Medical and emergency details load only on a click, because that read
+is audited.
+
+Gaps this exposed: the guardians route returns a relationship and permissions but **no
+name or phone**; attendance is fixed at the last 30 days; there is no activity timeline.
+Academic-structure screens and file upload on web (the other half of M41) are not started.
+
+Mutation pass on both: 11 mutations, 10 caught first time. The one that changed nothing —
+`<` to `<=` on the overdue date in `feeStanding` — got a test for an invoice due today.
+
+Web tests now 78. Typecheck and `next build` pass. API suite still not run from this
+session; nothing under `apps/api` changed.
+
 ## Status
 
 | ID | State |
 | --- | --- |
 | M39 | tokens done; typed client moved to M39.1 |
 | M39.1 | not started |
-| M40 | part 1 done |
-| M42.5, M41, M42 … M52 | not started |
+| M40 | part 1 done; 18 pages still on effect-fetching, no shared data table yet |
+| M42.5 | part 1 done (screens over existing routes) |
+| M41 | learner profile done; structure screens and web file upload not started |
+| M42 … M52 | not started |

@@ -101,7 +101,9 @@ export function Shell({ children }: { children: ReactNode }) {
   const groups = useMemo(
     () => (me?.impersonation ? GROUPS : navFor(me?.roles ?? [])),
     [me]);
-  const here = GROUPS.flatMap((g) => g.items).find((i) => i.href === pathname);
+  // A page under a section (a learner's profile under Learners) belongs to it.
+  const here = GROUPS.flatMap((g) => g.items)
+    .find((i) => pathname === i.href || pathname.startsWith(`${i.href}/`));
 
   return (
     <div className="app" data-entry={me?.impersonation ? '1' : undefined}>
@@ -129,7 +131,7 @@ export function Shell({ children }: { children: ReactNode }) {
                 const Glyph = Icon[icon];
                 return (
                   <Link key={href} href={href}
-                        aria-current={pathname === href ? 'page' : undefined}>
+                        aria-current={pathname === href || pathname.startsWith(`${href}/`) ? 'page' : undefined}>
                     <Glyph />
                     {label}
                   </Link>

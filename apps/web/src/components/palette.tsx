@@ -63,7 +63,7 @@ export function Palette({ open, onClose, groups }: {
       const where = s.class_name ? `${s.class_name} ${s.section_name ?? ''}`.trim() : 'Not enrolled';
       return {
         kind: 'learner', key: `l:${s.id}`, label: name, sub: `${s.admission_no} · ${where}`,
-        href: `/students?q=${encodeURIComponent(s.admission_no)}`,
+        href: `/students/${s.id}`,
       };
     });
     return [...people, ...screens];
