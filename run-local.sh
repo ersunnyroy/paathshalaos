@@ -348,14 +348,23 @@ TENANT=$(echo "$SEED_OUT" | grep -oE '[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-
 [ -n "$TENANT" ] || die "could not read the tenant id from the seed output"
 API_KEY=$(echo "$SEED_OUT" | grep -oE 'pk_(test|live)_[0-9a-f]{16}\.[0-9a-f]{64}' | sed -n '1p')
 
+# Which school `localhost` is. Since M19 the web app finds its school from the
+# address bar, and localhost names nobody — so without this the sign-in page
+# says "No school is registered at this address" on a freshly seeded demo. The
+# seed prints the line to add; nothing ever added it. Read from that output so
+# a changed PAATHSHALA_DOMAIN follows through.
+BRAND_HOST=$(echo "$SEED_OUT" | grep -oE 'NEXT_PUBLIC_BRAND_HOST=[A-Za-z0-9.-]+' | sed -n '1p' | cut -d= -f2)
+[ -n "$BRAND_HOST" ] || BRAND_HOST="demo.paathshala.app"
+
 # Rewritten every run, because the tenant id changes whenever the demo is
 # reseeded — and a stale one here is the most confusing failure there is: the
 # login page loads, the password is right, and nothing works.
 cat > apps/web/.env.local <<ENV
 NEXT_PUBLIC_API_URL=http://localhost:3001
 NEXT_PUBLIC_TENANT_ID=$TENANT
+NEXT_PUBLIC_BRAND_HOST=$BRAND_HOST
 ENV
-ok "wrote apps/web/.env.local with tenant $TENANT"
+ok "wrote apps/web/.env.local with tenant $TENANT, reached as $BRAND_HOST"
 
 # ------------------------------------------------------------------- run
 
