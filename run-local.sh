@@ -124,16 +124,44 @@ fi
 # "pull access denied ... repository does not exist or may require 'docker
 # login'". That reads as an authentication problem and is not one — the image
 # simply is not there — and it took the whole stack down with it.
+# The services the product cannot run without are pulled together and a failure
+# stops here. Object storage and the scanner are pulled one at a time and a
+# failure is a warning.
+#
+# That split exists because of 10 Nov 2026: MinIO withdrew its community images
+# from Docker Hub and then from quay.io, so `quay.io/minio/minio` answers 401
+# for every tag — which reads as a login problem and is not one. One optional
+# image that no longer exists took down Postgres, Redis and the whole app with
+# it. Without object storage, file upload is off and everything else works.
+SERVICES="postgres redis adminer"
 printf '  pulling images (first run downloads a few hundred MB)'
-if ! compose pull --quiet >/tmp/paathshala-pull.log 2>&1; then
+if ! compose pull --quiet $SERVICES >/tmp/paathshala-pull.log 2>&1; then
   echo
   sed 's/^/  /' /tmp/paathshala-pull.log
   die "could not pull one of the images — the line above names it"
 fi
 echo
-ok "images present"
+ok "core images present"
 
-compose up -d || die "docker compose up failed"
+STORE_UP=""
+for optional in minio clamav; do
+  # An image already on this machine is used as it is: compose only needs the
+  # registry for something it does not have.
+  image=$(compose config --images "$optional" 2>/dev/null | sed -n '1p')
+  if { [ -n "$image" ] && docker image inspect "$image" >/dev/null 2>&1; } \
+     || compose pull --quiet "$optional" >/tmp/paathshala-pull.log 2>&1; then
+    SERVICES="$SERVICES $optional"
+    [ "$optional" = "minio" ] && STORE_UP=1
+  elif [ "$optional" = "minio" ]; then
+    warn "object storage image could not be pulled — FILE UPLOAD IS OFF for this run."
+    warn "  MinIO no longer publishes public images; everything else works without it."
+  else
+    warn "virus scanner image could not be pulled — uploads will be stored and not served."
+  fi
+done
+
+# Named services, so one that could not be pulled is simply not started.
+compose up -d $SERVICES || die "docker compose up failed"
 
 printf '  waiting for Postgres to be healthy'
 PG_READY=""
@@ -148,17 +176,23 @@ echo
 ok "postgres ready on localhost:$PG_PORT"
 ok "redis ready on localhost:$REDIS_PORT"
 
-printf '  waiting for object storage'
 MINIO_READY=""
-for _ in $(seq 1 60); do
-  if curl -fsS http://localhost:9000/minio/health/live >/dev/null 2>&1; then
-    MINIO_READY=1; break
+if [ -n "$STORE_UP" ]; then
+  printf '  waiting for object storage'
+  for _ in $(seq 1 60); do
+    if curl -fsS http://localhost:9000/minio/health/live >/dev/null 2>&1; then
+      MINIO_READY=1; break
+    fi
+    printf '.'; sleep 1
+  done
+  echo
+  if [ -n "$MINIO_READY" ]; then
+    ok "object storage ready on localhost:9000 (console on 9001)"
+  else
+    compose logs --tail 30 minio
+    warn "object storage did not come up — file upload is off for this run"
   fi
-  printf '.'; sleep 1
-done
-echo
-[ -n "$MINIO_READY" ] || { compose logs --tail 30 minio; die "MinIO did not come up — log above"; }
-ok "object storage ready on localhost:9000 (console on 9001)"
+fi
 
 # Deliberately NOT waited on. ClamAV downloads a few hundred megabytes of virus
 # signatures on first start and can take ten minutes; the API treats a scanner
@@ -293,8 +327,12 @@ fi
 # If this succeeds the API's uploads will too, which a separate tool cannot
 # promise: it can reach the store with different credentials, a different
 # endpoint or a different addressing style and still report success.
-pnpm --filter @paathshala/api storage:bootstrap 2>&1 | sed 's/^/  /' \
-  || die "could not create the object storage bucket"
+if [ -n "$MINIO_READY" ]; then
+  pnpm --filter @paathshala/api storage:bootstrap 2>&1 | sed 's/^/  /' \
+    || die "could not create the object storage bucket"
+else
+  warn "skipped creating the bucket: object storage is not running"
+fi
 
 SEED_OUT=$(pnpm db:seed 2>&1)
 echo "$SEED_OUT" | sed 's/^/  /'
