@@ -1,5 +1,6 @@
 'use client';
 
+import Link from 'next/link';
 import { useEffect, useState } from 'react';
 import { Shell, PageHead } from '../shell';
 import { Tile, Panel, Empty, SkeletonRows, Avatar, Pill } from '@/components/ui';
@@ -285,7 +286,15 @@ export default function FeesPage() {
             ),
           },
           { key: 'admission_no', label: 'Admission no.', optional: true, text: (i) => i.admission_no ?? '' },
-          { key: 'invoice_no', label: 'Invoice', text: (i) => i.invoice_no },
+          // The invoice number opens the sheet that prints: the invoice, every
+          // receipt against it, and what is left.
+          { key: 'invoice_no', label: 'Invoice', text: (i) => i.invoice_no,
+            render: (i) => (
+              <Link href={`/fees/receipt/${i.id}`}
+                    title={BigInt(i.paid_paise) > 0n ? 'Open the receipt' : 'Open the invoice'}>
+                {i.invoice_no}
+              </Link>
+            ) },
           { key: 'due_on', label: 'Due', text: (i) => i.due_on },
           { key: 'total', label: 'Total', align: 'right', numeric: true, text: (i) => rupees(i.total_paise) },
           { key: 'paid', label: 'Paid', align: 'right', numeric: true, optional: true, text: (i) => rupees(i.paid_paise) },

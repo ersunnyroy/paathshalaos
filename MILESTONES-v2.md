@@ -453,3 +453,26 @@ messages; nothing else is affected.
   mutation pass on the SQL (drop the person guard, drop the tenant guard, drop
   the status filter, grant to PUBLIC) has not been done and must be, against a
   live database.
+
+## M47.1 — A fee receipt that can be printed
+
+No migration. Paying has issued a receipt number since M7 and nothing could
+show one.
+
+- API: `GET v1/fees/invoices/:id/receipts` (`billing/receipt.service.ts`) —
+  school, learner, invoice, lines, every receipt against the invoice with the
+  method and who took the money. Read-only over existing tables; existing RLS
+  decides who may ask (office: any; guardian: own child's invoice, own
+  payments' receipts). Exercised over real HTTP; **no API test written yet**.
+- Web: `/fees/receipt/<invoice id>`, opened from the invoice number on Fees.
+  Prints on one sheet (print CSS hides the app). `lib/receipt.ts` (31 tests,
+  mutation pass clean): exact subtraction in paise, amount in words in the
+  Indian system (thousand, lakh, crore), date and method labels, totals that
+  leave out cancelled receipts and never print a negative balance.
+- An invoice with no lines (the seed's are raised as one figure) prints one
+  row, "Fees for <year>", rather than an empty table.
+- Checked live in Chrome: INV-000023 shows RCP-000025, ₹100 cash taken by
+  Anjali Menon, "Rupees one hundred only", balance ₹32,900. The printed page
+  itself has not been looked at on paper or in a print preview.
+- Not done: a link from the parent's Family page; receipt PDF stored as a file;
+  the school's logo and address on the header (address is not in the schema).

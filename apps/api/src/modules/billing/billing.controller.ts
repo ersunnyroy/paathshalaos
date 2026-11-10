@@ -44,6 +44,7 @@ import { Controller, Get, Post, Body, Param, Query } from '@nestjs/common';
 import { z } from 'zod';
 import { feePlanService } from './fee-plan.service.ts';
 import { invoiceService } from './invoice.service.ts';
+import { receiptService } from './receipt.service.ts';
 import { refundService } from './refund.service.ts';
 import { exportService } from './export.service.ts';
 import { reconciliationService } from './reconciliation.service.ts';
@@ -551,6 +552,21 @@ export class BillingController {
    * An invoice that was issued and then withdrawn is part of the record a
    * school shows an auditor. Deleting it makes the numbering lie.
    */
+  /**
+   * What a printed receipt for this invoice has on it (M47.1): the school,
+   * the learner, the lines, every receipt issued against it and what is left.
+   */
+  @Get('invoices/:id/receipts')
+  async invoiceReceipts(@Param('id') id: string) {
+    const invoiceId = uuid.safeParse(id);
+    if (!invoiceId.success) throw ApiError.fromZod(invoiceId.error);
+    const sheet = await receiptService.sheetFor(currentScope(), invoiceId.data);
+    if (!sheet) {
+      throw ApiError.make('not_found', 'invoice_not_found', 'No such invoice.');
+    }
+    return { data: sheet };
+  }
+
   /**
    * One invoice.
    *
