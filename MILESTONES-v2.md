@@ -282,6 +282,26 @@ sign-in page lists the demo parent. Web tests 165.
 Not done: the same for the mobile app (its family screen predates this), student login,
 push notifications, leave requests.
 
+## M45.1 — a teacher's day, on the web
+
+A teacher signing in landed on the school dashboard: collections, campuses, things for
+the office. They now land on `/today` ("My day"): today's lessons in order with which is
+on now and which is next and how long until it starts; each of their classes with whether
+the register is not taken, started and left, or taken; a banner if they are covering for
+somebody; and the rest of their week. The dashboard is still in their navigation.
+
+`GET /v1/timetable/mine` is new. A teacher could be shown anybody's timetable by staff id
+and had no way to ask for their own, because nothing told a client which staff record it
+was signed in as. The route takes no id: `app_current_staff_id()` — what the cover
+policies already use — answers inside the database. Three tests in `hr.spec.ts`, unrun.
+
+`lib/today.ts`: 7 mutations, all caught. Web tests 180.
+
+Found and not fixed: the API's own defaults for "today" (`attendance/sessions`, `hr/cover`,
+the family attendance window) use `new Date().toISOString()`, so they are UTC wherever the
+server runs. The web now always sends the date, which hides it. The real fix is the
+school's timezone, which `organization` does not yet carry into these queries.
+
 ## Status
 
 | ID | State |
@@ -293,4 +313,5 @@ push notifications, leave requests.
 | M41 | learner profile, structure screens, guardian names, offerings (on the timetable page) done; web file upload and activity timeline not started |
 | M42 | timetable view, add, move and remove done; free-teacher suggestions for cover not started |
 | M44 | parent home on the web done; mobile parent app v2, online payment, notifications not started |
-| M43, M45 … M52 | not started |
+| M45 | teacher's day on the web done; mobile teacher app v2, marks grid, homework with attachments not started |
+| M43, M46 … M52 | not started |

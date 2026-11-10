@@ -44,7 +44,8 @@ describe('who sees which screens', () => {
   });
 
   it('lets one unrestricted role win over a restricted one', () => {
-    expect(hrefs(['TEACHER', 'ORG_OWNER'])).toEqual(ALL);
+    // Everything the office sees, plus the one screen that is theirs as a teacher.
+    expect(hrefs(['TEACHER', 'ORG_OWNER']).filter((h) => h !== '/today')).toEqual(ALL);
   });
 
   it('fails open for a role it has never heard of, and before roles load', () => {
@@ -119,23 +120,44 @@ describe('a parent', () => {
     expect(hrefs([])).not.toContain('/family');
   });
 
-  it('who also teaches here gets both, and lands on the dashboard', () => {
+  it('who also teaches here gets both, and lands on their teaching day', () => {
     const seen = hrefs(['TEACHER', 'GUARDIAN']);
     expect(seen).toContain('/family');
+    expect(seen).toContain('/today');
     expect(seen).toContain('/attendance');
-    expect(homeFor(['TEACHER', 'GUARDIAN'])).toBe('/dashboard');
+    expect(homeFor(['TEACHER', 'GUARDIAN'])).toBe('/today');
   });
 
   it('who also owns the school sees everything, including their children', () => {
-    expect(hrefs(['ORG_OWNER', 'GUARDIAN'])).toEqual(EVERY);
+    // Everything the office sees plus their children — and not a teacher's day.
+    expect(hrefs(['ORG_OWNER', 'GUARDIAN'])).toEqual(['/family', ...ALL]);
     expect(homeFor(['ORG_OWNER', 'GUARDIAN'])).toBe('/dashboard');
   });
 });
 
 describe('where staff land', () => {
   it('is the dashboard, including before roles are known and for a role nobody listed', () => {
-    for (const roles of [['ORG_OWNER'], ['TEACHER'], ['ACCOUNTANT'], ['TRANSPORT'], [], ['LIBRARIAN']]) {
+    for (const roles of [['ORG_OWNER'], ['ACCOUNTANT'], ['TRANSPORT'], [], ['LIBRARIAN']]) {
       expect(homeFor(roles), roles.join()).toBe('/dashboard');
     }
+  });
+});
+
+describe('a teacher', () => {
+  it('lands on their own day, and still has the dashboard', () => {
+    expect(homeFor(['TEACHER'])).toBe('/today');
+    expect(hrefs(['TEACHER'])).toContain('/dashboard');
+    expect(hrefs(['TEACHER'])[0]).toBe('/today');
+  });
+
+  it('who also runs the school lands on the dashboard and keeps "My day"', () => {
+    expect(homeFor(['TEACHER', 'ORG_OWNER'])).toBe('/dashboard');
+    expect(hrefs(['TEACHER', 'ORG_OWNER'])).toContain('/today');
+  });
+
+  it('does not put "My day" in front of somebody who does not teach', () => {
+    expect(hrefs(['ORG_OWNER'])).not.toContain('/today');
+    expect(hrefs(['ACCOUNTANT'])).not.toContain('/today');
+    expect(hrefs(['GUARDIAN'])).not.toContain('/today');
   });
 });

@@ -345,6 +345,12 @@ export class StructureController {
     };
   }
 
+  /** The caller's own week. No id: the database knows who is asking. */
+  @Get('timetable/mine')
+  async myTimetable() {
+    return { data: await structureService.timetableForCaller(currentScope()) };
+  }
+
   /** What a teacher is expected to be doing this week. */
   @Get('timetable/staff/:id')
   async staffTimetable(@Param('id') id: string) {

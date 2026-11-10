@@ -21,8 +21,10 @@ import {
   createAcademicYear, createAcademicStructure, createClassGroupRaw,
   createSectionFor, makeTeacher, createLearnerRaw, OWNER_URL,
   type TenantFixture, type UserFixture,
+  timetableInto,
 } from './fixtures.ts';
 import { hrService } from '../src/modules/hr/hr.service.ts';
+import { structureService } from '../src/modules/academics/structure.service.ts';
 import { withTenant } from '../src/db/tenant.ts';
 import { pool } from '../src/db/pool.ts';
 import { authPool } from '../src/db/auth-pool.ts';
@@ -454,5 +456,46 @@ describe('payroll inputs, which are not payroll', () => {
     for (const forbidden of ['salary', 'gross', 'net', 'pay', 'amount']) {
       expect(keys.join(' ')).not.toContain(forbidden);
     }
+  });
+});
+
+describe('a teacher asking for their own week (M45)', () => {
+  beforeAll(async () => {
+    // One lesson for Meera, in her own section. Looked up rather than held in
+    // a variable: the structure is created inside the suite's beforeAll.
+    const ids = await owner(async (c) => {
+      const one = async (sql: string) => (await c.query<{ id: string }>(sql, [tenant.orgId])).rows[0]!.id;
+      return {
+        programmeId: await one('SELECT id FROM programme WHERE tenant_id = $1 LIMIT 1'),
+        subjectId: await one('SELECT id FROM subject WHERE tenant_id = $1 LIMIT 1'),
+        roomId: await one('SELECT id FROM room WHERE tenant_id = $1 LIMIT 1'),
+        yearId: await one(
+          `SELECT cg.academic_year_id AS id FROM section s
+             JOIN class_group cg ON cg.id = s.class_group_id
+            WHERE s.tenant_id = $1 LIMIT 1`),
+      };
+    });
+    await timetableInto(tenant.orgId, ids, sectionA, ids.yearId, regularStaff);
+  });
+
+  const as = (u: UserFixture) => ({ tenantId: tenant.orgId, actorId: u.userId });
+
+  it('returns her lessons, found from who she is and not from an id she sent', async () => {
+    const mine = await structureService.timetableForCaller(as(regular));
+    expect(mine.staff_id).toBe(regularStaff);
+    expect(mine.slots.length).toBeGreaterThan(0);
+    for (const slot of mine.slots) expect(slot.staff_id).toBe(regularStaff);
+  });
+
+  it('gives another teacher their own week, with none of hers in it', async () => {
+    const theirs = await structureService.timetableForCaller(as(stranger));
+    expect(theirs.staff_id).toBe(strangerStaff);
+    expect(theirs.slots.filter((s) => s.staff_id === regularStaff)).toEqual([]);
+  });
+
+  it('says "not staff" for somebody with no staff record, rather than failing', async () => {
+    // The office account owns the school and teaches nothing.
+    expect(await structureService.timetableForCaller(as(office)))
+      .toEqual({ staff_id: null, slots: [] });
   });
 });

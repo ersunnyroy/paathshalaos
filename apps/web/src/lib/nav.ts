@@ -30,6 +30,7 @@ export const GROUPS: NavGroup[] = [
     title: 'Overview',
     items: [
       { href: '/family', label: 'My children', icon: 'home', keywords: 'home parent child', only: ['GUARDIAN'] },
+      { href: '/today', label: 'My day', icon: 'clock', keywords: 'today lessons timetable register teacher', only: ['TEACHER'] },
       { href: '/dashboard', label: 'Dashboard', icon: 'dashboard', keywords: 'home overview' },
     ],
   },
@@ -83,7 +84,7 @@ export const GROUPS: NavGroup[] = [
  * make the product look broken, and nothing here is protecting anything.
  */
 const SCREENS: Record<string, readonly string[]> = {
-  TEACHER: ['/dashboard', '/students', '/attendance', '/learning', '/results', '/timetable', '/messages', '/support'],
+  TEACHER: ['/today', '/dashboard', '/students', '/attendance', '/learning', '/results', '/timetable', '/messages', '/support'],
   ACCOUNTANT: ['/dashboard', '/students', '/fees', '/messages', '/imports', '/support'],
   ADMISSIONS: ['/dashboard', '/admissions', '/students', '/messages', '/imports', '/support'],
   TRANSPORT: ['/dashboard', '/transport', '/support'],
@@ -124,14 +125,17 @@ export function navFor(roles: readonly string[]): NavGroup[] {
 /**
  * Where somebody lands after signing in.
  *
- * The school's dashboard for anyone who works there; their children for a
- * parent. Decided by whether the dashboard is one of their screens, so a
- * teacher who is also a parent at the school lands on the dashboard and finds
- * "My children" in the navigation.
+ * The school's dashboard for the office, their own day for a teacher, their
+ * children for a parent.
  */
 export function homeFor(roles: readonly string[]): string {
   const allowed = screensFor(roles);
-  if (!allowed || allowed.has('/dashboard')) return '/dashboard';
+  // Somebody who runs the school, or a role we do not know: the dashboard.
+  if (!allowed) return '/dashboard';
+  // A teacher's day before a parent's children: a teacher who is also a
+  // parent here is at work when they sign in on the staff room computer.
+  if (roles.includes('TEACHER')) return '/today';
+  if (allowed.has('/dashboard')) return '/dashboard';
   return allowed.has('/family') ? '/family' : [...allowed][0] ?? '/dashboard';
 }
 

@@ -807,6 +807,35 @@ export const structureService = {
   },
 
   /**
+   * The caller's own week (M45).
+   *
+   * A teacher could be shown any member of staff's timetable by id and had no
+   * way to ask for their own, because nothing told a client which staff
+   * record it was signed in as. `app_current_staff_id()` already answers that
+   * inside the database — it is what the cover policies use — so this asks it
+   * rather than accepting an id from the request, and a caller cannot name
+   * somebody else here by accident or on purpose.
+   *
+   * Somebody who is not staff (a guardian, an owner with no staff record)
+   * gets `staff_id: null` and no lessons, which is true, rather than an error.
+   */
+  async timetableForCaller(scope: TenantScope): Promise<{
+    staff_id: string | null;
+    slots: Array<ScheduleSlot & {
+      subject_name: string; class_name: string; section_name: string | null;
+      room_name: string | null;
+    }>;
+  }> {
+    return withTenant(scope, async (db) => {
+      const { rows } = await db.query<{ staff_id: string | null }>(
+        'SELECT app_current_staff_id() AS staff_id');
+      const staffId = rows[0]?.staff_id ?? null;
+      if (!staffId) return { staff_id: null, slots: [] };
+      return { staff_id: staffId, slots: await timetable(db, { staffId }) };
+    });
+  },
+
+  /**
    * What one section's week looks like.
    *
    * Includes slots with no `section_id` on an offering the section belongs to,
