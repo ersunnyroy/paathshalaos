@@ -544,8 +544,13 @@ describe('fallback and delivery', () => {
     const eventId = `evt-${randomUUID()}`;
     const messageId = await asOwner(async (c) => {
       const r = await c.query<{ provider_message_id: string }>(
+        // This tenant's own attempt. Without the filter, `LIMIT 1` took
+        // whichever attempt the database returned first — another school's,
+        // on any machine with a demo school in it — and the receipt was
+        // (correctly) not processed for a message this tenant never sent.
         `SELECT provider_message_id FROM message_attempt
-          WHERE provider_message_id IS NOT NULL LIMIT 1`);
+          WHERE provider_message_id IS NOT NULL AND tenant_id = $1
+          ORDER BY provider_message_id LIMIT 1`, [tenant.orgId]);
       return r.rows[0]!.provider_message_id;
     });
     const first = await dispatchService.recordReceipt(admin_(), {

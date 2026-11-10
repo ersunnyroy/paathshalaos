@@ -20,6 +20,7 @@ import { consoleService } from './console.service.ts';
 import { platformAuthService } from './platform-auth.service.ts';
 import { catalogueService } from '../billing-plans/catalogue.service.ts';
 import { subscriptionService } from '../billing-plans/subscription.service.ts';
+import { revenueService } from '../platform-billing/revenue.service.ts';
 import { getContext } from '../../common/request-context.ts';
 import { ApiError } from '../../common/errors.ts';
 
@@ -319,6 +320,19 @@ export class PlatformController {
   //
   // `billing` capability, like every other money action here. An operator who
   // can provision a school is not thereby allowed to invoice one.
+
+  /**
+   * What the business is earning (M42.5).
+   *
+   * `billing`, like every other money route here. It reads subscriptions and
+   * our own invoices to schools; it does not, and cannot, read anything a
+   * school bills its parents.
+   */
+  @Get('revenue')
+  @RequiresCapability('billing')
+  async revenue() {
+    return { data: await revenueService.overview() };
+  }
 
   @Get('tenants/:id/invoices')
   @RequiresCapability('billing')

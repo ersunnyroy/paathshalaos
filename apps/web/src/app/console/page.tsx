@@ -7,7 +7,7 @@ import {
   assumeSchoolSession, ApiError,
 } from '@/lib/api';
 import { Lockup, Panel, Pill, Empty, Icon, SkeletonRows } from '@/components/ui';
-import { Plans, Billing, Team, ConfirmButton, NewSchool } from './panels';
+import { Plans, Billing, Team, ConfirmButton, NewSchool, RevenueTab } from './panels';
 import { estate } from '@/lib/console';
 
 /**
@@ -229,9 +229,10 @@ function Schedule() {
   );
 }
 
-type Tab = 'schools' | 'plans' | 'billing' | 'team' | 'operations';
+type Tab = 'schools' | 'revenue' | 'plans' | 'billing' | 'team' | 'operations';
 const TABS: Array<{ id: Tab; label: string }> = [
   { id: 'schools', label: 'Schools' },
+  { id: 'revenue', label: 'Revenue' },
   { id: 'plans', label: 'Plans' },
   { id: 'billing', label: 'Billing' },
   { id: 'team', label: 'Team' },
@@ -297,6 +298,7 @@ function Console({ onSignOut }: { onSignOut: () => void }) {
         {error ? <div className="note bad">{error}</div> : null}
         {said ? <div className="note">{said}</div> : null}
 
+        {tab === 'revenue' ? <RevenueTab /> : null}
         {tab === 'plans' ? <Plans /> : null}
         {tab === 'billing' ? <Billing schools={health ?? []} /> : null}
         {tab === 'team' ? <Team /> : null}

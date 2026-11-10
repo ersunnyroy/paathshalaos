@@ -376,6 +376,12 @@ describe('payroll inputs, which are not payroll', () => {
       return rows[0]!.id;
     });
     const from = '2026-11-01', to = '2026-11-30';
+    // The fixture teacher joins on the day the suite runs. That was before this
+    // window when the test was written and is inside it for anyone running it
+    // in November 2026, where `employed_days` correctly became 21. The window
+    // is fixed, so the joining date has to be too.
+    await owner((c) => c.query(
+      `UPDATE staff SET joined_on = '2026-01-01' WHERE id = $1`, [strangerStaff]));
     await owner((c) => c.query(
       `INSERT INTO staff_absence
          (tenant_id, staff_id, leave_type_id, starts_on, ends_on, status,

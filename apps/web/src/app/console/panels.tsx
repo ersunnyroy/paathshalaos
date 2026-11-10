@@ -8,6 +8,7 @@ import {
   CAPABILITY_MEANING, type AdminRow,
   METRICS, FEATURES, planCodeFrom, buildTerms, priceOrNull, type TermsForm,
   buildSchool, campusCodeFrom, SUBSCRIPTION_STATUSES, STATUS_MEANING, type SchoolForm,
+  monthName, barWidths, daysPhrase,
 } from '@/lib/console';
 
 const day = (value: string | null) =>
@@ -822,5 +823,121 @@ export function NewSchool({ onClose, onCreated }: { onClose: () => void; onCreat
         </div>
       </form>
     </div>
+  );
+}
+
+/* ----------------------------------------------------------------- revenue */
+
+interface Revenue {
+  asOf: string; mrr: string; arr: string; pastDueMrr: string; trialPipeline: string;
+  schools: { total: number; paying: number; pastDue: number; trialing: number; readOnly: number; unsubscribed: number };
+  byPlan: Array<{ plan_code: string; plan_name: string; version: number; schools: number; paying: number; mrr: string }>;
+  trialsEnding: Array<{ tenant_id: string; display_name: string; trial_ends_on: string; days_left: number }>;
+  months: Array<{ month: string; invoices: number; invoiced: string; tax: string; credited: string; net: string }>;
+  financialYear: { label: string; invoices: number; invoiced: string; credited: string; net: string };
+}
+
+/**
+ * What the business is earning.
+ *
+ * MRR counts schools being billed — active and past due — and nothing else. A
+ * trial is shown beside it as pipeline, never inside it. There is no
+ * "collected" figure on this screen because nothing records a school paying
+ * an invoice yet; showing one would be the invoiced number wearing another
+ * label.
+ */
+export function RevenueTab() {
+  const [data, setData] = useState<Revenue | null>(null);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    consoleGet<Revenue>('/revenue').then(setData).catch((e: ApiError) => setError(e.message));
+  }, []);
+
+  if (error) return <div className="note bad">{error}</div>;
+  if (!data) return <Panel title="Revenue"><div className="body sub">Loading…</div></Panel>;
+
+  const widths = barWidths(data.months.map((m) => m.net));
+
+  return (
+    <>
+      <div className="figures boxed">
+        <div><span>Monthly recurring revenue</span><strong>{rupeesDecimal(data.mrr)}</strong></div>
+        <div><span>Annual run rate</span><strong>{rupeesDecimal(data.arr)}</strong></div>
+        <div><span>Of MRR, past due</span><strong>{rupeesDecimal(data.pastDueMrr)}</strong></div>
+        <div><span>Trials, if they convert</span><strong>{rupeesDecimal(data.trialPipeline)}</strong></div>
+      </div>
+      <div className="figures boxed">
+        <div><span>Schools</span><strong>{data.schools.total}</strong></div>
+        <div><span>Paying</span><strong>{data.schools.paying}</strong></div>
+        <div><span>On trial</span><strong>{data.schools.trialing}</strong></div>
+        <div><span>Past due</span><strong>{data.schools.pastDue}</strong></div>
+        <div><span>Read only</span><strong>{data.schools.readOnly}</strong></div>
+        <div><span>No plan</span><strong>{data.schools.unsubscribed}</strong></div>
+      </div>
+
+      {data.trialsEnding.length > 0 ? (
+        <Panel title="Trials ending" hint="Within fourteen days, or already past. The lapsed ones come first.">
+          <div className="scroll"><table>
+            <thead><tr><th>School</th><th>Trial ends</th><th /></tr></thead>
+            <tbody>
+              {data.trialsEnding.map((t) => (
+                <tr key={t.tenant_id}>
+                  <td><strong>{t.display_name}</strong></td>
+                  <td>{day(t.trial_ends_on)}</td>
+                  <td><Pill tone={t.days_left < 0 ? 'critical' : t.days_left <= 3 ? 'warning' : undefined}>
+                    {daysPhrase(t.days_left)}
+                  </Pill></td>
+                </tr>
+              ))}
+            </tbody>
+          </table></div>
+        </Panel>
+      ) : null}
+
+      <Panel title="By plan" hint="Schools on each version, and what the paying ones are worth a month.">
+        <div className="scroll"><table>
+          <thead><tr><th>Plan</th><th className="num">Schools</th><th className="num">Paying</th><th className="num">MRR</th></tr></thead>
+          {data.byPlan.length === 0 ? (
+            <tbody><tr><td colSpan={4}><Empty title="No school is on a plan yet" /></td></tr></tbody>
+          ) : (
+            <tbody>
+              {data.byPlan.map((p) => (
+                <tr key={`${p.plan_code}-${p.version}`}>
+                  <td><strong>{p.plan_name}</strong> <span className="sub">v{p.version}</span></td>
+                  <td className="num">{p.schools}</td>
+                  <td className="num">{p.paying}</td>
+                  <td className="num"><strong>{rupeesDecimal(p.mrr)}</strong></td>
+                </tr>
+              ))}
+            </tbody>
+          )}
+        </table></div>
+      </Panel>
+
+      <Panel title="Invoiced, month by month"
+             hint={`Financial year ${data.financialYear.label}: ${data.financialYear.invoices} invoices, ${rupeesDecimal(data.financialYear.net)} net of credit notes. This is what was billed, not what was collected.`}>
+        <div className="scroll"><table>
+          <thead><tr>
+            <th>Month</th><th className="num">Invoices</th><th className="num">Invoiced</th>
+            <th className="num opt">Of which GST</th><th className="num">Credited</th>
+            <th className="num">Net</th><th className="opt" style={{ width: '22%' }} />
+          </tr></thead>
+          <tbody>
+            {data.months.map((m, index) => (
+              <tr key={m.month}>
+                <td>{monthName(m.month)}</td>
+                <td className="num">{m.invoices}</td>
+                <td className="num">{rupeesDecimal(m.invoiced)}</td>
+                <td className="num opt">{rupeesDecimal(m.tax)}</td>
+                <td className="num">{rupeesDecimal(m.credited)}</td>
+                <td className="num"><strong>{rupeesDecimal(m.net)}</strong></td>
+                <td className="opt"><span className="bar"><span style={{ width: `${widths[index] ?? 0}%` }} /></span></td>
+              </tr>
+            ))}
+          </tbody>
+        </table></div>
+      </Panel>
+    </>
   );
 }

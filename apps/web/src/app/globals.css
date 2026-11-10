@@ -901,3 +901,6 @@ code.secret {
   background: var(--warning-wash); color: var(--warning-ink);
   padding: 3px 8px; border-radius: 6px; user-select: all;
 }
+
+.bar { display: block; height: 8px; border-radius: 999px; background: var(--brand-track); overflow: hidden; }
+.bar > span { display: block; height: 100%; background: var(--brand); border-radius: 999px; }

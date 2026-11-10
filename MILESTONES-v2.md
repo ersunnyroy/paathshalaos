@@ -123,6 +123,37 @@ Not on the structure screen yet: course offerings (which subject a class takes i
 and who teaches it), assigning a class teacher or room to a section, adding a term to an
 existing year. All have routes.
 
+## M42.5.3 — revenue, and four tests that were failing before anything changed
+
+**Revenue.** `GET /platform/v1/revenue` (capability `billing`) and a Revenue tab. MRR counts
+schools being billed — active and past due — with past due also shown on its own; trials
+are pipeline and never inside MRR; an annual plan is its annual price over twelve, rounded
+half up. Invoiced, credited and net by month for six months, and for the financial year.
+The arithmetic is a pure module (`revenue.ts`, 21 tests, 8 mutations all caught); the
+query is `revenue.service.ts`. **No "collected" figure**: nothing in the schema records a
+school paying a platform invoice, so one would be the invoiced number under another name.
+
+`platform-revenue.spec.ts` is the database-backed test, asserting differences rather than
+absolutes because the database is shared. **Written but not run by the session that wrote
+it** (no Postgres there). The endpoint itself was called over real HTTP against the real
+database and returned correct figures for the demo data.
+
+**The baseline API run on 10 Nov 2026 had 4 failures in 3 files**, none caused by this
+branch (nothing under `apps/api` had changed yet):
+
+- `scheduler.spec` ×2 — the suite says "this suite configures none, deliberately" about
+  object storage and the scanner, but `fixtures.ts` loads `apps/api/.env`, and since M38
+  `run-local.sh` writes `OBJECT_STORE_*` and `CLAMD_HOST` there. Passes in CI, fails on
+  any developer machine. Fixed with `test/without-storage.ts`, imported second.
+- `hr.spec` — a fixed window (November 2026) and a fixture teacher whose joining date is
+  the day the suite runs. Correct until 1 Nov 2026, then `employed_days` became 21. The
+  test now fixes the joining date too.
+- `messaging.spec` — `SELECT … LIMIT 1` with no tenant filter picked another school's
+  message attempt on a database with a demo school in it. Now filtered by tenant.
+  (Diagnosed by reading, not by reproducing.)
+
+All three fixes are unrun for the same reason as above.
+
 ## Status
 
 | ID | State |
@@ -130,6 +161,6 @@ existing year. All have routes.
 | M39 | tokens done; typed client moved to M39.1 |
 | M39.1 | not started |
 | M40 | part 1 done; 18 pages still on effect-fetching, no shared data table yet |
-| M42.5 | every existing platform route now has a screen; what is left needs new API |
+| M42.5 | all existing routes have screens; revenue added. Left: lifecycle pipeline, school health and usage, 2FA, cross-school support desk |
 | M41 | learner profile and structure screens done; offerings, web file upload, guardian names not started |
 | M42 … M52 | not started |

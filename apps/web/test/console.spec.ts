@@ -9,6 +9,7 @@ import { describe, it, expect } from 'vitest';
 import {
   rupeesDecimal, sumDecimals, groupTeam, grantable, versionAction, estate, CAPABILITIES,
   planCodeFrom, buildTerms, priceOrNull, FEATURES, buildSchool, campusCodeFrom,
+  monthName, barWidths, daysPhrase,
 } from '../src/lib/console.ts';
 
 describe('showing a rupee amount', () => {
@@ -234,5 +235,36 @@ describe('creating a school', () => {
     expect(campusCodeFrom(' north (junior) wing ')).toBe('NORTH-JUNIOR-WING');
     const built = buildSchool(form({ campusCode: campusCodeFrom('Main Campus') }), KEY);
     expect(built.ok).toBe(true);
+  });
+});
+
+describe('drawing the revenue tab', () => {
+  it('names a month', () => {
+    expect(monthName('2026-11')).toBe('Nov 2026');
+    expect(monthName('2027-01')).toBe('Jan 2027');
+    expect(monthName('nonsense')).toBe('nonsense');
+  });
+
+  it('scales bars to the largest month', () => {
+    expect(barWidths(['1000.00', '500.00', '0.00'])).toEqual([100, 50, 0]);
+  });
+
+  it('gives a small non-zero month a visible sliver', () => {
+    expect(barWidths(['100000.00', '1.00'])).toEqual([100, 1]);
+  });
+
+  it('draws nothing for a negative month, or when there is nothing at all', () => {
+    expect(barWidths(['1000.00', '-200.00'])).toEqual([100, 0]);
+    expect(barWidths(['0.00', '0.00'])).toEqual([0, 0]);
+    expect(barWidths(['-5.00'])).toEqual([0]);
+    expect(barWidths([])).toEqual([]);
+  });
+
+  it('says when a trial ends in words', () => {
+    expect(daysPhrase(0)).toBe('today');
+    expect(daysPhrase(1)).toBe('in 1 day');
+    expect(daysPhrase(14)).toBe('in 14 days');
+    expect(daysPhrase(-1)).toBe('1 day ago');
+    expect(daysPhrase(-7)).toBe('7 days ago');
   });
 });

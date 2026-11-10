@@ -15,6 +15,7 @@
  * exactly what happened here for the life of the product.
  */
 import './fixtures.ts';
+import './without-storage.ts';
 import { describe, it, expect, beforeAll, afterAll, beforeEach } from 'vitest';
 import pg from 'pg';
 import { readFileSync, readdirSync } from 'node:fs';

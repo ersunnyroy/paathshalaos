@@ -240,3 +240,39 @@ export const STATUS_MEANING: Record<string, string> = {
   read_only: 'Can see everything, can change nothing',
   ended: 'Subscription over',
 };
+
+/* ---------------------------------------------------------------- revenue */
+
+/** "2026-11" as "Nov 2026". */
+export function monthName(key: string): string {
+  const [year, month] = key.split('-').map(Number);
+  const names = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+  return year && month && names[month - 1] ? `${names[month - 1]} ${year}` : key;
+}
+
+/**
+ * Each month's bar as a percentage of the largest, from decimal strings.
+ *
+ * Compared in paise as integers; only the final ratio becomes a number, where
+ * a rounded percentage is all that is being drawn. A negative month (credits
+ * exceeding invoices) draws no bar rather than a negative width.
+ */
+export function barWidths(values: readonly string[]): number[] {
+  const paise = values.map((v) => {
+    const negative = v.startsWith('-');
+    const [whole = '0', fraction = ''] = (negative ? v.slice(1) : v).split('.');
+    const amount = BigInt(whole) * 100n + BigInt((fraction + '00').slice(0, 2));
+    return negative ? -amount : amount;
+  });
+  const largest = paise.reduce((max, v) => (v > max ? v : max), 0n);
+  if (largest <= 0n) return paise.map(() => 0);
+  return paise.map((v) => (v <= 0n ? 0 : Math.max(1, Number((v * 100n) / largest))));
+}
+
+/** "in 3 days", "today", "5 days ago" — for a trial's end date. */
+export function daysPhrase(daysLeft: number): string {
+  if (daysLeft === 0) return 'today';
+  const n = Math.abs(daysLeft);
+  const unit = n === 1 ? 'day' : 'days';
+  return daysLeft > 0 ? `in ${n} ${unit}` : `${n} ${unit} ago`;
+}
