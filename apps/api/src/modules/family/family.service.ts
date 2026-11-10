@@ -254,7 +254,10 @@ export const familyService = {
             -- Both, not just 'sent'. A message that reached the phone has
             -- status 'delivered', so filtering on 'sent' alone would hide
             -- exactly the messages that arrived.
-            AND mr.status IN ('sent', 'delivered')
+            -- And 'read': a WhatsApp read receipt is the strongest evidence of
+            -- arrival there is, and leaving it out made a message vanish from
+            -- the parent's list the moment they opened it on their phone.
+            AND mr.status IN ('sent', 'delivered', 'read')
           ORDER BY mr.created_at DESC
           LIMIT 100`);
       return rows;

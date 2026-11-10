@@ -2,26 +2,41 @@
 
 import { useEffect, useRef, useState } from 'react';
 import Link from 'next/link';
-import { useApiQuery } from '@/lib/query';
+import { useQueryClient } from '@tanstack/react-query';
+import { apiKey, useApiQuery } from '@/lib/query';
+import { apiPost } from '@/lib/api';
 import { localIsoDate } from '@/lib/dates';
-import { attentionItems, attentionBadge, type TodayCounts } from '@/lib/attention';
+import { attentionItems, type TodayCounts } from '@/lib/attention';
+import { ago, bellBadge, bellLabel, preview, withRead, type Inbox } from '@/lib/inbox';
+
+const INBOX = '/v1/messaging/inbox?limit=8';
 
 /**
  * The bell: what is waiting on this person, on every screen.
+ *
+ * Two things live here. Messages the school has sent this person — everybody
+ * has those, a parent as much as a teacher — and, for people who work at the
+ * school, the office's waiting work.
  *
  * It asks once a minute, and again when the tab comes back into view. It is
  * silent when there is nothing — no "0", no "all caught up" — because a bell
  * that always has something to say is one nobody looks at.
  *
  * `allowed` is the set of screens this person is shown (null for all), so an
- * item never points somewhere they cannot act.
+ * item never points somewhere they cannot act. `office` is false for a parent:
+ * the counts are about the office's day and are not theirs to ask for.
  */
-export function Bell({ allowed }: { allowed: ReadonlySet<string> | null }) {
+export function Bell({ allowed, office }: {
+  allowed: ReadonlySet<string> | null; office: boolean;
+}) {
   const [open, setOpen] = useState(false);
   const anchor = useRef<HTMLDivElement>(null);
-  const counts = useApiQuery<TodayCounts>(`/v1/dashboard/today?on=${localIsoDate()}`, {
-    refetchInterval: 60_000,
-  });
+  const client = useQueryClient();
+  const counts = useApiQuery<TodayCounts>(
+    office ? `/v1/dashboard/today?on=${localIsoDate()}` : null, { refetchInterval: 60_000 });
+  // An API that predates the inbox answers 404; the bell then simply has no
+  // messages section, and does not keep asking three times a minute.
+  const inbox = useApiQuery<Inbox>(INBOX, { refetchInterval: 60_000, retry: false });
 
   useEffect(() => {
     if (!open) return;
@@ -38,12 +53,30 @@ export function Bell({ allowed }: { allowed: ReadonlySet<string> | null }) {
   }, [open]);
 
   const items = attentionItems(counts.data, allowed);
-  const badge = attentionBadge(items);
+  const waiting = items.reduce((n, item) => n + item.count, 0);
+  const unread = inbox.data?.unread ?? 0;
+  const badge = bellBadge(waiting, unread);
+  const messages = inbox.data?.items ?? [];
+
+  /**
+   * Shown as read at once, then told to the server. If the server refuses,
+   * the next read of the inbox puts the truth back.
+   */
+  async function read(ids: string[] | 'all') {
+    client.setQueryData<Inbox>(apiKey(INBOX),
+      (old) => (old ? withRead(old, ids, new Date().toISOString()) : old));
+    try {
+      if (ids === 'all') await apiPost('/v1/messaging/inbox/read-all');
+      else await Promise.all(ids.map((id) => apiPost(`/v1/messaging/inbox/${id}/read`)));
+    } finally {
+      await client.invalidateQueries({ queryKey: apiKey(INBOX) });
+    }
+  }
 
   return (
     <div className="menu-anchor" ref={anchor}>
       <button type="button" className="bell" aria-haspopup="true" aria-expanded={open}
-              aria-label={badge ? `${badge} things need attention` : 'Nothing needs attention'}
+              aria-label={bellLabel(waiting, unread)}
               onClick={() => setOpen((o) => !o)}>
         <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor"
              strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
@@ -53,14 +86,44 @@ export function Bell({ allowed }: { allowed: ReadonlySet<string> | null }) {
         {badge ? <span className="badge">{badge}</span> : null}
       </button>
       {open ? (
-        <div className="menu wide" role="menu">
-          {items.length === 0
+        <div className="menu wide bell-menu">
+          {items.map((item) => (
+            <Link key={item.key} href={item.href} onClick={() => setOpen(false)}>
+              {item.label}
+            </Link>
+          ))}
+          {messages.length > 0 ? (
+            <>
+              <div className="bell-head">
+                <span>From the school</span>
+                {unread > 0 ? (
+                  <button type="button" className="ghost" onClick={() => void read('all')}>
+                    Mark all read
+                  </button>
+                ) : null}
+              </div>
+              <ul className="bell-list">
+                {messages.map((m) => (
+                  <li key={m.id} className={m.read_at ? undefined : 'unread'}>
+                    <button type="button" disabled={m.read_at !== null}
+                            aria-label={m.read_at ? undefined : 'Mark as read'}
+                            onClick={() => void read([m.id])}>
+                      <span className="text">{preview(m.body)}</span>
+                      <span className="sub">
+                        {m.about ? `About ${m.about} · ` : ''}{ago(m.sent_at, Date.now())}
+                      </span>
+                    </button>
+                  </li>
+                ))}
+              </ul>
+              {inbox.data?.next
+                ? <span className="sub bell-more">Older messages are not shown here.</span>
+                : null}
+            </>
+          ) : null}
+          {items.length === 0 && messages.length === 0
             ? <span className="sub" style={{ padding: '4px 2px' }}>Nothing is waiting on you.</span>
-            : items.map((item) => (
-              <Link key={item.key} href={item.href} role="menuitem" onClick={() => setOpen(false)}>
-                {item.label}
-              </Link>
-            ))}
+            : null}
         </div>
       ) : null}
     </div>

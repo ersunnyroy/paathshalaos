@@ -21,6 +21,7 @@
 import { Controller, Get, Post, Body, Param, Query } from '@nestjs/common';
 import { z } from 'zod';
 import { dispatchService, type Audience } from './dispatch.service.ts';
+import { inboxService } from './inbox.service.ts';
 import { templateService } from './template.service.ts';
 import { inAppOnlyProvider } from './providers.ts';
 import { withTenant } from '../../db/tenant.ts';
@@ -65,8 +66,63 @@ const sendBody = z.object({
   ]),
 });
 
+const inboxQuery = z.object({
+  limit: z.coerce.number().int().min(1).max(100).default(30),
+  // Both or neither: half a cursor is a different page from the one asked for.
+  beforeAt: z.string().datetime({ offset: true }).optional(),
+  beforeId: uuid.optional(),
+}).refine((q) => (q.beforeAt === undefined) === (q.beforeId === undefined), {
+  message: 'beforeAt and beforeId go together', path: ['beforeAt'],
+});
+
 @Controller('v1/messaging')
 export class MessagingController {
+  /**
+   * The caller's own messages (M43.1). Nothing under `inbox` takes a person
+   * from the request: whose inbox it is comes from the session.
+   *
+   * These sit on this controller rather than one of their own only because
+   * `app.module.ts` could not be written from the session that built them.
+   */
+  @Get('inbox')
+  async inbox(@Query() query: unknown) {
+    const parsed = inboxQuery.safeParse(query);
+    if (!parsed.success) throw ApiError.fromZod(parsed.error);
+    const { limit, beforeAt, beforeId } = parsed.data;
+    const scope = currentScope();
+    const items = await inboxService.mine(scope, {
+      limit,
+      before: beforeAt && beforeId ? { sentAt: beforeAt, id: beforeId } : undefined,
+    });
+    const last = items[items.length - 1];
+    return {
+      data: {
+        items,
+        unread: await inboxService.unread(scope),
+        // A full page may have more behind it; a short one cannot.
+        next: items.length === limit && last
+          ? { beforeAt: last.sent_at, beforeId: last.id } : null,
+      },
+    };
+  }
+
+  @Get('inbox/unread')
+  async inboxUnread() {
+    return { data: { unread: await inboxService.unread(currentScope()) } };
+  }
+
+  @Post('inbox/read-all')
+  async inboxReadAll() {
+    return { data: { changed: await inboxService.markRead(currentScope(), null) } };
+  }
+
+  @Post('inbox/:id/read')
+  async inboxRead(@Param('id') id: string) {
+    const parsed = uuid.safeParse(id);
+    if (!parsed.success) throw ApiError.fromZod(parsed.error);
+    return { data: { changed: await inboxService.markRead(currentScope(), parsed.data) } };
+  }
+
   @Get('templates')
   async templates() {
     return {

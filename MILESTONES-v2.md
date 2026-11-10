@@ -424,3 +424,32 @@ access accounts now use `DataTable` (filter, sort, choose columns, export).
   consent, console, dashboard, developers, imports, integrations, learning,
   messages, results, setup, trust, learner profile, timetable, today.
   (Several of these are registers or forms, not lists, and should stay.)
+
+## M43.1 — A person's own inbox, and marking a message read
+
+**First migration of v2: `0088_a_message_can_be_read.sql`. Not yet applied or
+run against Postgres by anybody.** Until it is applied, the inbox routes answer
+500 (the query names a column that is not there) and the bell simply shows no
+messages; nothing else is affected.
+
+- Migration: `message_recipient.read_at`, an inbox index, and
+  `mark_my_messages_read(uuid)` (SECURITY DEFINER, pinned search_path, tenant
+  and person guards written out, EXECUTE to `paathshala_app` only). A function
+  rather than an own-row UPDATE policy, because a policy cannot say "this column
+  only" and the app role holds UPDATE on the whole table. `read_at` is separate
+  from `status`, which is the provider's delivery record.
+- `modules/messaging/inbox.service.ts`: `mine` (keyset on created_at + id, with
+  the cursor kept to the microsecond), `unread`, `markRead`.
+- Routes, on `MessagingController` because `app.module.ts` is not writable from
+  the building session (same permission error as `MILESTONES.md`):
+  `GET v1/messaging/inbox`, `GET …/inbox/unread`, `POST …/inbox/read-all`,
+  `POST …/inbox/:id/read`. Worth moving to their own controller.
+- `family.service.messages` now includes status `read`: a WhatsApp read receipt
+  made the message disappear from the parent's list.
+- Web: the bell is now for everybody. Parents get it (messages only); staff get
+  messages plus the office's counts. `lib/inbox.ts` (16 tests, mutation pass
+  clean): badge, label, preview, "how long ago", optimistic read.
+- `apps/api/test/inbox.spec.ts`: 15 tests, type-checked, **never run**. The
+  mutation pass on the SQL (drop the person guard, drop the tenant guard, drop
+  the status filter, grant to PUBLIC) has not been done and must be, against a
+  live database.

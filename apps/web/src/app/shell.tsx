@@ -174,10 +174,12 @@ export function Shell({ children }: { children: ReactNode }) {
         <Icon.slash />
         <span className="here">{here?.label ?? 'Dashboard'}</span>
         <span className="spacer" />
-        {/* For people who work at the school. A parent has no queue of the
-            school's work, and the counts are about the office's day. */}
-        {me && (me.impersonation || homeFor(me.roles) !== '/family')
-          ? <Bell allowed={me.impersonation ? null : screensFor(me.roles)} /> : null}
+        {/* Everybody has messages from the school. Only people who work there
+            have a queue of its work: the counts are about the office's day. */}
+        {me ? (
+          <Bell allowed={me.impersonation ? null : screensFor(me.roles)}
+                office={Boolean(me.impersonation) || homeFor(me.roles) !== '/family'} />
+        ) : null}
         <button className="palette-open" type="button" onClick={() => setPaletteOpen(true)}
                 aria-label="Search and jump (Ctrl+K)">
           <Icon.search />

@@ -1057,3 +1057,29 @@ input.mark-cell.bad { border-color: var(--critical); background: var(--critical-
 tbody tr.clickable { cursor: pointer; }
 tbody tr.clickable:focus-visible { outline: 2px solid var(--brand); outline-offset: -2px; }
 tbody tr.on td { background: var(--brand-soft); }
+
+/* Bell: messages from the school */
+.bell-menu { min-width: 320px; max-width: 360px; }
+.bell-head {
+  display: flex; align-items: center; justify-content: space-between; gap: 8px;
+  margin-top: 6px; padding: 8px 4px 4px; border-top: 1px solid var(--line);
+  font-size: 11.5px; font-weight: 600; color: var(--ink-3);
+}
+.bell-head:first-child { margin-top: 0; padding-top: 2px; border-top: 0; }
+.bell-head button { padding: 2px 6px; font-size: 11.5px; }
+.bell-list { list-style: none; margin: 0; padding: 0; max-height: 320px; overflow-y: auto; }
+.bell-list li button {
+  display: block; width: 100%; text-align: left; padding: 7px 6px 7px 14px;
+  border: 0; border-radius: 6px; background: transparent; color: var(--ink-2);
+  font: inherit; position: relative; white-space: normal;
+}
+.bell-list li button:disabled { opacity: 1; cursor: default; }
+.bell-list li.unread button { color: var(--ink); font-weight: 600; cursor: pointer; }
+.bell-list li.unread button:hover { background: var(--surface-hover); }
+.bell-list li.unread button::before {
+  content: ''; position: absolute; left: 4px; top: 13px; width: 6px; height: 6px;
+  border-radius: 50%; background: var(--brand);
+}
+.bell-list .text { display: block; font-size: 13px; }
+.bell-list .sub { display: block; font-weight: 400; }
+.bell-more { display: block; padding: 6px 4px 2px; }
