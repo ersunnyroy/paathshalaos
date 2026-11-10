@@ -146,7 +146,7 @@ export function toCsv<T>(columns: readonly Column<T>[], rows: readonly T[]): str
     columns.map((c) => csvCell(c.label)).join(','),
     ...rows.map((row) => columns.map((c) => csvCell(c.text(row))).join(',')),
   ];
-  return `﻿${lines.join('\r\n')}\r\n`;
+  return `\uFEFF${lines.join('\r\n')}\r\n`;
 }
 
 /** "Learners 2026-11-10.csv" — the date somebody will be glad of in March. */
