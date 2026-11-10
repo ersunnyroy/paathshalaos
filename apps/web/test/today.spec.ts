@@ -62,6 +62,8 @@ describe('where a lesson stands right now', () => {
 describe('how long until a lesson', () => {
   it('speaks in minutes, then hours', () => {
     expect(untilPhrase('09:00:00', 8 * 60 + 35)).toBe('in 25 min');
+    expect(untilPhrase('09:00:00', 8 * 60 + 1)).toBe('in 59 min');
+    expect(untilPhrase('09:00:00', 8 * 60)).toBe('in 1 h');       // sixty minutes is an hour
     expect(untilPhrase('11:00:00', 9 * 60)).toBe('in 2 h');
     expect(untilPhrase('11:05:00', 9 * 60)).toBe('in 2 h 5 min');
     expect(untilPhrase('09:00:00', 9 * 60)).toBe('now');

@@ -295,7 +295,8 @@ and had no way to ask for their own, because nothing told a client which staff r
 was signed in as. The route takes no id: `app_current_staff_id()` — what the cover
 policies already use — answers inside the database. Three tests in `hr.spec.ts`, unrun.
 
-`lib/today.ts`: 7 mutations, all caught. Web tests 180.
+`lib/today.ts`: 7 mutations, 6 caught; the seventh (`< 60` to `<= 60` in "in 59 min"
+versus "in 1 h") changed nothing, so the hour boundary has a test now. Web tests 180.
 
 Found and not fixed: the API's own defaults for "today" (`attendance/sessions`, `hr/cover`,
 the family attendance window) use `new Date().toISOString()`, so they are UTC wherever the
