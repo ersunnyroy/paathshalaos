@@ -1,0 +1,611 @@
+'use client';
+
+import { useCallback, useEffect, useState, type FormEvent } from 'react';
+import { consoleGet, consolePost, ApiError } from '@/lib/api';
+import { Panel, Pill, Empty, SkeletonRows } from '@/components/ui';
+import {
+  rupeesDecimal, sumDecimals, groupTeam, grantable, versionAction,
+  CAPABILITY_MEANING, type AdminRow,
+  METRICS, FEATURES, planCodeFrom, buildTerms, priceOrNull, type TermsForm,
+} from '@/lib/console';
+
+const day = (value: string | null) =>
+  value ? new Date(value).toLocaleDateString('en-IN', { dateStyle: 'medium' }) : '—';
+
+/**
+ * A button that asks once before it acts.
+ *
+ * Publishing a plan, retiring one, suspending a school and revoking somebody's
+ * access cannot be taken back with an undo, and a browser `confirm()` is a
+ * dialog people dismiss without reading. The first click arms the button and
+ * changes what it says; the second does it. It disarms itself after a few
+ * seconds so an armed button is never left waiting for a stray click.
+ */
+export function ConfirmButton({ label, confirmLabel, onConfirm, tone, disabled }: {
+  label: string; confirmLabel: string; onConfirm: () => Promise<void> | void;
+  tone?: 'critical'; disabled?: boolean;
+}) {
+  const [armed, setArmed] = useState(false);
+  const [busy, setBusy] = useState(false);
+
+  useEffect(() => {
+    if (!armed) return;
+    const handle = setTimeout(() => setArmed(false), 4000);
+    return () => clearTimeout(handle);
+  }, [armed]);
+
+  async function click() {
+    if (!armed) { setArmed(true); return; }
+    setBusy(true);
+    try { await onConfirm(); } finally { setBusy(false); setArmed(false); }
+  }
+
+  return (
+    <button type="button" onClick={click} disabled={disabled || busy}
+            className={armed ? `armed${tone ? ` ${tone}` : ''}` : undefined}>
+      {busy ? 'Working…' : armed ? confirmLabel : label}
+    </button>
+  );
+}
+
+/* ------------------------------------------------------------------- plans */
+
+interface PlanVersion {
+  id: string; plan_code: string; plan_name: string; version: number;
+  price_monthly: string; price_annual: string; currency: string;
+  status: string; published_at: string | null;
+  limits: Array<{ metric: string; included: number; hard_cap: number | null }>;
+  features: Array<{ feature: string; enabled: boolean }>;
+  subscribers: number;
+}
+
+/**
+ * The catalogue: every version of every plan, and how many schools are on it.
+ *
+ * Versions, not plans, because a price change never edits what a school
+ * agreed to — it publishes a new version, and the schools on the old one stay
+ * there until somebody moves them deliberately.
+ */
+export function Plans() {
+  const [plans, setPlans] = useState<PlanVersion[] | null>(null);
+  const [said, setSaid] = useState<{ text: string; bad?: boolean } | null>(null);
+  const [drafting, setDrafting] = useState(false);
+
+  const load = useCallback(() => {
+    consoleGet<PlanVersion[]>('/plans').then(setPlans)
+      .catch((e: ApiError) => { setPlans([]); setSaid({ text: e.message, bad: true }); });
+  }, []);
+  useEffect(load, [load]);
+
+  async function act(version: PlanVersion, action: 'publish' | 'retire') {
+    setSaid(null);
+    try {
+      await consolePost(`/plans/versions/${version.id}/${action}`, {});
+      setSaid({
+        text: action === 'publish'
+          ? `${version.plan_name} v${version.version} is published. Its terms can no longer be edited.`
+          : `${version.plan_name} v${version.version} is retired. Schools already on it stay on it.`,
+      });
+      load();
+    } catch (e) {
+      setSaid({ text: (e as ApiError).message, bad: true });
+    }
+  }
+
+  return (
+    <Panel title="Plans"
+           hint="Each row is a version. Published terms are what schools agreed to and are never edited."
+           actions={<button className="primary" onClick={() => setDrafting(true)}>New plan version</button>}>
+      {said ? <div className={`note${said.bad ? ' bad' : ''}`} style={{ margin: '0 16px 12px' }}>{said.text}</div> : null}
+      <div className="scroll">
+        <table>
+          <thead>
+            <tr>
+              <th>Plan</th><th>Status</th><th className="num">Monthly</th>
+              <th className="num">Annual</th><th className="num">Schools</th>
+              <th className="opt">Includes</th><th />
+            </tr>
+          </thead>
+          {plans === null ? <SkeletonRows cols={7} /> : plans.length === 0 ? (
+            <tbody><tr><td colSpan={7}>
+              <Empty title="No plans yet">Create one to put a school on it and bill for it.</Empty>
+            </td></tr></tbody>
+          ) : (
+            <tbody>
+              {plans.map((p) => {
+                const action = versionAction(p.status);
+                const on = p.features.filter((f) => f.enabled).map((f) => f.feature);
+                return (
+                  <tr key={p.id}>
+                    <td>
+                      <strong>{p.plan_name}</strong>
+                      <span className="sub" style={{ display: 'block' }}>{p.plan_code} · v{p.version}</span>
+                    </td>
+                    <td>
+                      <Pill tone={p.status === 'published' ? 'good' : p.status === 'draft' ? 'warning' : undefined}>
+                        {p.status}
+                      </Pill>
+                    </td>
+                    <td className="num">{rupeesDecimal(p.price_monthly)}</td>
+                    <td className="num">{rupeesDecimal(p.price_annual)}</td>
+                    <td className="num">{p.subscribers}</td>
+                    <td className="opt">
+                      <span className="chips">
+                        {p.limits.map((l) => (
+                          <span className="chip" key={l.metric}
+                                title={l.hard_cap === null ? 'No hard cap' : `Hard cap ${l.hard_cap}`}>
+                            {l.included.toLocaleString('en-IN')} {l.metric.replace(/_/g, ' ')}
+                          </span>
+                        ))}
+                        {on.map((f) => <span className="chip on" key={f}>{f.replace(/_/g, ' ')}</span>)}
+                      </span>
+                    </td>
+                    <td className="num">
+                      {action === 'publish'
+                        ? <ConfirmButton label="Publish" confirmLabel="Publish — terms lock"
+                                         onConfirm={() => act(p, 'publish')} />
+                        : action === 'retire'
+                          ? <ConfirmButton label="Retire" confirmLabel="Retire — no new schools" tone="critical"
+                                           onConfirm={() => act(p, 'retire')} />
+                          : null}
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          )}
+        </table>
+      </div>
+      {drafting ? (
+        <PlanDraft existing={plans ?? []} onClose={() => setDrafting(false)}
+                   onDone={(text) => { setDrafting(false); setSaid({ text }); load(); }} />
+      ) : null}
+    </Panel>
+  );
+}
+
+/**
+ * A new version, as a draft.
+ *
+ * Three calls in order — the plan if it is new, the version with its prices,
+ * then its terms — and it stops at draft on purpose. Publishing is a separate,
+ * deliberate click on the row, because that is the moment the terms lock.
+ */
+function PlanDraft({ existing, onClose, onDone }: {
+  existing: PlanVersion[]; onClose: () => void; onDone: (said: string) => void;
+}) {
+  const [name, setName] = useState('');
+  const [monthly, setMonthly] = useState('');
+  const [annual, setAnnual] = useState('');
+  const [form, setForm] = useState<TermsForm>({ limits: {}, features: {} });
+  const [error, setError] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+
+  const code = planCodeFrom(name);
+  const known = existing.find((p) => p.plan_code === code);
+
+  function limit(metric: string, field: 'included' | 'hardCap', value: string) {
+    const current = form.limits[metric] ?? { included: '', hardCap: '' };
+    setForm({ ...form, limits: { ...form.limits, [metric]: { ...current, [field]: value } } });
+  }
+
+  async function submit(event: FormEvent) {
+    event.preventDefault();
+    setError(null);
+    const priceMonthly = priceOrNull(monthly);
+    const priceAnnual = priceOrNull(annual);
+    if (!code) { setError('Give the plan a name with at least two letters.'); return; }
+    if (!priceMonthly || !priceAnnual) { setError('Prices are rupees, like 1500 or 1499.50.'); return; }
+    const built = buildTerms(form);
+    if (!built.ok) { setError(built.error); return; }
+
+    setBusy(true);
+    try {
+      if (!known) await consolePost('/plans', { code, name: name.trim() });
+      const version = await consolePost<{ id: string; version: number }>(
+        '/plans/versions', { planCode: code, priceMonthly, priceAnnual });
+      await consolePost(`/plans/versions/${version.id}/terms`, built.terms);
+      onDone(`${name.trim()} v${version.version} saved as a draft. Publish it when the terms are right.`);
+    } catch (e) {
+      setError((e as ApiError).message);
+    } finally { setBusy(false); }
+  }
+
+  return (
+    <div className="sheet-backdrop" onMouseDown={onClose}>
+      <form className="sheet wide" onSubmit={submit} onMouseDown={(e) => e.stopPropagation()}>
+        <h2>New plan version</h2>
+        <p className="lede">
+          {known
+            ? `There is already a plan called ${known.plan_name}. This adds a new version of it; schools on older versions keep their price.`
+            : 'Saved as a draft. Nothing is offered to a school until you publish it.'}
+        </p>
+        <label htmlFor="plan-name">Plan name</label>
+        <input id="plan-name" type="text" value={name} onChange={(e) => setName(e.target.value)}
+               placeholder="Starter" required />
+        {code ? <span className="sub">Code: {code}</span> : null}
+        <div className="grid2">
+          <div>
+            <label htmlFor="plan-monthly">Monthly price, ₹</label>
+            <input id="plan-monthly" type="text" inputMode="decimal" value={monthly}
+                   onChange={(e) => setMonthly(e.target.value)} placeholder="1500" required />
+          </div>
+          <div>
+            <label htmlFor="plan-annual">Annual price, ₹</label>
+            <input id="plan-annual" type="text" inputMode="decimal" value={annual}
+                   onChange={(e) => setAnnual(e.target.value)} placeholder="15000" required />
+          </div>
+        </div>
+
+        <label>Limits — leave a row empty for no limit</label>
+        <table className="mini">
+          <thead><tr><th>Metric</th><th>Included</th><th>Hard cap</th></tr></thead>
+          <tbody>
+            {METRICS.map((metric) => (
+              <tr key={metric}>
+                <td>{metric.replace(/_/g, ' ')}</td>
+                <td><input type="text" inputMode="numeric" aria-label={`${metric} included`}
+                           value={form.limits[metric]?.included ?? ''}
+                           onChange={(e) => limit(metric, 'included', e.target.value)} /></td>
+                <td><input type="text" inputMode="numeric" aria-label={`${metric} hard cap`}
+                           value={form.limits[metric]?.hardCap ?? ''} placeholder="none"
+                           onChange={(e) => limit(metric, 'hardCap', e.target.value)} /></td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+
+        <label>Features</label>
+        <div className="chips">
+          {FEATURES.map((feature) => (
+            <label key={feature} className="check chipcheck">
+              <input type="checkbox" checked={form.features[feature] === true}
+                     onChange={(e) => setForm({ ...form, features: { ...form.features, [feature]: e.target.checked } })} />
+              {feature.replace(/_/g, ' ')}
+            </label>
+          ))}
+        </div>
+
+        {error ? <div className="note bad" style={{ marginTop: 12 }}>{error}</div> : null}
+        <div className="row" style={{ marginTop: 16, justifyContent: 'flex-end' }}>
+          <button type="button" className="ghost" onClick={onClose}>Cancel</button>
+          <button type="submit" className="primary" disabled={busy}>
+            {busy ? 'Saving…' : 'Save draft'}
+          </button>
+        </div>
+      </form>
+    </div>
+  );
+}
+
+/* ----------------------------------------------------------------- billing */
+
+interface Invoice {
+  id: string; invoice_no: string; financial_year: string; supply_type: string;
+  taxable_value: string; cgst: string; sgst: string; igst: string;
+  total: string; issued_on: string; due_on: string;
+}
+
+/**
+ * What a school has been billed.
+ *
+ * One school at a time, chosen by name. The console can read its own invoices
+ * to a school — that is our relationship with them — and still cannot read the
+ * invoices the school raises to parents, which are theirs.
+ */
+export function Billing({ schools }: { schools: Array<{ id: string; display_name: string }> }) {
+  const [tenantId, setTenantId] = useState('');
+  const [invoices, setInvoices] = useState<Invoice[] | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [crediting, setCrediting] = useState<Invoice | null>(null);
+  const [said, setSaid] = useState<string | null>(null);
+  const [subscribing, setSubscribing] = useState(false);
+
+  const load = useCallback((id: string) => {
+    if (!id) { setInvoices(null); return; }
+    setError(null); setInvoices(null);
+    consoleGet<Invoice[]>(`/tenants/${id}/invoices`).then(setInvoices)
+      .catch((e: ApiError) => { setError(e.message); setInvoices([]); });
+  }, []);
+  useEffect(() => load(tenantId), [tenantId, load]);
+
+  const billed = invoices ? sumDecimals(invoices.map((i) => i.total)) : null;
+  const tax = invoices
+    ? sumDecimals(invoices.flatMap((i) => [i.cgst, i.sgst, i.igst])) : null;
+
+  return (
+    <Panel title="Billing"
+           hint="GST invoices we have issued to a school. An issued invoice is credited, never edited."
+           actions={(<>
+             <select value={tenantId} onChange={(e) => { setTenantId(e.target.value); setSaid(null); }}
+                     aria-label="School">
+               <option value="">Choose a school…</option>
+               {schools.map((s) => <option key={s.id} value={s.id}>{s.display_name}</option>)}
+             </select>
+             <button disabled={!tenantId} onClick={() => setSubscribing(true)}>Put on a plan…</button>
+           </>)}>
+      {error ? <div className="note bad" style={{ margin: '0 16px 12px' }}>{error}</div> : null}
+      {said ? <div className="note" style={{ margin: '0 16px 12px' }}>{said}</div> : null}
+      {!tenantId ? <Empty title="Choose a school to see its invoices" /> : (
+        <>
+          {invoices && invoices.length > 0 ? (
+            <div className="figures">
+              <div><span>Invoices</span><strong>{invoices.length}</strong></div>
+              <div><span>Billed, with tax</span><strong>{rupeesDecimal(billed)}</strong></div>
+              <div><span>Of which GST</span><strong>{rupeesDecimal(tax)}</strong></div>
+            </div>
+          ) : null}
+          <div className="scroll">
+            <table>
+              <thead>
+                <tr>
+                  <th>Invoice</th><th>Issued</th><th className="opt">Due</th>
+                  <th className="opt">Supply</th><th className="num">Taxable</th>
+                  <th className="num">GST</th><th className="num">Total</th><th />
+                </tr>
+              </thead>
+              {invoices === null ? <SkeletonRows cols={8} rows={4} /> : invoices.length === 0 ? (
+                <tbody><tr><td colSpan={8}>
+                  <Empty title="Nothing billed yet">This school has no platform invoices.</Empty>
+                </td></tr></tbody>
+              ) : (
+                <tbody>
+                  {invoices.map((i) => (
+                    <tr key={i.id}>
+                      <td><strong>{i.invoice_no}</strong></td>
+                      <td>{day(i.issued_on)}</td>
+                      <td className="opt">{day(i.due_on)}</td>
+                      <td className="opt">{i.supply_type.replace(/_/g, ' ')}</td>
+                      <td className="num">{rupeesDecimal(i.taxable_value)}</td>
+                      <td className="num">{rupeesDecimal(sumDecimals([i.cgst, i.sgst, i.igst]))}</td>
+                      <td className="num"><strong>{rupeesDecimal(i.total)}</strong></td>
+                      <td className="num"><button onClick={() => setCrediting(i)}>Credit…</button></td>
+                    </tr>
+                  ))}
+                </tbody>
+              )}
+            </table>
+          </div>
+        </>
+      )}
+      {subscribing && tenantId ? (
+        <Subscribe tenantId={tenantId}
+                   school={schools.find((s) => s.id === tenantId)?.display_name ?? 'this school'}
+                   onClose={() => setSubscribing(false)}
+                   onDone={(text) => { setSubscribing(false); setSaid(text); }} />
+      ) : null}
+      {crediting ? (
+        <CreditNote invoice={crediting} onClose={() => setCrediting(null)}
+                    onDone={(text) => { setCrediting(null); setSaid(text); load(tenantId); }} />
+      ) : null}
+    </Panel>
+  );
+}
+
+/** Puts a school on a published plan version, optionally with a trial. */
+function Subscribe({ tenantId, school, onClose, onDone }: {
+  tenantId: string; school: string; onClose: () => void; onDone: (said: string) => void;
+}) {
+  const [versions, setVersions] = useState<PlanVersion[] | null>(null);
+  const [versionId, setVersionId] = useState('');
+  const [period, setPeriod] = useState<'monthly' | 'annual'>('monthly');
+  const [trial, setTrial] = useState('');
+  const [error, setError] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+
+  useEffect(() => {
+    consoleGet<PlanVersion[]>('/plans')
+      // Only what can be sold: a draft has no agreed terms and a retired
+      // version takes no new schools.
+      .then((all) => setVersions(all.filter((p) => p.status === 'published')))
+      .catch((e: ApiError) => { setError(e.message); setVersions([]); });
+  }, []);
+
+  async function submit(event: FormEvent) {
+    event.preventDefault();
+    setError(null);
+    const days = trial.trim() === '' ? 0 : Number(trial);
+    if (!Number.isInteger(days) || days < 0 || days > 120) {
+      setError('A trial is a whole number of days, up to 120.'); return;
+    }
+    setBusy(true);
+    try {
+      await consolePost('/subscriptions', {
+        tenantId, planVersionId: versionId, billingPeriod: period,
+        ...(days > 0 ? { trialDays: days } : {}),
+      });
+      const chosen = versions?.find((v) => v.id === versionId);
+      onDone(`${school} is on ${chosen?.plan_name ?? 'the plan'} v${chosen?.version ?? ''}, billed ${period}${days > 0 ? `, with a ${days}-day trial` : ''}.`);
+    } catch (e) {
+      setError((e as ApiError).message);
+    } finally { setBusy(false); }
+  }
+
+  return (
+    <div className="sheet-backdrop" onMouseDown={onClose}>
+      <form className="sheet" onSubmit={submit} onMouseDown={(e) => e.stopPropagation()}>
+        <h2>Put {school} on a plan</h2>
+        <p className="lede">Only published versions are listed.</p>
+        {versions && versions.length === 0 ? (
+          <div className="note">No published plan yet. Create one on the Plans tab and publish it.</div>
+        ) : (
+          <>
+            <label htmlFor="sub-version">Plan</label>
+            <select id="sub-version" value={versionId} onChange={(e) => setVersionId(e.target.value)} required>
+              <option value="">Choose…</option>
+              {(versions ?? []).map((v) => (
+                <option key={v.id} value={v.id}>
+                  {v.plan_name} v{v.version} — {rupeesDecimal(v.price_monthly)}/month, {rupeesDecimal(v.price_annual)}/year
+                </option>
+              ))}
+            </select>
+            <label htmlFor="sub-period">Billed</label>
+            <select id="sub-period" value={period}
+                    onChange={(e) => setPeriod(e.target.value as 'monthly' | 'annual')}>
+              <option value="monthly">Monthly</option>
+              <option value="annual">Annually</option>
+            </select>
+            <label htmlFor="sub-trial">Trial days (optional)</label>
+            <input id="sub-trial" type="text" inputMode="numeric" value={trial}
+                   onChange={(e) => setTrial(e.target.value)} placeholder="0" />
+          </>
+        )}
+        {error ? <div className="note bad" style={{ marginTop: 12 }}>{error}</div> : null}
+        <div className="row" style={{ marginTop: 16, justifyContent: 'flex-end' }}>
+          <button type="button" className="ghost" onClick={onClose}>Cancel</button>
+          <button type="submit" className="primary" disabled={busy || !versionId}>
+            {busy ? 'Saving…' : 'Subscribe'}
+          </button>
+        </div>
+      </form>
+    </div>
+  );
+}
+
+function CreditNote({ invoice, onClose, onDone }: {
+  invoice: Invoice; onClose: () => void; onDone: (said: string) => void;
+}) {
+  const [reason, setReason] = useState('');
+  const [amount, setAmount] = useState('');
+  const [error, setError] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+
+  async function submit(event: FormEvent) {
+    event.preventDefault();
+    setBusy(true); setError(null);
+    try {
+      await consolePost(`/invoices/${invoice.id}/credit-note`, {
+        reason, ...(amount.trim() ? { amount: amount.trim() } : {}),
+      });
+      onDone(`Credit note raised against ${invoice.invoice_no}.`);
+    } catch (e) {
+      setError((e as ApiError).message);
+    } finally { setBusy(false); }
+  }
+
+  return (
+    <div className="sheet-backdrop" onMouseDown={onClose}>
+      <form className="sheet" onSubmit={submit} onMouseDown={(e) => e.stopPropagation()}>
+        <h2>Credit {invoice.invoice_no}</h2>
+        <p className="lede">
+          The invoice keeps its number and stays as issued; a credit note is raised against it.
+          Total {rupeesDecimal(invoice.total)}.
+        </p>
+        <label htmlFor="credit-amount">Amount to credit, in rupees (leave empty for the full invoice)</label>
+        <input id="credit-amount" type="text" inputMode="decimal" value={amount}
+               pattern="\d+(\.\d{1,2})?" placeholder={invoice.total}
+               onChange={(e) => setAmount(e.target.value)} />
+        <label htmlFor="credit-reason">Reason — somebody reads this in the ledger a year from now</label>
+        <textarea id="credit-reason" rows={3} value={reason} required minLength={10} maxLength={2000}
+                  onChange={(e) => setReason(e.target.value)} />
+        {error ? <div className="note bad" style={{ marginTop: 12 }}>{error}</div> : null}
+        <div className="row" style={{ marginTop: 16, justifyContent: 'flex-end' }}>
+          <button type="button" className="ghost" onClick={onClose}>Cancel</button>
+          <button type="submit" className="primary" disabled={busy || reason.trim().length < 10}>
+            {busy ? 'Raising…' : 'Raise credit note'}
+          </button>
+        </div>
+      </form>
+    </div>
+  );
+}
+
+/* -------------------------------------------------------------------- team */
+
+/**
+ * Who on our side can do what.
+ *
+ * Capabilities, not job titles: "support" and "billing" are separate so that
+ * somebody who answers tickets cannot raise an invoice, and nobody opens a
+ * school without the capability that says so on the record.
+ */
+export function Team() {
+  const [rows, setRows] = useState<AdminRow[] | null>(null);
+  const [said, setSaid] = useState<{ text: string; bad?: boolean } | null>(null);
+  const [picked, setPicked] = useState<Record<string, string>>({});
+
+  const load = useCallback(() => {
+    consoleGet<AdminRow[]>('/admins').then(setRows)
+      .catch((e: ApiError) => { setRows([]); setSaid({ text: e.message, bad: true }); });
+  }, []);
+  useEffect(load, [load]);
+
+  async function change(userId: string, email: string, capability: string, action: 'grant' | 'revoke') {
+    setSaid(null);
+    try {
+      await consolePost(action === 'grant' ? '/admins' : '/admins/revoke', { userId, capability });
+      setSaid({ text: action === 'grant'
+        ? `${email} now holds ${capability}.` : `${capability} revoked from ${email}.` });
+      load();
+    } catch (e) {
+      setSaid({ text: (e as ApiError).message, bad: true });
+    }
+  }
+
+  const team = rows ? groupTeam(rows) : null;
+
+  return (
+    <Panel title="Team" hint="Platform staff and what each can do. Every grant and revoke is on the audit log.">
+      {said ? <div className={`note${said.bad ? ' bad' : ''}`} style={{ margin: '0 16px 12px' }}>{said.text}</div> : null}
+      <div className="scroll">
+        <table>
+          <thead><tr><th>Person</th><th>Can</th><th>Give</th></tr></thead>
+          {team === null ? <SkeletonRows cols={3} rows={3} /> : team.length === 0 ? (
+            <tbody><tr><td colSpan={3}><Empty title="No platform staff" /></td></tr></tbody>
+          ) : (
+            <tbody>
+              {team.map((m) => {
+                const options = grantable(m);
+                const choice = picked[m.userId] ?? '';
+                return (
+                  <tr key={m.userId}>
+                    <td>
+                      <strong>{m.email}</strong>
+                      {m.capabilities.length === 0
+                        ? <span className="sub" style={{ display: 'block' }}>No access now</span> : null}
+                    </td>
+                    <td>
+                      <span className="chips">
+                        {m.capabilities.map((c) => (
+                          <span className="chip on" key={c} title={CAPABILITY_MEANING[c]}>
+                            {c.replace(/_/g, ' ')}
+                            <ConfirmButton label="×" confirmLabel="Revoke?" tone="critical"
+                                           onConfirm={() => change(m.userId, m.email, c, 'revoke')} />
+                          </span>
+                        ))}
+                        {m.revoked.map((c) => (
+                          <span className="chip off" key={c} title="Revoked">{c.replace(/_/g, ' ')}</span>
+                        ))}
+                      </span>
+                    </td>
+                    <td>
+                      {options.length > 0 ? (
+                        <span className="row">
+                          <select value={choice} aria-label={`Capability to give ${m.email}`}
+                                  onChange={(e) => setPicked({ ...picked, [m.userId]: e.target.value })}>
+                            <option value="">Capability…</option>
+                            {options.map((c) => <option key={c} value={c}>{c.replace(/_/g, ' ')}</option>)}
+                          </select>
+                          <ConfirmButton label="Grant" confirmLabel="Grant it" disabled={!choice}
+                                         onConfirm={async () => {
+                                           await change(m.userId, m.email, choice, 'grant');
+                                           setPicked({ ...picked, [m.userId]: '' });
+                                         }} />
+                        </span>
+                      ) : <span className="sub">Holds everything</span>}
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          )}
+        </table>
+      </div>
+      <dl className="meanings">
+        {Object.entries(CAPABILITY_MEANING).map(([c, meaning]) => (
+          <div key={c}><dt>{c.replace(/_/g, ' ')}</dt><dd>{meaning}</dd></div>
+        ))}
+      </dl>
+    </Panel>
+  );
+}

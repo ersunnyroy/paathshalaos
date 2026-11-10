@@ -7,6 +7,8 @@ import {
   assumeSchoolSession, ApiError,
 } from '@/lib/api';
 import { Lockup, Panel, Pill, Empty, Icon, SkeletonRows } from '@/components/ui';
+import { Plans, Billing, Team, ConfirmButton } from './panels';
+import { estate } from '@/lib/console';
 
 /**
  * The platform console.
@@ -227,6 +229,15 @@ function Schedule() {
   );
 }
 
+type Tab = 'schools' | 'plans' | 'billing' | 'team' | 'operations';
+const TABS: Array<{ id: Tab; label: string }> = [
+  { id: 'schools', label: 'Schools' },
+  { id: 'plans', label: 'Plans' },
+  { id: 'billing', label: 'Billing' },
+  { id: 'team', label: 'Team' },
+  { id: 'operations', label: 'Operations' },
+];
+
 function Console({ onSignOut }: { onSignOut: () => void }) {
   const [health, setHealth] = useState<Health[] | null>(null);
   const [sessions, setSessions] = useState<SessionRow[] | null>(null);
@@ -234,6 +245,21 @@ function Console({ onSignOut }: { onSignOut: () => void }) {
   const [hits, setHits] = useState<{ schools: SchoolHit[]; accounts: AccountHit[] } | null>(null);
   const [target, setTarget] = useState<{ tenantId: string; name: string } | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [tab, setTab] = useState<Tab>('schools');
+  const [said, setSaid] = useState<string | null>(null);
+
+  async function setStatus(school: Health, action: 'suspend' | 'resume') {
+    setError(null); setSaid(null);
+    try {
+      await consolePost(`/tenants/${school.id}/${action}`, {});
+      setSaid(action === 'suspend'
+        ? `${school.display_name} is suspended. Nobody there can sign in until it is resumed.`
+        : `${school.display_name} is active again.`);
+      refresh();
+    } catch (e) {
+      setError((e as ApiError).message);
+    }
+  }
 
   const refresh = useCallback(() => {
     consoleGet<Health[]>('/health').then(setHealth).catch((e: ApiError) => setError(e.message));
@@ -260,7 +286,34 @@ function Console({ onSignOut }: { onSignOut: () => void }) {
       </header>
 
       <main className="console-body">
+        <div className="console-tabs" role="tablist" aria-label="Console sections">
+          {TABS.map((t) => (
+            <button key={t.id} role="tab" type="button" aria-selected={tab === t.id}
+                    onClick={() => setTab(t.id)}>{t.label}</button>
+          ))}
+        </div>
+
         {error ? <div className="note bad">{error}</div> : null}
+        {said ? <div className="note">{said}</div> : null}
+
+        {tab === 'plans' ? <Plans /> : null}
+        {tab === 'billing' ? <Billing schools={health ?? []} /> : null}
+        {tab === 'team' ? <Team /> : null}
+        {tab === 'operations' ? <Schedule /> : null}
+
+        {tab === 'schools' ? (<>
+        {health ? (() => {
+          const e = estate(health);
+          return (
+            <div className="figures boxed">
+              <div><span>Schools</span><strong>{e.total}</strong></div>
+              <div><span>Active</span><strong>{e.active}</strong></div>
+              <div><span>Suspended</span><strong>{e.suspended}</strong></div>
+              <div><span>With no owner</span><strong>{e.ownerless}</strong></div>
+              <div><span>Accounts</span><strong>{e.accounts}</strong></div>
+            </div>
+          );
+        })() : null}
 
         <form className="console-search" onSubmit={search}>
           <input value={query} onChange={(e) => setQuery(e.target.value)}
@@ -335,9 +388,16 @@ function Console({ onSignOut }: { onSignOut: () => void }) {
                       </td>
                       <td>{when(s.last_entered_at)}</td>
                       <td className="num">
-                        <button onClick={() => setTarget({ tenantId: s.id, name: s.display_name })}>
-                          Enter…
-                        </button>
+                        <span className="row" style={{ justifyContent: 'flex-end' }}>
+                          {s.status === 'suspended'
+                            ? <ConfirmButton label="Resume" confirmLabel="Resume school"
+                                             onConfirm={() => setStatus(s, 'resume')} />
+                            : <ConfirmButton label="Suspend" confirmLabel="Suspend — locks everyone out"
+                                             tone="critical" onConfirm={() => setStatus(s, 'suspend')} />}
+                          <button onClick={() => setTarget({ tenantId: s.id, name: s.display_name })}>
+                            Enter…
+                          </button>
+                        </span>
                       </td>
                     </tr>
                   ))}
@@ -347,6 +407,9 @@ function Console({ onSignOut }: { onSignOut: () => void }) {
           </div>
         </Panel>
 
+        </>) : null}
+
+        {tab === 'operations' ? (
         <Panel title="Access log"
                hint="Every entry, ours and theirs. The school sees this same list for itself.">
           <div className="scroll">
@@ -383,8 +446,7 @@ function Console({ onSignOut }: { onSignOut: () => void }) {
             </table>
           </div>
         </Panel>
-
-        <Schedule />
+        ) : null}
       </main>
 
       {target ? (
