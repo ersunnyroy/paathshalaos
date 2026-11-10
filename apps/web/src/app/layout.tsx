@@ -1,5 +1,6 @@
 import type { ReactNode } from 'react';
 import './globals.css';
+import { Providers } from './providers';
 
 export const metadata = {
   title: 'paathshalaOS',
@@ -64,7 +65,7 @@ export default function RootLayout({ children }: { children: ReactNode }) {
             requirement. */}
         <script dangerouslySetInnerHTML={{ __html: SW_SCRIPT }} />
       </head>
-      <body>{children}</body>
+      <body><Providers>{children}</Providers></body>
     </html>
   );
 }

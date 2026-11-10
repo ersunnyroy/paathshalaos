@@ -12,6 +12,8 @@
   "dependencies": {
     "@paathshala/api-client": "workspace:^",
     "@paathshala/offline-queue": "workspace:^",
+    "@paathshala/ui-tokens": "workspace:^",
+    "@tanstack/react-query": "^5.62.0",
     "next": "^15.1.3",
     "react": "^19.0.0",
     "react-dom": "^19.0.0"

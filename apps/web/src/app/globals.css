@@ -13,111 +13,7 @@
  * :not([data-theme="light"]), once under [data-theme="dark"].
  */
 
-:root {
-  --entry-h: 0px;
-  color-scheme: light;
-
-  --bg: #F1F5F9;
-  --surface: #FFFFFF;
-  --surface-2: #F8FAFC;
-  --surface-hover: #F1F5F9;
-  --line: #E2E8F0;
-  --line-strong: #CBD5E1;
-
-  --ink: #0F172A;
-  --ink-2: #334155;   /* brand sheet slate */
-  --ink-3: #5B6B7F;
-
-  --brand: #14B8A6;
-  --brand-solid: #0F766E;
-  --brand-ink: #0F766E;
-  --brand-wash: #CCFBF1;
-  --brand-track: #CCFBF1;
-  --brand-soft: #F0FDFA;
-
-  --good: #10B981;
-  --good-ink: #047857;
-  --good-wash: #ECFDF5;
-  --warning: #F59E0B;
-  --warning-ink: #92400E;
-  --warning-wash: #FEF3C7;
-  --critical: #EF4444;
-  --critical-ink: #B91C1C;
-  --critical-wash: #FEE2E2;
-
-  --radius: 12px;
-  --radius-sm: 8px;
-  --shadow: 0 1px 2px rgb(15 23 42 / 0.04), 0 1px 3px rgb(15 23 42 / 0.05);
-  --shadow-lift: 0 8px 24px rgb(15 23 42 / 0.10), 0 2px 6px rgb(15 23 42 / 0.06);
-
-  --sans: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto,
-          "Helvetica Neue", Arial, sans-serif;
-
-  --nav-w: 232px;
-  --bar-h: 46px;
-}
-
-@media (prefers-color-scheme: dark) {
-  :root:not([data-theme="light"]) {
-    color-scheme: dark;
-    --bg: #0B1120;
-    --surface: #0F172A;
-    --surface-2: #131C2E;
-    --surface-hover: #1B2639;
-    --line: #1E293B;
-    --line-strong: #2C3A50;
-    --ink: #F1F5F9;
-    --ink-2: #94A3B8;
-    --ink-3: #8493A8;
-    --brand: #2DD4BF;
-    --brand-solid: #0F766E;
-    --brand-ink: #2DD4BF;
-    --brand-wash: #10312F;
-    --brand-track: #17403C;
-    --brand-soft: #0D2523;
-    --good: #34D399;
-    --good-ink: #34D399;
-    --good-wash: #06231A;
-    --warning: #FBBF24;
-    --warning-ink: #FBBF24;
-    --warning-wash: #2A1E05;
-    --critical: #F87171;
-    --critical-ink: #F87171;
-    --critical-wash: #2A1113;
-    --shadow: 0 1px 2px rgb(0 0 0 / 0.5);
-    --shadow-lift: 0 10px 28px rgb(0 0 0 / 0.6), 0 2px 6px rgb(0 0 0 / 0.5);
-  }
-}
-
-:root[data-theme="dark"] {
-  color-scheme: dark;
-  --bg: #0B1120;
-  --surface: #0F172A;
-  --surface-2: #131C2E;
-  --surface-hover: #1B2639;
-  --line: #1E293B;
-  --line-strong: #2C3A50;
-  --ink: #F1F5F9;
-  --ink-2: #94A3B8;
-  --ink-3: #8493A8;
-  --brand: #2DD4BF;
-  --brand-solid: #0F766E;
-  --brand-ink: #2DD4BF;
-  --brand-wash: #10312F;
-  --brand-track: #17403C;
-  --brand-soft: #0D2523;
-  --good: #34D399;
-  --good-ink: #34D399;
-  --good-wash: #06231A;
-  --warning: #FBBF24;
-  --warning-ink: #FBBF24;
-  --warning-wash: #2A1E05;
-  --critical: #F87171;
-  --critical-ink: #F87171;
-  --critical-wash: #2A1113;
-  --shadow: 0 1px 2px rgb(0 0 0 / 0.5);
-  --shadow-lift: 0 10px 28px rgb(0 0 0 / 0.6), 0 2px 6px rgb(0 0 0 / 0.5);
-}
+@import './tokens.css';
 
 * { box-sizing: border-box; }
 html { -webkit-text-size-adjust: 100%; }
@@ -846,4 +742,75 @@ input:focus, select:focus { border-color: var(--brand); }
   font-size: 11.5px;
   color: var(--ink-3);
   letter-spacing: 0.01em;
+}
+
+/* ====================================================== command palette */
+/* M40. Opened with Ctrl/Cmd+K or the button in the top bar. It sits above
+   everything, including the entry banner, because somebody inside a school
+   through the console searches too. */
+
+.palette-open {
+  gap: 8px; color: var(--ink-3); background: var(--surface-2);
+  padding: 4px 6px 4px 9px; font-size: 12.5px; font-weight: 500;
+}
+.palette-open span { min-width: 120px; text-align: left; }
+
+kbd {
+  font: 600 10.5px/1 var(--sans);
+  padding: 3px 5px; border-radius: 5px;
+  border: 1px solid var(--line-strong); background: var(--surface);
+  color: var(--ink-3); white-space: nowrap;
+}
+
+.palette-backdrop {
+  position: fixed; inset: 0; z-index: 80;
+  background: rgb(15 23 42 / 0.45);
+  display: flex; align-items: flex-start; justify-content: center;
+  padding: 12vh 16px 16px;
+}
+.palette {
+  width: 100%; max-width: 560px; max-height: 70vh;
+  display: flex; flex-direction: column;
+  background: var(--surface); border: 1px solid var(--line-strong);
+  border-radius: var(--radius); box-shadow: var(--shadow-lift); overflow: hidden;
+}
+.palette-input {
+  display: flex; align-items: center; gap: 10px;
+  padding: 12px 14px; border-bottom: 1px solid var(--line);
+}
+.palette-input svg { width: 17px; height: 17px; color: var(--ink-3); flex: none; }
+.palette-input input {
+  flex: 1; border: 0; outline: 0; background: transparent; padding: 0;
+  font-size: 15px; color: var(--ink); min-width: 0;
+}
+.palette-list { list-style: none; margin: 0; padding: 6px; overflow-y: auto; flex: 1; }
+.palette-list h4 {
+  margin: 8px 8px 4px; font-size: 10.5px; font-weight: 650;
+  letter-spacing: 0.06em; text-transform: uppercase; color: var(--ink-3);
+}
+.palette-list button {
+  width: 100%; display: flex; align-items: center; gap: 10px;
+  border: 0; background: transparent; text-align: left;
+  padding: 8px; border-radius: var(--radius-sm); font-size: 13.5px;
+}
+.palette-list button[aria-selected="true"] { background: var(--brand-wash); color: var(--brand-ink); }
+.palette-list .glyph {
+  width: 26px; height: 26px; flex: none; display: grid; place-items: center;
+  border-radius: 7px; background: var(--surface-2); color: var(--ink-2);
+}
+.palette-list .nm { font-weight: 550; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.palette-list .sub { margin-left: auto; color: var(--ink-3); font-size: 12px; white-space: nowrap; }
+.palette-empty { padding: 18px 10px; color: var(--ink-3); font-size: 13px; text-align: center; }
+.palette-foot {
+  display: flex; gap: 16px; padding: 8px 14px; border-top: 1px solid var(--line);
+  color: var(--ink-3); font-size: 11.5px; background: var(--surface-2);
+}
+.palette-foot kbd { margin-right: 4px; }
+
+@media (max-width: 640px) {
+  .palette-open span, .palette-open kbd { display: none; }
+  .palette-open { padding: 6px 8px; }
+  .palette-backdrop { padding-top: 8px; }
+  .palette-list .sub { display: none; }
+  .palette-foot { display: none; }
 }

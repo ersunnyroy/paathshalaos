@@ -1,11 +1,13 @@
 'use client';
 
-import { useEffect, useState, type ReactNode } from 'react';
+import { useEffect, useMemo, useState, type ReactNode } from 'react';
 import { usePathname, useRouter } from 'next/navigation';
 import Link from 'next/link';
 import { apiGet, clearSession, currentToken, onSignedOut, loadBrand } from '@/lib/api';
 import { brandVariables, type Brand } from '@/lib/brand';
 import { Icon, Mark } from '@/components/ui';
+import { Palette } from '@/components/palette';
+import { GROUPS, navFor } from '@/lib/nav';
 
 interface Me {
   tenantId: string;
@@ -15,61 +17,6 @@ interface Me {
   impersonation?: { id: string; writeEnabled: boolean };
 }
 
-/**
- * Navigation, grouped.
- *
- * The groups are not decoration: "Daily" is what a class teacher opens every
- * morning and "Money" is what they never open at all. Putting them in one flat
- * list makes every role scan the same wall of items looking for their two.
- */
-const GROUPS: Array<{ title: string; items: Array<{ href: string; label: string; icon: (p: { className?: string }) => ReactNode }> }> = [
-  {
-    title: 'Overview',
-    items: [{ href: '/dashboard', label: 'Dashboard', icon: Icon.dashboard }],
-  },
-  {
-    title: 'Daily',
-    items: [
-      { href: '/admissions', label: 'Admissions', icon: Icon.inbox },
-      { href: '/students', label: 'Learners', icon: Icon.learners },
-      { href: '/attendance', label: 'Attendance', icon: Icon.attendance },
-      { href: '/transport', label: 'Transport', icon: Icon.bus },
-      { href: '/staff', label: 'Staff', icon: Icon.staff },
-    ],
-  },
-  {
-    title: 'Academics',
-    items: [
-      { href: '/learning', label: 'Classwork', icon: Icon.book },
-      { href: '/results', label: 'Results', icon: Icon.award },
-    ],
-  },
-  {
-    title: 'Money',
-    items: [{ href: '/fees', label: 'Fees', icon: Icon.fees }],
-  },
-  {
-    title: 'Operations',
-    items: [
-      { href: '/messages', label: 'Messages', icon: Icon.send },
-      { href: '/imports', label: 'Imports', icon: Icon.upload },
-    ],
-  },
-  {
-    title: 'Setup',
-    items: [
-      { href: '/access', label: 'Access', icon: Icon.key },
-      { href: '/consent', label: 'Consent', icon: Icon.shield },
-      { href: '/setup', label: 'Getting started', icon: Icon.check },
-      { href: '/support', label: 'Support', icon: Icon.help },
-      { href: '/integrations', label: 'Integrations', icon: Icon.plug },
-      { href: '/developers', label: 'Developers', icon: Icon.code },
-      { href: '/trust', label: 'Trust', icon: Icon.shield },
-    ],
-  },
-];
-
-const ALL = GROUPS.flatMap((g) => g.items);
 const THEME_KEY = 'paathshala.theme';
 
 export function Shell({ children }: { children: ReactNode }) {
@@ -78,6 +25,20 @@ export function Shell({ children }: { children: ReactNode }) {
   const [me, setMe] = useState<Me | null>(null);
   const [theme, setTheme] = useState<'light' | 'dark' | null>(null);
   const [brand, setBrand] = useState<Brand | null>(null);
+  const [paletteOpen, setPaletteOpen] = useState(false);
+
+  useEffect(() => {
+    // Ctrl+K on Windows and Linux, Cmd+K on a Mac. Bound on the window so it
+    // works from anywhere on the page, including inside a form field.
+    function onKey(e: KeyboardEvent) {
+      if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'k') {
+        e.preventDefault();
+        setPaletteOpen((open) => !open);
+      }
+    }
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, []);
 
   useEffect(() => {
     // Also here, not only on the sign-in screen: somebody who arrives with a
@@ -135,7 +96,12 @@ export function Shell({ children }: { children: ReactNode }) {
   }
 
   const role = me?.roles[0]?.replace(/_/g, ' ').toLowerCase() ?? '';
-  const here = ALL.find((i) => i.href === pathname);
+  // Somebody inside a school through the console sees the whole navigation:
+  // they are there to look at whatever the school asked about.
+  const groups = useMemo(
+    () => (me?.impersonation ? GROUPS : navFor(me?.roles ?? [])),
+    [me]);
+  const here = GROUPS.flatMap((g) => g.items).find((i) => i.href === pathname);
 
   return (
     <div className="app" data-entry={me?.impersonation ? '1' : undefined}>
@@ -156,16 +122,19 @@ export function Shell({ children }: { children: ReactNode }) {
         {/* Scrolls independently of the workspace pill above and the footer
             below, so a long nav cannot push a link off the screen. */}
         <div className="links">
-          {GROUPS.map((group) => (
+          {groups.map((group) => (
             <div className="nav-group" key={group.title}>
               <h3>{group.title}</h3>
-              {group.items.map(({ href, label, icon: Glyph }) => (
-                <Link key={href} href={href}
-                      aria-current={pathname === href ? 'page' : undefined}>
-                  <Glyph />
-                  {label}
-                </Link>
-              ))}
+              {group.items.map(({ href, label, icon }) => {
+                const Glyph = Icon[icon];
+                return (
+                  <Link key={href} href={href}
+                        aria-current={pathname === href ? 'page' : undefined}>
+                    <Glyph />
+                    {label}
+                  </Link>
+                );
+              })}
             </div>
           ))}
         </div>
@@ -191,7 +160,15 @@ export function Shell({ children }: { children: ReactNode }) {
         <Icon.slash />
         <span className="here">{here?.label ?? 'Dashboard'}</span>
         <span className="spacer" />
+        <button className="palette-open" type="button" onClick={() => setPaletteOpen(true)}
+                aria-label="Search and jump (Ctrl+K)">
+          <Icon.search />
+          <span>Search</span>
+          <kbd>Ctrl K</kbd>
+        </button>
       </div>
+
+      <Palette open={paletteOpen} onClose={() => setPaletteOpen(false)} groups={groups} />
 
       <main className="page">{children}</main>
     </div>

@@ -3,7 +3,7 @@
 import { useEffect, useState } from 'react';
 import { Shell, PageHead } from '../shell';
 import { Panel, Empty, SkeletonRows, Avatar, Pill, Icon } from '@/components/ui';
-import { apiGet } from '@/lib/api';
+import { useApiQuery } from '@/lib/query';
 
 interface Student {
   id: string; admission_no: string;
@@ -12,19 +12,29 @@ interface Student {
 }
 
 export default function StudentsPage() {
-  const [students, setStudents] = useState<Student[] | null>(null);
   const [q, setQ] = useState('');
-  const [error, setError] = useState<string | null>(null);
+  const [term, setTerm] = useState('');
+
+  useEffect(() => {
+    // The command palette links here as /students?q=<admission no>. Read once
+    // on arrival; after that the box is the source of truth.
+    const fromUrl = new URLSearchParams(window.location.search).get('q') ?? '';
+    if (fromUrl) { setQ(fromUrl); setTerm(fromUrl); }
+  }, []);
 
   useEffect(() => {
     // Debounced: a keystroke per request turns a search box into a load test.
-    const handle = setTimeout(() => {
-      apiGet<Student[]>(`/v1/students${q ? `?q=${encodeURIComponent(q)}` : ''}`)
-        .then(setStudents)
-        .catch((e: Error) => setError(e.message));
-    }, 220);
+    const handle = setTimeout(() => setTerm(q.trim()), 220);
     return () => clearTimeout(handle);
   }, [q]);
+
+  const roster = useApiQuery<Student[]>(
+    `/v1/students${term ? `?q=${encodeURIComponent(term)}` : ''}`,
+    // Keep the last roster on screen while the next search loads, rather than
+    // flashing a skeleton between every keystroke.
+    { placeholderData: (previous) => previous });
+  const students = roster.data ?? null;
+  const error = roster.error?.message ?? null;
 
   return (
     <Shell>

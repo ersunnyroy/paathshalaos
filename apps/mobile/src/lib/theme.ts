@@ -1,14 +1,12 @@
-/** The brand sheet, as the app uses it. Same values as the web design tokens. */
-export const theme = {
-  teal: '#14B8A6',
-  navy: '#0F172A',
-  slate: '#334155',
-  line: '#E2E8F0',
-  background: '#F8FAFC',
-  good: '#15803D',
-  warning: '#B45309',
-  critical: '#B91C1C',
-} as const;
+import { native } from '@paathshala/ui-tokens';
+
+/**
+ * The brand sheet, as the app uses it.
+ *
+ * Since M39 these are not a copy of the web design tokens but the same values,
+ * read from the one package both apps share.
+ */
+export const theme = native;
 
 /**
  * What each attendance state looks like.
