@@ -29,7 +29,9 @@ export interface TableColumn<T> extends Column<T> {
  * returns in one page needs the server to do both; nothing here pretends
  * otherwise, and `truncatedAt` says so on the screen when it applies.
  */
-export function DataTable<T>({ id, title, columns, rows, rowKey, empty, truncatedAt, toolbar }: {
+export function DataTable<T>({
+  id, title, columns, rows, rowKey, empty, truncatedAt, toolbar, onRowClick, selected,
+}: {
   /** Names the saved view. Change it and everybody's saved view is forgotten. */
   id: string;
   title: string;
@@ -40,6 +42,13 @@ export function DataTable<T>({ id, title, columns, rows, rowKey, empty, truncate
   /** The most rows the API returns for this list, if it has a ceiling. */
   truncatedAt?: number;
   toolbar?: ReactNode;
+  /**
+   * Opens a row. The row then takes focus and answers Enter as well as a
+   * click: a list only a mouse can open is closed to anybody on a keyboard.
+   */
+  onRowClick?: (row: T) => void;
+  /** The row that is open, so it can be marked. */
+  selected?: (row: T) => boolean;
 }) {
   const storageKey = `paathshala.view.${id}`;
   const [view, setView] = useState<View>(() => defaultView(columns));
@@ -166,7 +175,14 @@ export function DataTable<T>({ id, title, columns, rows, rowKey, empty, truncate
             {visible === null ? <SkeletonRows rows={8} cols={shown.length} /> : (
               <tbody>
                 {visible.map((row) => (
-                  <tr key={rowKey(row)}>
+                  <tr key={rowKey(row)}
+                      className={[onRowClick ? 'clickable' : '', selected?.(row) ? 'on' : '']
+                        .filter(Boolean).join(' ') || undefined}
+                      tabIndex={onRowClick ? 0 : undefined}
+                      onClick={onRowClick ? () => onRowClick(row) : undefined}
+                      onKeyDown={onRowClick ? (e) => {
+                        if (e.key === 'Enter' && e.target === e.currentTarget) onRowClick(row);
+                      } : undefined}>
                     {shown.map((c) => (
                       <td key={c.key} className={c.align === 'right' ? 'n' : undefined}>
                         {c.render ? c.render(row) : c.text(row) || '—'}

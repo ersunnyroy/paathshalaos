@@ -4,6 +4,7 @@ import { useCallback, useEffect, useState } from 'react';
 import { Shell, PageHead } from '../shell';
 import { Empty, Panel, Pill, SkeletonRows, Tile } from '@/components/ui';
 import { apiGet } from '@/lib/api';
+import { DataTable } from '@/components/data-table';
 
 interface Route {
   id: string; code: string; name: string; direction: string; status: string;
@@ -120,40 +121,37 @@ export default function TransportPage() {
         </div>
       ) : null}
 
-      <Panel title="Routes" hint="What is running, and who is running it">
-        <table>
-          <thead>
-            <tr>
-              <th>Route</th><th>Bus</th><th>Driver</th>
-              <th className="num">Stops</th><th className="num">Children</th>
-            </tr>
-          </thead>
-          {routes === null ? <SkeletonRows rows={4} cols={5} /> : (
-            <tbody>
-              {routes.map((r) => (
-                <tr key={r.id} onClick={() => setRouteId(r.id)}
-                    className={r.id === routeId ? 'on' : undefined}
-                    style={{ cursor: 'pointer' }}>
-                  <td>
-                    <strong>{r.code}</strong>
-                    <span className="sub" style={{ display: 'block' }}>{r.name}</span>
-                  </td>
-                  <td>{r.vehicle_registration ?? <span className="sub">No bus assigned</span>}</td>
-                  <td>{r.driver_name ?? <span className="sub">No driver assigned</span>}</td>
-                  <td className="num">{r.stop_count}</td>
-                  <td className="num">{r.child_count}</td>
-                </tr>
-              ))}
-            </tbody>
-          )}
-        </table>
-        {routes?.length === 0 ? (
+      <DataTable<Route>
+        id="transport-routes"
+        title="Routes"
+        rows={routes}
+        rowKey={(r) => r.id}
+        onRowClick={(r) => setRouteId(r.id)}
+        selected={(r) => r.id === routeId}
+        empty={(
           <Empty title="No routes yet">
             A route is a code, a campus and an ordered list of stops. Children
             are put on one from their own record.
           </Empty>
-        ) : null}
-      </Panel>
+        )}
+        columns={[
+          { key: 'code', label: 'Route', required: true, text: (r) => `${r.code} ${r.name}`,
+            render: (r) => (
+              <>
+                <strong>{r.code}</strong>
+                <span className="sub" style={{ display: 'block' }}>{r.name}</span>
+              </>
+            ) },
+          { key: 'bus', label: 'Bus', text: (r) => r.vehicle_registration ?? '',
+            render: (r) => r.vehicle_registration ?? <span className="sub">No bus assigned</span> },
+          { key: 'driver', label: 'Driver', text: (r) => r.driver_name ?? '',
+            render: (r) => r.driver_name ?? <span className="sub">No driver assigned</span> },
+          { key: 'direction', label: 'Direction', optional: true, text: (r) => r.direction },
+          { key: 'status', label: 'Status', optional: true, text: (r) => r.status },
+          { key: 'stops', label: 'Stops', align: 'right', numeric: true, text: (r) => String(r.stop_count) },
+          { key: 'children', label: 'Children', align: 'right', numeric: true, text: (r) => String(r.child_count) },
+        ]}
+      />
 
       <Panel
         title="Manifest"
@@ -234,36 +232,30 @@ export default function TransportPage() {
         ) : null}
       </Panel>
 
-      <Panel title="Papers that expire"
-             hint="Expired first, because a report that only warns about the future is no use on the day">
-        <table>
-          <thead>
-            <tr><th>What</th><th>Whose</th><th>Expires</th><th className="num">Days</th></tr>
-          </thead>
-          {compliance === null ? <SkeletonRows rows={3} cols={4} /> : (
-            <tbody>
-              {compliance.map((c, i) => (
-                <tr key={`${c.kind}-${c.subject}-${i}`}>
-                  <td>{KIND_LABEL[c.kind] ?? c.kind}</td>
-                  <td>{c.subject.trim()}</td>
-                  <td>{c.expires_on}</td>
-                  <td className="num">
-                    {c.days_left < 0
-                      ? <Pill tone="critical">{Math.abs(c.days_left)} days ago</Pill>
-                      : <Pill tone={c.days_left <= 14 ? 'warning' : undefined}>{c.days_left}</Pill>}
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          )}
-        </table>
-        {compliance?.length === 0 ? (
+      <DataTable<ComplianceRow>
+        id="transport-papers"
+        title="Papers that expire"
+        rows={compliance}
+        rowKey={(c) => `${c.kind}-${c.subject}-${c.expires_on}`}
+        empty={(
           <Empty title="Nothing expiring">
             No fitness certificate, insurance, permit or licence falls due in the
             next 45 days.
           </Empty>
-        ) : null}
-      </Panel>
+        )}
+        columns={[
+          { key: 'kind', label: 'What', required: true, text: (c) => KIND_LABEL[c.kind] ?? c.kind },
+          { key: 'subject', label: 'Whose', text: (c) => c.subject.trim() },
+          { key: 'expires', label: 'Expires', text: (c) => c.expires_on },
+          // Expired first as the server sends them; a report that only warns
+          // about the future is no use on the day.
+          { key: 'days', label: 'Days left', align: 'right', numeric: true,
+            text: (c) => String(c.days_left),
+            render: (c) => (c.days_left < 0
+              ? <Pill tone="critical">{Math.abs(c.days_left)} days ago</Pill>
+              : <Pill tone={c.days_left <= 14 ? 'warning' : undefined}>{c.days_left}</Pill>) },
+        ]}
+      />
     </Shell>
   );
 }

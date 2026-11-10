@@ -4,6 +4,7 @@ import { useCallback, useEffect, useState } from 'react';
 import { Shell, PageHead } from '../shell';
 import { Panel, Pill, SkeletonRows, Empty, Avatar, Icon } from '@/components/ui';
 import { apiGet, apiPost } from '@/lib/api';
+import { DataTable } from '@/components/data-table';
 
 interface Ticket {
   id: string; reference: string; subject: string; category: string;
@@ -147,6 +148,7 @@ export default function SupportPage() {
         ))}
       </div>
 
+      {current ? (
       <Panel
         title="Tickets"
         hint="Anything past its first-response time comes first, whatever its date"
@@ -156,7 +158,6 @@ export default function SupportPage() {
           </button>
         ) : null}
       >
-        {current ? (
           <div className="thread">
             <div className="thread-head">
               <div style={{ minWidth: 0 }}>
@@ -225,54 +226,46 @@ export default function SupportPage() {
               </div>
             </div>
           </div>
-        ) : (
-          <>
-            <div className="scroll">
-              <table>
-                <thead>
-                  <tr>
-                    <th>Subject</th>
-                    <th className="opt">Reference</th>
-                    <th>Status</th>
-                    <th className="n">First reply</th>
-                  </tr>
-                </thead>
-                {tickets ? (
-                  <tbody>
-                    {tickets.map((t) => {
-                      const late = overdueBy(t);
-                      return (
-                        <tr key={t.id} onClick={() => openTicket(t.id)}
-                            style={{ cursor: 'pointer' }}>
-                          <td>{t.subject}</td>
-                          <td className="opt"><code>{t.reference}</code></td>
-                          <td>
-                            <Pill tone={STATUS_TONE[t.status]}>
-                              {t.status.replace(/_/g, ' ')}
-                            </Pill>
-                          </td>
-                          <td className="n">
-                            {t.first_responded_at
-                              ? <span className="muted">{when(t.first_responded_at)}</span>
-                              : late
-                                ? <Pill tone="critical">{late}</Pill>
-                                : <Pill tone="warning">due {when(t.first_response_due_at)}</Pill>}
-                          </td>
-                        </tr>
-                      );
-                    })}
-                  </tbody>
-                ) : <SkeletonRows rows={3} cols={4} />}
-              </table>
-            </div>
-            {tickets?.length === 0 ? (
-              <Empty title="Nothing waiting">
-                Tickets raised from the parent app and by your own staff appear here.
-              </Empty>
-            ) : null}
-          </>
-        )}
       </Panel>
+      ) : (
+        <DataTable<Ticket>
+          id="support-tickets"
+          title="Tickets"
+          rows={tickets}
+          rowKey={(t) => t.id}
+          onRowClick={(t) => openTicket(t.id)}
+          empty={(
+            <Empty title="Nothing waiting">
+              Tickets raised from the parent app and by your own staff appear here.
+            </Empty>
+          )}
+          columns={[
+            // Unsorted, the queue is in the server's order: anything past its
+            // first-response time comes first, whatever its date.
+            { key: 'subject', label: 'Subject', required: true, text: (t) => t.subject },
+            { key: 'reference', label: 'Reference', text: (t) => t.reference,
+              render: (t) => <code>{t.reference}</code> },
+            { key: 'category', label: 'Category', optional: true, text: (t) => t.category },
+            { key: 'priority', label: 'Priority', optional: true, text: (t) => t.priority },
+            { key: 'status', label: 'Status', text: (t) => t.status.replace(/_/g, ' '),
+              render: (t) => (
+                <Pill tone={STATUS_TONE[t.status]}>{t.status.replace(/_/g, ' ')}</Pill>
+              ) },
+            { key: 'raised', label: 'Raised', optional: true, text: (t) => t.created_at.slice(0, 10) },
+            { key: 'first', label: 'First reply', align: 'right',
+              text: (t) => t.first_responded_at ? when(t.first_responded_at)
+                : overdueBy(t) ?? `due ${when(t.first_response_due_at)}`,
+              render: (t) => {
+                const late = overdueBy(t);
+                return t.first_responded_at
+                  ? <span className="muted">{when(t.first_responded_at)}</span>
+                  : late
+                    ? <Pill tone="critical">{late}</Pill>
+                    : <Pill tone="warning">due {when(t.first_response_due_at)}</Pill>;
+              } },
+          ]}
+        />
+      )}
 
       <Panel title="Help articles" hint="What people read instead of writing to you">
         <div style={{ padding: '12px 15px 0' }}>

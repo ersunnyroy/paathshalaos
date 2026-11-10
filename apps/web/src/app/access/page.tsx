@@ -14,8 +14,10 @@
  */
 import { useCallback, useEffect, useState } from 'react';
 import { Shell, PageHead } from '../shell';
-import { Empty, Panel, Pill, SkeletonRows, Tile } from '@/components/ui';
+import { Empty, Panel, Pill, Tile } from '@/components/ui';
 import { apiGet, apiPost } from '@/lib/api';
+import { DataTable } from '@/components/data-table';
+import { ConfirmButton } from '@/components/confirm';
 
 interface Grant {
   id: string; role: string; scope_type: string; scope_id: string | null;
@@ -42,6 +44,15 @@ const SCOPE_LABEL: Record<string, string> = {
   section: 'one section',
   self: 'themselves only',
 };
+
+interface AccessRow { account: Account; grant: Grant | null }
+
+/** One row per role held; an account with none still gets one. */
+function accessRows(accounts: Account[]): AccessRow[] {
+  return accounts.flatMap<AccessRow>((account) => (account.grants.length === 0
+    ? [{ account, grant: null }]
+    : account.grants.map((grant) => ({ account, grant }))));
+}
 
 const who = (a: Account) =>
   [a.given_name, a.family_name].filter(Boolean).join(' ') || 'Unnamed account';
@@ -241,78 +252,55 @@ export default function AccessPage() {
         ) : null}
       </Panel>
 
-      <Panel title="Accounts" hint="One row per login, not per person on file">
-        <table>
-          <thead>
-            <tr><th>Who</th><th>Role</th><th>Over</th><th>Since</th>
-                <th>Reads</th><th /></tr>
-          </thead>
-          {accounts === null ? <SkeletonRows rows={4} cols={6} /> : (
-            <tbody>
-              {accounts.flatMap((a) => (
-                a.grants.length === 0
-                  ? [(
-                    <tr key={a.user_account_id}>
-                      <td>
-                        <strong>{who(a)}</strong>
-                        {a.designation
-                          ? <span className="sub" style={{ display: 'block' }}>{a.designation}</span>
-                          : null}
-                      </td>
-                      <td colSpan={3}>
-                        <span className="sub">No role — signs in and sees nothing</span>
-                      </td>
-                      <td>{languageCell(a)}</td>
-                      <td />
-                    </tr>
-                  )]
-                  : a.grants.map((g, i) => (
-                    <tr key={g.id}>
-                      <td>
-                        {i === 0 ? (
-                          <>
-                            <strong>{who(a)}</strong>
-                            {a.left_on
-                              ? <span className="sub" style={{ display: 'block' }}>
-                                  Left {a.left_on}
-                                </span>
-                              : a.designation
-                                ? <span className="sub" style={{ display: 'block' }}>
-                                    {a.designation}
-                                  </span>
-                                : null}
-                          </>
-                        ) : null}
-                      </td>
-                      <td>
-                        <Pill tone={g.role === 'ORG_OWNER' ? 'warning' : undefined}>
-                          {g.role}
-                        </Pill>
-                      </td>
-                      <td className="sub">{SCOPE_LABEL[g.scope_type] ?? g.scope_type}</td>
-                      <td className="sub">{g.granted_at.slice(0, 10)}</td>
-                      <td>{i === 0 ? languageCell(a) : null}</td>
-                      <td className="n">
-                        <button className="ghost" disabled={busy}
-                                onClick={() => void act(
-                                  () => apiPost(`/v1/access/grants/${g.id}/revoke`),
-                                  'Access revoked.')}>
-                          Revoke
-                        </button>
-                      </td>
-                    </tr>
-                  ))
-              ))}
-            </tbody>
-          )}
-        </table>
-        {accounts?.length === 0 ? (
+      <DataTable<AccessRow>
+        id="access-accounts"
+        title="Accounts"
+        rows={accounts === null ? null : accessRows(accounts)}
+        rowKey={(r) => r.grant?.id ?? r.account.user_account_id}
+        empty={(
           <Empty title="No accounts yet">
             An account is created when somebody is invited. This screen is what
             decides which parts of the school they can then reach.
           </Empty>
-        ) : null}
-      </Panel>
+        )}
+        columns={[
+          // One row per role held, so a filter for "TEACHER" finds everybody
+          // who is one. Somebody with no role still gets a row: an account
+          // that signs in and sees nothing is worth seeing here.
+          { key: 'who', label: 'Who', required: true, text: (r) => who(r.account),
+            render: (r) => (
+              <>
+                <strong>{who(r.account)}</strong>
+                {r.account.left_on
+                  ? <span className="sub" style={{ display: 'block' }}>Left {r.account.left_on}</span>
+                  : r.account.designation
+                    ? <span className="sub" style={{ display: 'block' }}>{r.account.designation}</span>
+                    : null}
+              </>
+            ) },
+          { key: 'role', label: 'Role', text: (r) => r.grant?.role ?? 'No role',
+            render: (r) => (r.grant
+              ? <Pill tone={r.grant.role === 'ORG_OWNER' ? 'warning' : undefined}>{r.grant.role}</Pill>
+              : <span className="sub">No role — signs in and sees nothing</span>) },
+          { key: 'over', label: 'Over',
+            text: (r) => r.grant ? (SCOPE_LABEL[r.grant.scope_type] ?? r.grant.scope_type) : '' },
+          { key: 'since', label: 'Since', text: (r) => r.grant?.granted_at.slice(0, 10) ?? '' },
+          { key: 'expires', label: 'Expires', optional: true,
+            text: (r) => r.grant?.expires_at?.slice(0, 10) ?? '' },
+          { key: 'code', label: 'Employee code', optional: true,
+            text: (r) => r.account.employee_code ?? '' },
+          { key: 'reads', label: 'Reads', action: true, text: () => '',
+            render: (r) => languageCell(r.account) },
+          { key: 'revoke', label: '', action: true, align: 'right', text: () => '',
+            render: (r) => (r.grant ? (
+              <ConfirmButton label="Revoke" confirmLabel="Revoke access?" tone="critical"
+                             disabled={busy}
+                             onConfirm={() => act(
+                               () => apiPost(`/v1/access/grants/${r.grant!.id}/revoke`),
+                               'Access revoked.')} />
+            ) : null) },
+        ]}
+      />
     </Shell>
   );
 }

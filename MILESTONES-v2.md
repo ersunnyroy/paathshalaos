@@ -407,3 +407,20 @@ Web only; no API or schema change.
   Class IX", Meera suggested ("teaches this class · 1 lesson that day"),
   assigned, row and table both show her. Demo data: Physics Wed 10:00 for Meera,
   Suresh's leave on 11 Nov, Meera covering Class IX A that day.
+
+## M40.5 — Four more lists on the shared table
+
+Web only. Transport routes, transport "Papers that expire", support tickets and
+access accounts now use `DataTable` (filter, sort, choose columns, export).
+
+- `DataTable` gained `onRowClick` and `selected`. A row that opens something
+  takes keyboard focus and answers Enter; before, routes and tickets could only
+  be opened with a mouse.
+- Access accounts is one row per role held (name repeated), so filtering for a
+  role finds everybody who holds it. Revoke is now a two-click confirm.
+- Checked live in Chrome as principal: all four render with data, a route opens
+  by keyboard and is marked, a ticket opens and "Back to the queue" returns.
+- Still on hand-written tables: academics, admissions list, attendance,
+  consent, console, dashboard, developers, imports, integrations, learning,
+  messages, results, setup, trust, learner profile, timetable, today.
+  (Several of these are registers or forms, not lists, and should stay.)

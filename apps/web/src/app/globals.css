@@ -1052,3 +1052,8 @@ input.mark-cell.bad { border-color: var(--critical); background: var(--critical-
 .cover-gaps .who { flex: 2 1 320px; display: flex; flex-wrap: wrap; gap: 8px 14px; align-items: flex-start; }
 .cover-gaps .pick { display: flex; flex-direction: column; gap: 2px; }
 .cover-gaps-note { padding: 10px 16px; margin: 0; }
+
+/* Rows that open something */
+tbody tr.clickable { cursor: pointer; }
+tbody tr.clickable:focus-visible { outline: 2px solid var(--brand); outline-offset: -2px; }
+tbody tr.on td { background: var(--brand-soft); }
