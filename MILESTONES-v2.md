@@ -236,13 +236,35 @@ class is `n`, so nothing was right-aligned. `num` is now styled the same.
 
 Still on effect-fetching and hand-written tables: the other sixteen school pages.
 
+## M40.3 — the fee desk on the shared table, and two bugs it was sitting on
+
+The invoice list on Fees is now the shared table: sort by amount owed, filter, pick
+columns, export. A column of buttons is a new kind of column (`action`) — never sorted,
+hidden or exported.
+
+**"Two taps at a counter are one payment" was not true.** The comment said it; the code
+built the idempotency key from `Date.now()` at the moment of the click, so every click
+had its own key and the server's de-duplication had nothing to match. The only thing
+stopping a double payment was the button disabling in time. The key is now made when the
+amount is typed and reused for every press, and the field clears only after the payment
+is recorded so a failed attempt retries under the same key. Checked live: two clicks,
+one ₹100 receipt.
+
+**Three pages took "today" from UTC.** `new Date().toISOString().slice(0, 10)` is
+yesterday from midnight to 5:30 a.m. in India: Fees called invoices due today "not yet
+due", the attendance register opened on the previous day, and the staff cover panel
+looked at the wrong date. `lib/dates.ts` has `localIsoDate()` with a test that pins the
+timezone and shows the old expression giving the wrong day.
+
+Web tests 159.
+
 ## Status
 
 | ID | State |
 | --- | --- |
 | M39 | tokens done; typed client moved to M39.1 |
 | M39.1 | not started |
-| M40 | shell, palette, query cache, shared data table (Learners only). 16 pages still to move; no notification bell |
+| M40 | shell, palette, query cache, shared data table (Learners, Fees invoices). 15 pages still to move; no notification bell |
 | M42.5 | all existing routes have screens; revenue added. Left: lifecycle pipeline, school health and usage, 2FA, cross-school support desk |
 | M41 | learner profile, structure screens, guardian names, offerings (on the timetable page) done; web file upload and activity timeline not started |
 | M42 | timetable view, add, move and remove done; free-teacher suggestions for cover not started |

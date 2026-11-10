@@ -4,6 +4,8 @@ import { useEffect, useState } from 'react';
 import { Shell, PageHead } from '../shell';
 import { Tile, Panel, Empty, SkeletonRows, Avatar, Pill } from '@/components/ui';
 import { apiGet, apiPost, rupees, rupeesCompact } from '@/lib/api';
+import { DataTable } from '@/components/data-table';
+import { localIsoDate, actionKey } from '@/lib/dates';
 
 interface Invoice {
   id: string; invoice_no: string; status: string; due_on: string;
@@ -70,6 +72,8 @@ function verdict(i: Invoice, todayIso: string):
   return { label: 'issued', tone: 'warning' };
 }
 
+const learnerName = (i: Invoice) => [i.given_name, i.family_name].filter(Boolean).join(' ') || '—';
+
 export default function FeesPage() {
   const [invoices, setInvoices] = useState<Invoice[] | null>(null);
   const [plans, setPlans] = useState<Plan[] | null>(null);
@@ -79,7 +83,7 @@ export default function FeesPage() {
   const [error, setError] = useState<string | null>(null);
   const [said, setSaid] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
-  const [take, setTake] = useState<Record<string, string>>({});
+  const [take, setTake] = useState<Record<string, { amount: string; key: string }>>({});
 
   const [reload, setReload] = useState(0);
 
@@ -111,7 +115,7 @@ export default function FeesPage() {
   const billed = (invoices ?? []).reduce((t, i) => t + BigInt(i.total_paise), 0n);
   const paid = (invoices ?? []).reduce((t, i) => t + BigInt(i.paid_paise), 0n);
   const collected = billed > 0n ? Number((paid * 10000n) / billed) / 10000 : 0;
-  const todayIso = new Date().toISOString().slice(0, 10);
+  const todayIso = localIsoDate();
   const overdue = (invoices ?? []).filter(
     (i) => i.status !== 'void' && BigInt(i.outstanding_paise) > 0n && i.due_on < todayIso);
   const overdueTotal = overdue.reduce((t, i) => t + BigInt(i.outstanding_paise), 0n);
@@ -253,87 +257,81 @@ export default function FeesPage() {
         ) : null}
       </Panel>
 
-      <Panel title="Invoices" hint={invoices ? `${invoices.length} shown` : undefined}>
-        {invoices && invoices.length === 0 ? (
+      <DataTable<Invoice>
+        id="fee-invoices"
+        title="Invoices"
+        rows={invoices}
+        rowKey={(i) => i.id}
+        truncatedAt={200}
+        empty={(
           <Empty title="Nothing to show">
             If you signed in as a teacher, that is the point — finance is scoped
             out at the database, not hidden in the interface.
           </Empty>
-        ) : (
-          <div className="scroll">
-            <table>
-              <thead>
-                <tr>
-                  <th>Learner</th>
-                  <th className="opt">Invoice</th>
-                  <th className="opt">Due</th>
-                  <th className="n opt">Total</th>
-                  <th className="n">Outstanding</th>
-                  <th className="w">Status</th>
-                  <th />
-                </tr>
-              </thead>
-              {invoices ? (
-                <tbody>
-                  {invoices.map((i) => {
-                    const name = [i.given_name, i.family_name].filter(Boolean).join(' ') || '—';
-                    return (
-                      <tr key={i.id}>
-                        <td>
-                          <span className="who2">
-                            <Avatar name={name} />
-                            <span>
-                              <span className="nm">{name}</span>
-                              <span className="sub" style={{ display: 'block' }}>
-                                {i.admission_no ?? i.invoice_no}
-                              </span>
-                            </span>
-                          </span>
-                        </td>
-                        <td className="opt">{i.invoice_no}</td>
-                        <td className="opt">{i.due_on}</td>
-                        <td className="n opt">{rupees(i.total_paise)}</td>
-                        <td className="n">{rupees(i.outstanding_paise)}</td>
-                        <td className="w">
-                          {(() => {
-                            const v = verdict(i, todayIso);
-                            return <Pill {...(v.tone ? { tone: v.tone } : {})}>{v.label}</Pill>;
-                          })()}
-                        </td>
-                        <td className="n">
-                          {i.status !== 'void' && BigInt(i.outstanding_paise) > 0n ? (
-                            <div className="row-form" style={{ justifyContent: 'flex-end' }}>
-                              <input type="text" inputMode="decimal"
-                                     placeholder="Amount"
-                                     style={{ width: 110, minWidth: 0 }}
-                                     value={take[i.id] ?? ''}
-                                     onChange={(e) => setTake(
-                                       (t) => ({ ...t, [i.id]: e.target.value }))} />
-                              <button className="ghost"
-                                      disabled={busy || !/^\d+(\.\d{1,2})?$/.test(take[i.id] ?? '')}
-                                      onClick={() => void act(() => apiPost(
-                                        `/v1/invoices/${i.id}/payments`, {
-                                          amount: take[i.id],
-                                          method: 'cash',
-                                          // The client's own id for this
-                                          // receipt: two taps at a counter
-                                          // are one payment.
-                                          idempotencyKey: `web-${i.id}-${take[i.id]}-${Date.now()}`,
-                                        }), 'Payment recorded, receipt issued.')}>
-                                Take cash
-                              </button>
-                            </div>
-                          ) : null}
-                        </td>
-                      </tr>
-                    );
-                  })}
-                </tbody>
-              ) : <SkeletonRows rows={8} cols={7} />}
-            </table>
-          </div>
         )}
-      </Panel>
+        columns={[
+          {
+            key: 'learner', label: 'Learner', required: true, text: learnerName,
+            render: (i) => (
+              <span className="who2">
+                <Avatar name={learnerName(i)} />
+                <span>
+                  <span className="nm">{learnerName(i)}</span>
+                  <span className="sub" style={{ display: 'block' }}>
+                    {i.admission_no ?? i.invoice_no}
+                  </span>
+                </span>
+              </span>
+            ),
+          },
+          { key: 'admission_no', label: 'Admission no.', optional: true, text: (i) => i.admission_no ?? '' },
+          { key: 'invoice_no', label: 'Invoice', text: (i) => i.invoice_no },
+          { key: 'due_on', label: 'Due', text: (i) => i.due_on },
+          { key: 'total', label: 'Total', align: 'right', numeric: true, text: (i) => rupees(i.total_paise) },
+          { key: 'paid', label: 'Paid', align: 'right', numeric: true, optional: true, text: (i) => rupees(i.paid_paise) },
+          { key: 'outstanding', label: 'Outstanding', align: 'right', numeric: true, text: (i) => rupees(i.outstanding_paise) },
+          {
+            key: 'status', label: 'Status', text: (i) => verdict(i, todayIso).label,
+            render: (i) => {
+              const v = verdict(i, todayIso);
+              return <Pill {...(v.tone ? { tone: v.tone } : {})}>{v.label}</Pill>;
+            },
+          },
+          {
+            key: 'take', label: '', action: true, align: 'right', text: () => '',
+            render: (i) => (i.status !== 'void' && BigInt(i.outstanding_paise) > 0n ? (
+              <div className="row-form" style={{ justifyContent: 'flex-end' }}>
+                <input type="text" inputMode="decimal" placeholder="Amount"
+                       aria-label={`Amount received for ${i.invoice_no}`}
+                       style={{ width: 110, minWidth: 0 }}
+                       value={take[i.id]?.amount ?? ''}
+                       // A new amount is a new intended payment, so it gets a
+                       // new key — once, here, not at each click.
+                       onChange={(e) => setTake((t) => ({
+                         ...t, [i.id]: { amount: e.target.value, key: actionKey(`web-pay-${i.id}`) },
+                       }))} />
+                <button className="ghost"
+                        disabled={busy || !/^\d+(\.\d{1,2})?$/.test(take[i.id]?.amount ?? '')}
+                        onClick={() => void act(async () => {
+                          const entry = take[i.id]!;
+                          await apiPost(`/v1/invoices/${i.id}/payments`, {
+                            amount: entry.amount, method: 'cash',
+                            // The same key however many times this is pressed
+                            // for this amount: two taps at a counter are one
+                            // payment, and the server holds us to it.
+                            idempotencyKey: entry.key,
+                          });
+                          // Cleared only once it is recorded, so a failed
+                          // attempt can be retried under the same key.
+                          setTake((t) => { const { [i.id]: _done, ...rest } = t; return rest; });
+                        }, 'Payment recorded, receipt issued.')}>
+                  Take cash
+                </button>
+              </div>
+            ) : null),
+          },
+        ]}
+      />
     </Shell>
   );
 }

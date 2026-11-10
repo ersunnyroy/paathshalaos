@@ -17,6 +17,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import { Shell, PageHead } from '../shell';
 import { Empty, Panel, Pill, SkeletonRows, Tile } from '@/components/ui';
+import { localIsoDate } from '@/lib/dates';
 import { apiGet, apiPost } from '@/lib/api';
 
 interface StaffRow {
@@ -61,7 +62,7 @@ export default function StaffPage() {
   const [types, setTypes] = useState<LeaveType[]>([]);
   const [sections, setSections] = useState<Section[]>([]);
   const [cover, setCover] = useState<Cover | null>(null);
-  const [day, setDay] = useState(() => new Date().toISOString().slice(0, 10));
+  const [day, setDay] = useState(() => localIsoDate());
   const [error, setError] = useState<string | null>(null);
   const [said, setSaid] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);

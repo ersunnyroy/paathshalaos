@@ -4,6 +4,7 @@ import { useCallback, useEffect, useState } from 'react';
 import { Shell, PageHead } from '../shell';
 import { Avatar, Empty, Icon, Panel, Pill, SkeletonRows, Tile, Toast } from '@/components/ui';
 import { apiGet, apiPost } from '@/lib/api';
+import { localIsoDate } from '@/lib/dates';
 import { attendanceQueue, buildRecords, flushWhenOnline } from '@/lib/offline';
 
 interface Section {
@@ -28,7 +29,8 @@ const STATES: Array<{ value: State; label: string; cls: string }> = [
 ];
 
 function today(): string {
-  return new Date().toISOString().slice(0, 10);
+  // Local, not UTC: before 5:30 a.m. in India the UTC date is still yesterday.
+  return localIsoDate();
 }
 
 export default function AttendancePage() {

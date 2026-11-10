@@ -6,6 +6,7 @@ import {
   defaultView, restoreView, visibleColumns, nextSort, filterRows, sortRows, toCsv, exportName,
   type Column, type View,
 } from '@/lib/table';
+import { localIsoDate } from '@/lib/dates';
 
 /**
  * A column as a screen draws it: the text rules from `lib/table`, plus how the
@@ -69,8 +70,7 @@ export function DataTable<T>({ id, title, columns, rows, rowKey, empty, truncate
 
   function download() {
     if (!visible) return;
-    const now = new Date();
-    const today = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
+    const today = localIsoDate();
     const blob = new Blob([toCsv(shown, visible)], { type: 'text/csv;charset=utf-8' });
     const url = URL.createObjectURL(blob);
     const link = document.createElement('a');
@@ -107,7 +107,7 @@ export function DataTable<T>({ id, title, columns, rows, rowKey, empty, truncate
                     aria-expanded={choosing} aria-haspopup="true">Columns</button>
             {choosing ? (
               <div className="menu" role="group" aria-label="Columns to show">
-                {columns.map((c) => (
+                {columns.filter((c) => !c.action).map((c) => (
                   <label key={c.key} className="check">
                     <input type="checkbox" disabled={c.required}
                            checked={c.required || !view.hidden.includes(c.key)}
@@ -150,12 +150,14 @@ export function DataTable<T>({ id, title, columns, rows, rowKey, empty, truncate
                   const sorted = view.sort?.key === c.key ? view.sort.dir : null;
                   return (
                     <th key={c.key} className={c.align === 'right' ? 'n' : undefined}
-                        aria-sort={sorted === 'asc' ? 'ascending' : sorted === 'desc' ? 'descending' : 'none'}>
-                      <button type="button" className="th-sort"
-                              onClick={() => change({ ...view, sort: nextSort(view.sort, c.key) })}>
-                        {c.label}
-                        <span aria-hidden="true">{sorted === 'asc' ? ' ▲' : sorted === 'desc' ? ' ▼' : ''}</span>
-                      </button>
+                        aria-sort={c.action ? undefined : sorted === 'asc' ? 'ascending' : sorted === 'desc' ? 'descending' : 'none'}>
+                      {c.action ? c.label : (
+                        <button type="button" className="th-sort"
+                                onClick={() => change({ ...view, sort: nextSort(view.sort, c.key) })}>
+                          {c.label}
+                          <span aria-hidden="true">{sorted === 'asc' ? ' ▲' : sorted === 'desc' ? ' ▼' : ''}</span>
+                        </button>
+                      )}
                     </th>
                   );
                 })}

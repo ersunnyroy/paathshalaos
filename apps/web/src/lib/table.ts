@@ -31,6 +31,11 @@ export interface Column<T> {
   required?: boolean;
   /** Sort as a number rather than as text. */
   numeric?: boolean;
+  /**
+   * A column of buttons, not of data: never sorted, never hidden, never
+   * exported. A "Take cash" column in a spreadsheet is a column of blanks.
+   */
+  action?: boolean;
 }
 
 export interface View {
@@ -65,7 +70,7 @@ export function restoreView<T>(columns: readonly Column<T>[], stored: unknown): 
 }
 
 export function visibleColumns<T>(columns: readonly Column<T>[], view: View): Column<T>[] {
-  return columns.filter((c) => c.required || !view.hidden.includes(c.key));
+  return columns.filter((c) => c.required || c.action || !view.hidden.includes(c.key));
 }
 
 /** Clicking a heading: ascending, then descending, then back to the order it arrived in. */
@@ -142,9 +147,10 @@ export function csvCell(value: string): string {
  * it without turning them into mojibake.
  */
 export function toCsv<T>(columns: readonly Column<T>[], rows: readonly T[]): string {
+  const data = columns.filter((c) => !c.action);
   const lines = [
-    columns.map((c) => csvCell(c.label)).join(','),
-    ...rows.map((row) => columns.map((c) => csvCell(c.text(row))).join(',')),
+    data.map((c) => csvCell(c.label)).join(','),
+    ...rows.map((row) => data.map((c) => csvCell(c.text(row))).join(',')),
   ];
   return `\uFEFF${lines.join('\r\n')}\r\n`;
 }

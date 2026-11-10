@@ -12,6 +12,7 @@ import {
   guardianCan, orderGuardians, guardianName,
   type AttendanceSummary, type FeeInvoice, type GuardianLink,
 } from '@/lib/learner';
+import { localIsoDate } from '@/lib/dates';
 
 /**
  * One learner, on one page (M41).
@@ -67,12 +68,6 @@ const TABS: Array<{ id: Tab; label: string }> = [
 
 const day = (iso: string | null) =>
   iso ? new Date(`${iso.slice(0, 10)}T00:00:00`).toLocaleDateString('en-IN', { dateStyle: 'medium' }) : '—';
-const todayIso = () => {
-  const now = new Date();
-  // Local date, not UTC: at 2 a.m. in India the UTC date is still yesterday,
-  // and an invoice due "today" would be shown as not yet due.
-  return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
-};
 const STATE_TONE: Record<string, 'good' | 'warning' | 'critical' | undefined> = {
   present: 'good', late: 'warning', absent: 'critical', excused: undefined,
 };
@@ -81,7 +76,7 @@ export default function LearnerPage() {
   const { id } = useParams<{ id: string }>();
   const [tab, setTab] = useState<Tab>('overview');
   const [showEmergency, setShowEmergency] = useState(false);
-  const today = todayIso();
+  const today = localIsoDate();
 
   const learner = useApiQuery<Learner>(`/v1/students/${id}`);
   const ready = learner.isSuccess;

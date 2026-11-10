@@ -149,3 +149,19 @@ describe('exporting', () => {
     expect(exportName('///', '2026-11-10')).toBe('Export 2026-11-10.csv');
   });
 });
+
+describe('a column of buttons', () => {
+  const withAction: Column<Row>[] = [
+    ...columns, { key: 'act', label: '', text: () => '', action: true },
+  ];
+
+  it('is always shown, even if a stale view says to hide it', () => {
+    const view = { hidden: ['act', 'cls'], sort: null };
+    expect(visibleColumns(withAction, view).map((c) => c.key)).toEqual(['name', 'adm', 'owed', 'act']);
+  });
+
+  it('is left out of an export', () => {
+    const csv = toCsv(withAction, rows.slice(0, 1)).slice(1);
+    expect(csv).toBe('Learner,Admission no.,Class,Owed\r\nIshaan Sharma,DEMO-0004,Class 10,"₹33,000.00"\r\n');
+  });
+});
