@@ -4,6 +4,8 @@ import { useCallback, useEffect, useState } from 'react';
 import { Shell, PageHead } from '../shell';
 import { Panel, Pill, SkeletonRows, Empty, Icon } from '@/components/ui';
 import { apiGet, apiPost } from '@/lib/api';
+import type { SheetRow } from '@/lib/marks';
+import { MarksSheet } from './marks-sheet';
 
 interface Run {
   id: string; status: string; term_id: string; section_id: string;
@@ -22,12 +24,6 @@ interface Assessment {
   course_offering_id: string; term_id: string;
   subject_name: string; class_name: string; section_name: string | null;
   marks_entered: number; learners: number;
-}
-interface SheetRow {
-  enrollment_id: string; admission_no: string; roll_no: string | null;
-  given_name: string; family_name: string | null;
-  mark_id: string | null; marks_obtained: string | null;
-  is_absent: boolean | null; is_exempt: boolean | null;
 }
 interface Scale { id: string; name: string; kind: string; published_at: string | null }
 interface Section { id: string; section_name: string; class_name: string | null }
@@ -58,7 +54,6 @@ export default function ResultsPage() {
   const [exams, setExams] = useState<Assessment[] | null>(null);
   const [sheetFor, setSheetFor] = useState<string | null>(null);
   const [sheet, setSheet] = useState<SheetRow[] | null>(null);
-  const [entry, setEntry] = useState<Record<string, string>>({});
   const [scales, setScales] = useState<Scale[]>([]);
   const [sections, setSections] = useState<Section[]>([]);
   const [terms, setTerms] = useState<Term[]>([]);
@@ -83,7 +78,7 @@ export default function ResultsPage() {
   }
 
   async function openSheet(id: string) {
-    setSheetFor(id); setSheet(null); setEntry({});
+    setSheetFor(id); setSheet(null);
     try { setSheet(await apiGet<SheetRow[]>(`/v1/assessments/${id}/marks`)); }
     catch (e) { setError((e as Error).message); setSheet([]); }
   }
@@ -187,85 +182,12 @@ export default function ResultsPage() {
       </Panel>
 
       {exam ? (
-        <Panel title={`Marks — ${exam.name}`}
-               hint={`Out of ${Number(exam.max_marks)}. An absence is not a zero:
-                      a zero is a mark and drags the average down.`}
-               actions={
-                 <>
-                   <button disabled={busy || exam.status !== 'open'}
-                           onClick={() => void act(async () => {
-                             const marks = Object.entries(entry)
-                               .filter(([, v]) => v !== '')
-                               .map(([enrollmentId, v]) => (
-                                 v.toLowerCase() === 'a'
-                                   ? { enrollmentId, absent: true }
-                                   : v.toLowerCase() === 'e'
-                                     ? { enrollmentId, exempt: true }
-                                     : { enrollmentId, marks: Number(v) }));
-                             if (marks.length === 0) throw new Error('Nothing to save.');
-                             const out = await apiPost<{
-                               outcomes: Array<{ outcome: string; reason?: string }>;
-                             }>(`/v1/assessments/${exam.id}/marks`, { marks });
-                             const bad = out.outcomes.filter((o) => o.outcome === 'rejected');
-                             // One typo must not read as "nothing saved": the
-                             // rest of the class went in.
-                             setSaid(bad.length === 0
-                               ? `Saved ${out.outcomes.length}.`
-                               : `Saved ${out.outcomes.length - bad.length}. `
-                                 + `${bad.length} not accepted — ${bad[0]?.reason ?? ''}`);
-                             await openSheet(exam.id);
-                             return out;
-                           }, 'Saved.')}>
-                     Save marks
-                   </button>{' '}
-                   <button className="ghost"
-                           onClick={() => { setSheetFor(null); setSheet(null); }}>
-                     Close
-                   </button>
-                 </>
-               }>
-          <table>
-            <thead>
-              <tr>
-                <th className="n">Roll</th><th>Learner</th>
-                <th className="n">Mark</th><th>Recorded</th>
-              </tr>
-            </thead>
-            {sheet === null ? <SkeletonRows rows={5} cols={4} /> : (
-              <tbody>
-                {sheet.map((r) => (
-                  <tr key={r.enrollment_id}>
-                    <td className="n">{r.roll_no ?? '—'}</td>
-                    <td>
-                      <strong>
-                        {r.given_name}{r.family_name ? ` ${r.family_name}` : ''}
-                      </strong>
-                      <span className="sub" style={{ display: 'block' }}>
-                        {r.admission_no}
-                      </span>
-                    </td>
-                    <td className="n">
-                      <input type="text" style={{ width: 90, minWidth: 0 }}
-                             disabled={exam.status !== 'open'}
-                             placeholder="mark / A / E"
-                             value={entry[r.enrollment_id]
-                               ?? (r.is_absent ? 'A' : r.is_exempt ? 'E'
-                                 : r.marks_obtained ?? '')}
-                             onChange={(e) => setEntry(
-                               (m) => ({ ...m, [r.enrollment_id]: e.target.value }))} />
-                    </td>
-                    <td>
-                      {r.mark_id === null ? <span className="sub">Nothing yet</span>
-                        : r.is_absent ? <Pill tone="warning">absent</Pill>
-                        : r.is_exempt ? <Pill>exempt</Pill>
-                        : <Pill tone="good">{Number(r.marks_obtained)}</Pill>}
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            )}
-          </table>
-        </Panel>
+        <MarksSheet key={exam.id} exam={exam} rows={sheet}
+                    onSaved={async () => {
+                      setSheet(await apiGet<SheetRow[]>(`/v1/assessments/${exam.id}/marks`));
+                      load();
+                    }}
+                    onClose={() => { setSheetFor(null); setSheet(null); }} />
       ) : null}
 
       <Panel title="Compute a term result"

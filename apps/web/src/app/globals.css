@@ -1024,3 +1024,16 @@ ol.day li.is-now { background: var(--brand-soft); box-shadow: inset 3px 0 0 var(
 .board-card strong { font-size: 13px; }
 .board-empty { color: var(--ink-3); text-align: center; padding: 14px 0; }
 .col-closed, .col-enrolled { opacity: 0.85; }
+
+/* Marks sheet */
+.marks-summary {
+  display: flex; flex-wrap: wrap; gap: 6px 18px; padding: 10px 16px;
+  border-bottom: 1px solid var(--line); background: var(--surface-2);
+  font-size: 13px; color: var(--ink-2); font-variant-numeric: tabular-nums;
+}
+.marks-summary strong { color: var(--ink); }
+.marks-summary .warn strong { color: var(--warning-ink); }
+.marks-summary .bad, .marks-summary .bad strong { color: var(--critical-ink); }
+input.mark-cell { width: 84px; min-width: 0; text-align: right; font-variant-numeric: tabular-nums; }
+input.mark-cell.bad { border-color: var(--critical); background: var(--critical-wash); color: var(--critical-ink); }
+.mark-why { display: block; color: var(--critical-ink); max-width: 220px; margin-left: auto; white-space: normal; }

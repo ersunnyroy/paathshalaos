@@ -357,3 +357,27 @@ enquiry form with a fee.
 | M45 | teacher's day on the web done; mobile teacher app v2, marks grid, homework with attachments not started |
 | M48 | admissions board done; follow-up reminders, source report, public enquiry form not started |
 | M43, M46, M47, M49 … M52 | not started |
+
+## M44.2 — Marks entry sheet (plan item B4)
+
+Web only; no API or schema change.
+
+- `apps/web/src/lib/marks.ts` (pure, 25 tests, mutation pass clean): what a cell
+  means (`readCell`: number with up to two decimals, A/E, refused above the
+  maximum), what goes to the server (`changes`: only cells that differ from what
+  is saved), spreadsheet paste (`paste`: one column in register order from the
+  cell pasted into; two or more columns matched by admission number, then roll
+  number, last column is the mark), class summary, Enter/arrow movement, server
+  refusal codes in plain words, requests split at the server's 200-row limit.
+- `apps/web/src/app/results/marks-sheet.tsx` replaces the inline marks table on
+  Results. Bad cells are held back and marked in red while the rest save; the
+  browser warns before leaving with unsaved marks.
+- Found and fixed on the way: the old table sent `Number('xx')` (NaN → null),
+  which made the server refuse the whole class for one typo; and it resent every
+  touched cell even when unchanged.
+- Not done: a grade beside each mark. The grading scale is chosen when a result
+  run is computed, not on the paper, so a grade here would be a guess. Percent
+  is shown instead.
+- Checked live in Chrome as principal on "Energy conversions worksheet" (out of
+  15): paste of six, two refused in red, four saved, two fixed and saved,
+  emptying a saved mark refused. Demo data now has 6 marks on that paper.
