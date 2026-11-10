@@ -895,3 +895,9 @@ dl.facts dd { margin: 0; color: var(--ink); min-width: 0; overflow-wrap: anywher
 .page .console-tabs + .panel { margin-top: 16px; }
 
 tr.nested td { background: var(--surface-2); padding-top: 10px; padding-bottom: 10px; }
+
+code.secret {
+  font: 600 14px/1.4 ui-monospace, SFMono-Regular, Menlo, monospace;
+  background: var(--warning-wash); color: var(--warning-ink);
+  padding: 3px 8px; border-radius: 6px; user-select: all;
+}

@@ -7,6 +7,7 @@ import {
   rupeesDecimal, sumDecimals, groupTeam, grantable, versionAction,
   CAPABILITY_MEANING, type AdminRow,
   METRICS, FEATURES, planCodeFrom, buildTerms, priceOrNull, type TermsForm,
+  buildSchool, campusCodeFrom, SUBSCRIPTION_STATUSES, STATUS_MEANING, type SchoolForm,
 } from '@/lib/console';
 
 const day = (value: string | null) =>
@@ -300,6 +301,7 @@ export function Billing({ schools }: { schools: Array<{ id: string; display_name
   const [crediting, setCrediting] = useState<Invoice | null>(null);
   const [said, setSaid] = useState<string | null>(null);
   const [subscribing, setSubscribing] = useState(false);
+  const [changing, setChanging] = useState(false);
 
   const load = useCallback((id: string) => {
     if (!id) { setInvoices(null); return; }
@@ -323,6 +325,7 @@ export function Billing({ schools }: { schools: Array<{ id: string; display_name
                {schools.map((s) => <option key={s.id} value={s.id}>{s.display_name}</option>)}
              </select>
              <button disabled={!tenantId} onClick={() => setSubscribing(true)}>Put on a plan…</button>
+             <button disabled={!tenantId} onClick={() => setChanging(true)}>Change subscription…</button>
            </>)}>
       {error ? <div className="note bad" style={{ margin: '0 16px 12px' }}>{error}</div> : null}
       {said ? <div className="note" style={{ margin: '0 16px 12px' }}>{said}</div> : null}
@@ -373,6 +376,12 @@ export function Billing({ schools }: { schools: Array<{ id: string; display_name
                    school={schools.find((s) => s.id === tenantId)?.display_name ?? 'this school'}
                    onClose={() => setSubscribing(false)}
                    onDone={(text) => { setSubscribing(false); setSaid(text); }} />
+      ) : null}
+      {changing && tenantId ? (
+        <ChangeSubscription tenantId={tenantId}
+                   school={schools.find((s) => s.id === tenantId)?.display_name ?? 'this school'}
+                   onClose={() => setChanging(false)}
+                   onDone={(text) => { setChanging(false); setSaid(text); }} />
       ) : null}
       {crediting ? (
         <CreditNote invoice={crediting} onClose={() => setCrediting(null)}
@@ -455,6 +464,100 @@ function Subscribe({ tenantId, school, onClose, onDone }: {
           <button type="button" className="ghost" onClick={onClose}>Cancel</button>
           <button type="submit" className="primary" disabled={busy || !versionId}>
             {busy ? 'Saving…' : 'Subscribe'}
+          </button>
+        </div>
+      </form>
+    </div>
+  );
+}
+
+/**
+ * Moves a school to another plan version, or changes what state it is in.
+ *
+ * Both ask for a reason, and the reason is kept: "why is this school
+ * read-only" is a question somebody asks months later, usually the school.
+ */
+function ChangeSubscription({ tenantId, school, onClose, onDone }: {
+  tenantId: string; school: string; onClose: () => void; onDone: (said: string) => void;
+}) {
+  const [mode, setMode] = useState<'move' | 'status'>('move');
+  const [versions, setVersions] = useState<PlanVersion[] | null>(null);
+  const [versionId, setVersionId] = useState('');
+  const [status, setStatus] = useState<string>('active');
+  const [reason, setReason] = useState('');
+  const [error, setError] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+
+  useEffect(() => {
+    consoleGet<PlanVersion[]>('/plans')
+      .then((all) => setVersions(all.filter((p) => p.status === 'published')))
+      .catch((e: ApiError) => { setError(e.message); setVersions([]); });
+  }, []);
+
+  const minimum = mode === 'move' ? 5 : 3;
+
+  async function submit(event: FormEvent) {
+    event.preventDefault();
+    setError(null); setBusy(true);
+    try {
+      if (mode === 'move') {
+        await consolePost('/subscriptions/move', { tenantId, planVersionId: versionId, reason: reason.trim() });
+        const chosen = versions?.find((v) => v.id === versionId);
+        onDone(`${school} moved to ${chosen?.plan_name ?? 'the plan'} v${chosen?.version ?? ''}.`);
+      } else {
+        await consolePost('/subscriptions/status', { tenantId, status, reason: reason.trim() });
+        onDone(`${school} is now ${status.replace(/_/g, ' ')}: ${STATUS_MEANING[status]?.toLowerCase() ?? ''}.`);
+      }
+    } catch (e) {
+      setError((e as ApiError).message);
+    } finally { setBusy(false); }
+  }
+
+  return (
+    <div className="sheet-backdrop" onMouseDown={onClose}>
+      <form className="sheet" onSubmit={submit} onMouseDown={(e) => e.stopPropagation()}>
+        <h2>Change {school}'s subscription</h2>
+        <div className="row" style={{ margin: '10px 0 4px' }}>
+          <label className="check chipcheck">
+            <input type="radio" name="mode" checked={mode === 'move'} onChange={() => setMode('move')} />
+            Move to another plan
+          </label>
+          <label className="check chipcheck">
+            <input type="radio" name="mode" checked={mode === 'status'} onChange={() => setMode('status')} />
+            Change its status
+          </label>
+        </div>
+        {mode === 'move' ? (
+          <>
+            <label htmlFor="move-version">Plan</label>
+            <select id="move-version" value={versionId} onChange={(e) => setVersionId(e.target.value)} required>
+              <option value="">Choose…</option>
+              {(versions ?? []).map((v) => (
+                <option key={v.id} value={v.id}>
+                  {v.plan_name} v{v.version} — {rupeesDecimal(v.price_monthly)}/month
+                </option>
+              ))}
+            </select>
+          </>
+        ) : (
+          <>
+            <label htmlFor="sub-status">Status</label>
+            <select id="sub-status" value={status} onChange={(e) => setStatus(e.target.value)}>
+              {SUBSCRIPTION_STATUSES.map((s) => (
+                <option key={s} value={s}>{s.replace(/_/g, ' ')} — {STATUS_MEANING[s]}</option>
+              ))}
+            </select>
+          </>
+        )}
+        <label htmlFor="change-reason">Reason — kept on the record</label>
+        <textarea id="change-reason" rows={2} value={reason} required minLength={minimum} maxLength={300}
+                  onChange={(e) => setReason(e.target.value)} />
+        {error ? <div className="note bad" style={{ marginTop: 12 }}>{error}</div> : null}
+        <div className="row" style={{ marginTop: 16, justifyContent: 'flex-end' }}>
+          <button type="button" className="ghost" onClick={onClose}>Cancel</button>
+          <button type="submit" className="primary"
+                  disabled={busy || reason.trim().length < minimum || (mode === 'move' && !versionId)}>
+            {busy ? 'Saving…' : mode === 'move' ? 'Move school' : 'Change status'}
           </button>
         </div>
       </form>
@@ -607,5 +710,117 @@ export function Team() {
         ))}
       </dl>
     </Panel>
+  );
+}
+
+/* -------------------------------------------------------------- new school */
+
+interface Provisioned { tenantId: string; temporaryPassword: string; created: boolean; host?: string }
+
+/**
+ * Creates a school: the organisation, its first campus and its owner account.
+ *
+ * The request key is made once, when the form opens, and reused for every
+ * press of the button. A double click, or a retry after a timeout that
+ * actually succeeded, returns the school already created instead of a second.
+ *
+ * The temporary password is shown once and never again — the API does not
+ * keep it — so the result stays on screen until somebody closes it.
+ */
+export function NewSchool({ onClose, onCreated }: { onClose: () => void; onCreated: () => void }) {
+  const [requestKey] = useState(() =>
+    `console-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 12)}`);
+  const [form, setForm] = useState<SchoolForm>({
+    legalName: '', displayName: '', ownerEmail: '', campusName: 'Main Campus', campusCode: 'MAIN', board: '',
+  });
+  const [codeTouched, setCodeTouched] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [done, setDone] = useState<{ result: Provisioned; notice: string; name: string; email: string } | null>(null);
+
+  const set = (field: keyof SchoolForm, value: string) => setForm((f) => ({ ...f, [field]: value }));
+
+  async function submit(event: FormEvent) {
+    event.preventDefault();
+    setError(null);
+    const built = buildSchool(form, requestKey);
+    if (!built.ok) { setError(built.error); return; }
+    setBusy(true);
+    try {
+      const result = await consolePost<Provisioned>('/tenants', built.body);
+      setDone({
+        result, name: built.body['displayName'] ?? '', email: built.body['ownerEmail'] ?? '',
+        notice: result.created
+          ? 'Give this password to the owner directly — not by email to the address it unlocks — and have them change it at first sign-in.'
+          : 'This form had already created the school. No second school was made and no new password was issued.',
+      });
+      onCreated();
+    } catch (e) {
+      setError((e as ApiError).message);
+    } finally { setBusy(false); }
+  }
+
+  if (done) {
+    return (
+      <div className="sheet-backdrop">
+        <div className="sheet">
+          <h2>{done.name} is created</h2>
+          <dl className="facts" style={{ padding: '8px 0' }}>
+            <div><dt>Owner signs in as</dt><dd>{done.email}</dd></div>
+            {done.result.host ? <div><dt>Web address</dt><dd>{done.result.host}</dd></div> : null}
+            {done.result.temporaryPassword
+              ? <div><dt>Temporary password</dt><dd><code className="secret">{done.result.temporaryPassword}</code></dd></div>
+              : null}
+          </dl>
+          <div className="note">{done.notice}</div>
+          <div className="row" style={{ marginTop: 16, justifyContent: 'flex-end' }}>
+            <button className="primary" onClick={onClose}>
+              {done.result.temporaryPassword ? 'I have noted the password' : 'Close'}
+            </button>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div className="sheet-backdrop" onMouseDown={onClose}>
+      <form className="sheet wide" onSubmit={submit} onMouseDown={(e) => e.stopPropagation()}>
+        <h2>New school</h2>
+        <p className="lede">Creates the school, its first campus and one owner account. The owner sets up everything else.</p>
+        <label htmlFor="school-legal">Legal name — as it should appear on invoices</label>
+        <input id="school-legal" type="text" value={form.legalName} required
+               onChange={(e) => set('legalName', e.target.value)} placeholder="St Mary Education Trust" />
+        <label htmlFor="school-display">Name people know it by</label>
+        <input id="school-display" type="text" value={form.displayName}
+               onChange={(e) => set('displayName', e.target.value)} placeholder="St Mary's High School" />
+        <label htmlFor="school-owner">Owner's email</label>
+        <input id="school-owner" type="email" value={form.ownerEmail} required
+               onChange={(e) => set('ownerEmail', e.target.value)} placeholder="principal@school.in" />
+        <div className="grid2">
+          <div>
+            <label htmlFor="school-campus">First campus</label>
+            <input id="school-campus" type="text" value={form.campusName} required
+                   onChange={(e) => {
+                     set('campusName', e.target.value);
+                     if (!codeTouched) set('campusCode', campusCodeFrom(e.target.value));
+                   }} />
+          </div>
+          <div>
+            <label htmlFor="school-code">Campus code</label>
+            <input id="school-code" type="text" value={form.campusCode} required
+                   onChange={(e) => { set('campusCode', e.target.value.toUpperCase()); setCodeTouched(true); }} />
+          </div>
+        </div>
+        <label htmlFor="school-board">Board or affiliation (optional)</label>
+        <input id="school-board" type="text" value={form.board}
+               onChange={(e) => set('board', e.target.value)} placeholder="CBSE" />
+        {error ? <div className="note bad" style={{ marginTop: 12 }}>{error}</div> : null}
+        <div className="row" style={{ marginTop: 16, justifyContent: 'flex-end' }}>
+          <button type="button" className="ghost" onClick={onClose}>Cancel</button>
+          <button type="submit" className="primary" disabled={busy}>{busy ? 'Creating…' : 'Create school'}</button>
+        </div>
+      </form>
+    </div>
   );
 }

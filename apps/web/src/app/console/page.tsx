@@ -7,7 +7,7 @@ import {
   assumeSchoolSession, ApiError,
 } from '@/lib/api';
 import { Lockup, Panel, Pill, Empty, Icon, SkeletonRows } from '@/components/ui';
-import { Plans, Billing, Team, ConfirmButton } from './panels';
+import { Plans, Billing, Team, ConfirmButton, NewSchool } from './panels';
 import { estate } from '@/lib/console';
 
 /**
@@ -247,6 +247,7 @@ function Console({ onSignOut }: { onSignOut: () => void }) {
   const [error, setError] = useState<string | null>(null);
   const [tab, setTab] = useState<Tab>('schools');
   const [said, setSaid] = useState<string | null>(null);
+  const [creating, setCreating] = useState(false);
 
   async function setStatus(school: Health, action: 'suspend' | 'resume') {
     setError(null); setSaid(null);
@@ -358,7 +359,8 @@ function Console({ onSignOut }: { onSignOut: () => void }) {
         ) : null}
 
         <Panel title="Schools"
-               hint="Our relationship with each school. Deliberately not a count of their learners or their money.">
+               hint="Our relationship with each school. Deliberately not a count of their learners or their money."
+               actions={<button className="primary" onClick={() => setCreating(true)}>New school</button>}>
           <div className="scroll">
             <table>
               <thead>
@@ -448,6 +450,8 @@ function Console({ onSignOut }: { onSignOut: () => void }) {
         </Panel>
         ) : null}
       </main>
+
+      {creating ? <NewSchool onClose={() => setCreating(false)} onCreated={refresh} /> : null}
 
       {target ? (
         <EnterDialog school={target} onClose={() => setTarget(null)} onEntered={refresh} />

@@ -8,7 +8,7 @@
 import { describe, it, expect } from 'vitest';
 import {
   rupeesDecimal, sumDecimals, groupTeam, grantable, versionAction, estate, CAPABILITIES,
-  planCodeFrom, buildTerms, priceOrNull, FEATURES,
+  planCodeFrom, buildTerms, priceOrNull, FEATURES, buildSchool, campusCodeFrom,
 } from '../src/lib/console.ts';
 
 describe('showing a rupee amount', () => {
@@ -181,5 +181,58 @@ describe('building a plan', () => {
     expect(priceOrNull('-5')).toBeNull();
     expect(priceOrNull('free')).toBeNull();
     expect(priceOrNull('')).toBeNull();
+  });
+});
+
+describe('creating a school', () => {
+  const form = (over = {}) => ({
+    legalName: 'St Mary Education Trust', displayName: "St Mary's", ownerEmail: ' Principal@StMarys.in ',
+    campusName: 'Main Campus', campusCode: 'MAIN', board: '', ...over,
+  });
+  const KEY = 'req-0123456789';
+
+  it('sends what was typed, trimmed, with the email lowercased', () => {
+    const built = buildSchool(form(), KEY);
+    expect(built.ok).toBe(true);
+    if (!built.ok) return;
+    expect(built.body).toEqual({
+      requestKey: KEY, legalName: 'St Mary Education Trust', displayName: "St Mary's",
+      ownerEmail: 'principal@stmarys.in', campusName: 'Main Campus', campusCode: 'MAIN',
+    });
+  });
+
+  it('carries the same request key it was given, so a retry cannot create a second school', () => {
+    const first = buildSchool(form(), KEY);
+    const second = buildSchool(form(), KEY);
+    expect(first.ok && second.ok && first.body['requestKey'] === second.body['requestKey']).toBe(true);
+  });
+
+  it('uses the legal name when no display name is given', () => {
+    const built = buildSchool(form({ displayName: '  ' }), KEY);
+    expect(built.ok && built.body['displayName']).toBe('St Mary Education Trust');
+  });
+
+  it('includes the board only when there is one', () => {
+    const built = buildSchool(form({ board: ' CBSE ' }), KEY);
+    expect(built.ok && built.body['boardOrAffiliation']).toBe('CBSE');
+    const none = buildSchool(form(), KEY);
+    expect(none.ok && 'boardOrAffiliation' in none.body).toBe(false);
+  });
+
+  it('refuses a bad email, a missing name and a campus code the receipts cannot carry', () => {
+    expect(buildSchool(form({ ownerEmail: 'principal' }), KEY).ok).toBe(false);
+    expect(buildSchool(form({ ownerEmail: 'a b@x.in' }), KEY).ok).toBe(false);
+    expect(buildSchool(form({ legalName: ' ' }), KEY).ok).toBe(false);
+    expect(buildSchool(form({ campusName: '' }), KEY).ok).toBe(false);
+    expect(buildSchool(form({ campusCode: 'main' }), KEY).ok).toBe(false);
+    expect(buildSchool(form({ campusCode: 'M' }), KEY).ok).toBe(false);
+    expect(buildSchool(form({ campusCode: '-MAIN' }), KEY).ok).toBe(false);
+  });
+
+  it('makes a campus code the API accepts from a name', () => {
+    expect(campusCodeFrom('Main Campus')).toBe('MAIN-CAMPUS');
+    expect(campusCodeFrom(' north (junior) wing ')).toBe('NORTH-JUNIOR-WING');
+    const built = buildSchool(form({ campusCode: campusCodeFrom('Main Campus') }), KEY);
+    expect(built.ok).toBe(true);
   });
 });

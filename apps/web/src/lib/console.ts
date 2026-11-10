@@ -183,3 +183,60 @@ export function priceOrNull(text: string): string | null {
   const value = text.trim().replace(/,/g, '');
   return /^\d{1,12}(\.\d{1,2})?$/.test(value) ? value : null;
 }
+
+/* ------------------------------------------------------------ new school */
+
+export interface SchoolForm {
+  legalName: string; displayName: string; ownerEmail: string;
+  campusName: string; campusCode: string; board: string;
+}
+
+/** A campus code from its name: "Main Campus" → "MAIN-CAMPUS". */
+export function campusCodeFrom(name: string): string {
+  return name.trim().toUpperCase().replace(/[^A-Z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 31)
+    .replace(/-+$/, '');
+}
+
+/**
+ * The request the console sends to create a school, or what is wrong.
+ *
+ * `requestKey` is passed in rather than made here: it must stay the same when
+ * somebody presses the button twice or retries after a timeout, because that
+ * key is what stops one form creating two schools.
+ */
+export function buildSchool(form: SchoolForm, requestKey: string):
+  { ok: true; body: Record<string, string> } | { ok: false; error: string } {
+  const legalName = form.legalName.trim();
+  const displayName = form.displayName.trim() || legalName;
+  const ownerEmail = form.ownerEmail.trim().toLowerCase();
+  const campusName = form.campusName.trim();
+  const campusCode = form.campusCode.trim();
+  if (!legalName) return { ok: false, error: 'The legal name is needed: it goes on invoices.' };
+  if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(ownerEmail)) {
+    return { ok: false, error: "The owner's email address does not look right." };
+  }
+  if (!campusName) return { ok: false, error: 'Name the first campus.' };
+  if (!/^[A-Z0-9][A-Z0-9-]{1,30}$/.test(campusCode)) {
+    return { ok: false, error: 'The campus code is 2 to 31 capital letters, digits and hyphens. It appears in receipt numbers.' };
+  }
+  if (requestKey.length < 8) return { ok: false, error: 'Internal: no request key.' };
+  const board = form.board.trim();
+  return {
+    ok: true,
+    body: {
+      requestKey, legalName, displayName, ownerEmail, campusName, campusCode,
+      ...(board ? { boardOrAffiliation: board } : {}),
+    },
+  };
+}
+
+export const SUBSCRIPTION_STATUSES = ['trialing', 'active', 'past_due', 'read_only', 'ended'] as const;
+
+/** What each subscription status does to the school, in one line. */
+export const STATUS_MEANING: Record<string, string> = {
+  trialing: 'Full use, not yet billed',
+  active: 'Full use, billed',
+  past_due: 'Full use, payment is late',
+  read_only: 'Can see everything, can change nothing',
+  ended: 'Subscription over',
+};

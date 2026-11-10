@@ -99,6 +99,30 @@ Mutation pass on both: 11 mutations, 10 caught first time. The one that changed 
 Web tests now 78. Typecheck and `next build` pass. API suite still not run from this
 session; nothing under `apps/api` changed.
 
+## M41.2 and M42.5.2 — structure screens, and the rest of the console that needed no new API
+
+**School structure** (`/academics`, in the nav under Academics for unrestricted roles):
+years and terms, classes and sections, subjects, programmes, rooms — list and add. The
+year form names the year from its dates and splits it into equal back-to-back terms that
+can then be adjusted; an overlap or a term outside the year is caught before the request.
+Nothing deletes, because the API does not.
+
+**Console:** a New school form (organisation, first campus, owner; the temporary password
+is shown once and the request key is fixed when the form opens, so a double click cannot
+create two schools), and Change subscription (move to another plan version, or change
+status, each with a recorded reason).
+
+Exercised in a browser against the running API. Demo data added by that: year 2027-28
+with two terms, Class XI with section A, subject Physics, Room 101; a second school,
+Sunrise Public School (owner@sunrise.test); Demo Vidyalaya's subscription set to active.
+
+Mutation pass: 10 mutations across `structure.ts` and `buildSchool`, all caught.
+Web tests 102. Typecheck and `next build` pass.
+
+Not on the structure screen yet: course offerings (which subject a class takes in a term,
+and who teaches it), assigning a class teacher or room to a section, adding a term to an
+existing year. All have routes.
+
 ## Status
 
 | ID | State |
@@ -106,6 +130,6 @@ session; nothing under `apps/api` changed.
 | M39 | tokens done; typed client moved to M39.1 |
 | M39.1 | not started |
 | M40 | part 1 done; 18 pages still on effect-fetching, no shared data table yet |
-| M42.5 | part 1 done (screens over existing routes) |
-| M41 | learner profile done; structure screens and web file upload not started |
+| M42.5 | every existing platform route now has a screen; what is left needs new API |
+| M41 | learner profile and structure screens done; offerings, web file upload, guardian names not started |
 | M42 … M52 | not started |
