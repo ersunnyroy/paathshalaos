@@ -258,6 +258,30 @@ timezone and shows the old expression giving the wrong day.
 
 Web tests 159.
 
+## M44.1 — a parent's home, on the web
+
+**What a parent saw before this:** the school's dashboard ("Fee collection", "By campus",
+"Needs attention"), the attendance register, and the fee desk with a "Take cash" button.
+Every row was correctly limited to their own children — the database did its job — on
+screens built for the office.
+
+**Now.** A guardian lands on `/family` and their navigation is that and Consent. One card
+per child: today's attendance and the last week, what is owed and what is overdue, the
+bus stop and times; then what the school has sent. "Full record" opens the child's page,
+which for a parent has no medical panel and goes back to their children, not to a roster.
+
+Each guardian link's permissions are honoured: where a link does not allow fees, no fee
+request is made for that child at all (seen live: one child with fees shown, one with
+"not shared with you"). A teacher who is also a parent here gets both and lands on the
+dashboard. Fees cannot be paid online — that is M26 — and the page says so instead of
+showing a button that does nothing.
+
+`nav.ts` gained role-only items (`only`) and `homeFor`. Four mutations, all caught. The
+sign-in page lists the demo parent. Web tests 165.
+
+Not done: the same for the mobile app (its family screen predates this), student login,
+push notifications, leave requests.
+
 ## Status
 
 | ID | State |
@@ -268,4 +292,5 @@ Web tests 159.
 | M42.5 | all existing routes have screens; revenue added. Left: lifecycle pipeline, school health and usage, 2FA, cross-school support desk |
 | M41 | learner profile, structure screens, guardian names, offerings (on the timetable page) done; web file upload and activity timeline not started |
 | M42 | timetable view, add, move and remove done; free-teacher suggestions for cover not started |
-| M43 … M52 | not started |
+| M44 | parent home on the web done; mobile parent app v2, online payment, notifications not started |
+| M43, M45 … M52 | not started |

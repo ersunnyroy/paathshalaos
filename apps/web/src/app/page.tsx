@@ -18,6 +18,7 @@ const ACCOUNTS = [
   { email: 'principal@demo.school', role: 'Principal', sees: 'Everything' },
   { email: 'accounts@demo.school', role: 'Accountant', sees: 'Including money' },
   { email: 'teacher@demo.school', role: 'Teacher', sees: 'No fees at all' },
+  { email: 'parent@demo.school', role: 'Parent', sees: 'Their own children' },
 ];
 
 export default function LoginPage() {
@@ -124,7 +125,7 @@ export default function LoginPage() {
       {process.env.NODE_ENV === 'development' ? (
       <div className="auth-side">
         <p className="sub" style={{ margin: '0 0 8px' }}>
-          Three accounts, one password. The screens differ because the database
+          Four accounts, one password. The screens differ because the database
           returns different rows — nothing is hidden in the interface.
         </p>
         <div className="accounts">

@@ -12,15 +12,26 @@
 export type IconName =
   | 'dashboard' | 'inbox' | 'learners' | 'attendance' | 'bus' | 'staff' | 'book'
   | 'award' | 'fees' | 'send' | 'upload' | 'key' | 'shield' | 'check' | 'help'
-  | 'plug' | 'code' | 'layers' | 'clock';
+  | 'plug' | 'code' | 'layers' | 'clock' | 'home';
 
-export interface NavItem { href: string; label: string; icon: IconName; keywords?: string }
+export interface NavItem {
+  href: string; label: string; icon: IconName; keywords?: string;
+  /**
+   * Shown only to somebody holding one of these roles. Without this, a screen
+   * built for parents would appear in the principal's navigation, because an
+   * owner is shown everything.
+   */
+  only?: readonly string[];
+}
 export interface NavGroup { title: string; items: NavItem[] }
 
 export const GROUPS: NavGroup[] = [
   {
     title: 'Overview',
-    items: [{ href: '/dashboard', label: 'Dashboard', icon: 'dashboard', keywords: 'home overview' }],
+    items: [
+      { href: '/family', label: 'My children', icon: 'home', keywords: 'home parent child', only: ['GUARDIAN'] },
+      { href: '/dashboard', label: 'Dashboard', icon: 'dashboard', keywords: 'home overview' },
+    ],
   },
   {
     title: 'Daily',
@@ -76,7 +87,11 @@ const SCREENS: Record<string, readonly string[]> = {
   ACCOUNTANT: ['/dashboard', '/students', '/fees', '/messages', '/imports', '/support'],
   ADMISSIONS: ['/dashboard', '/admissions', '/students', '/messages', '/imports', '/support'],
   TRANSPORT: ['/dashboard', '/transport', '/support'],
-  GUARDIAN: ['/dashboard', '/students', '/attendance', '/fees', '/learning', '/results', '/consent'],
+  // Not the staff screens. Until M44 a parent was shown the school's
+  // dashboard, the attendance register and a fee desk with a "Take cash"
+  // button — every row correctly scoped to their own children, on screens
+  // built for the office. A child's page is reached from /family.
+  GUARDIAN: ['/family', '/consent'],
   STUDENT: ['/dashboard', '/attendance', '/learning', '/results'],
 };
 
@@ -96,10 +111,28 @@ export function screensFor(roles: readonly string[]): Set<string> | null {
 /** The groups as this person sees them; empty groups are dropped. */
 export function navFor(roles: readonly string[]): NavGroup[] {
   const allowed = screensFor(roles);
-  if (!allowed) return GROUPS;
   return GROUPS
-    .map((group) => ({ ...group, items: group.items.filter((item) => allowed.has(item.href)) }))
+    .map((group) => ({
+      ...group,
+      items: group.items.filter((item) =>
+        (!item.only || item.only.some((role) => roles.includes(role)))
+        && (!allowed || allowed.has(item.href))),
+    }))
     .filter((group) => group.items.length > 0);
+}
+
+/**
+ * Where somebody lands after signing in.
+ *
+ * The school's dashboard for anyone who works there; their children for a
+ * parent. Decided by whether the dashboard is one of their screens, so a
+ * teacher who is also a parent at the school lands on the dashboard and finds
+ * "My children" in the navigation.
+ */
+export function homeFor(roles: readonly string[]): string {
+  const allowed = screensFor(roles);
+  if (!allowed || allowed.has('/dashboard')) return '/dashboard';
+  return allowed.has('/family') ? '/family' : [...allowed][0] ?? '/dashboard';
 }
 
 /**

@@ -7,7 +7,7 @@ import { apiGet, clearSession, currentToken, onSignedOut, loadBrand } from '@/li
 import { brandVariables, type Brand } from '@/lib/brand';
 import { Icon, Mark } from '@/components/ui';
 import { Palette } from '@/components/palette';
-import { GROUPS, navFor } from '@/lib/nav';
+import { GROUPS, navFor, homeFor } from '@/lib/nav';
 
 interface Me {
   tenantId: string;
@@ -94,6 +94,17 @@ export function Shell({ children }: { children: ReactNode }) {
     document.documentElement.dataset['theme'] = next;
     try { localStorage.setItem(THEME_KEY, next); } catch { /* fine */ }
   }
+
+  useEffect(() => {
+    // Sign-in sends everybody to /dashboard. A parent's home is their
+    // children, and the school's dashboard is not one of their screens — so
+    // once we know who this is, send them where they belong. Never while
+    // somebody is inside a school through the console: they are there to see
+    // what the school sees.
+    if (!me || me.impersonation || pathname !== '/dashboard') return;
+    const home = homeFor(me.roles);
+    if (home !== '/dashboard') router.replace(home);
+  }, [me, pathname, router]);
 
   const role = me?.roles[0]?.replace(/_/g, ' ').toLowerCase() ?? '';
   // Somebody inside a school through the console sees the whole navigation:

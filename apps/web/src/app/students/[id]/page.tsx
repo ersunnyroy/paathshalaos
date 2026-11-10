@@ -13,6 +13,7 @@ import {
   type AttendanceSummary, type FeeInvoice, type GuardianLink,
 } from '@/lib/learner';
 import { localIsoDate } from '@/lib/dates';
+import { homeFor } from '@/lib/nav';
 
 /**
  * One learner, on one page (M41).
@@ -78,6 +79,10 @@ export default function LearnerPage() {
   const [showEmergency, setShowEmergency] = useState(false);
   const today = localIsoDate();
 
+  const me = useApiQuery<{ roles: string[] }>('/v1/me');
+  // A parent reaches this page from their children, not from a roster, and
+  // the medical panel is the office's: the route refuses a guardian anyway.
+  const parent = homeFor(me.data?.roles ?? []) === '/family';
   const learner = useApiQuery<Learner>(`/v1/students/${id}`);
   const ready = learner.isSuccess;
   const attendance = useApiQuery<Attendance>(ready ? `/v1/family/children/${id}/attendance` : null);
@@ -111,7 +116,9 @@ export default function LearnerPage() {
   return (
     <Shell>
       <div className="profile-head">
-        <Link href="/students" className="back">← Learners</Link>
+        {parent
+          ? <Link href="/family" className="back">← My children</Link>
+          : <Link href="/students" className="back">← Learners</Link>}
         <div className="who">
           <span className="big-avatar"><Avatar name={name || '…'} /></span>
           <div>
@@ -185,6 +192,7 @@ export default function LearnerPage() {
             </Panel>
           </div>
 
+{parent ? null : (
           <Panel title="Medical and emergency"
                  hint="Restricted. Opening this is recorded against your name in the audit log.">
             {!showEmergency ? (
@@ -203,6 +211,7 @@ export default function LearnerPage() {
                 </dl>
               )}
           </Panel>
+          )}
         </>
       ) : null}
 
