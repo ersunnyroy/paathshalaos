@@ -352,7 +352,7 @@ enquiry form with a fee.
 | M40 | shell, palette, query cache, bell, shared data table (Learners, Fees invoices, Staff roster). 14 pages still to move |
 | M42.5 | all existing routes have screens; revenue added. Left: lifecycle pipeline, school health and usage, 2FA, cross-school support desk |
 | M41 | learner profile, structure screens, guardian names, offerings (on the timetable page) done; web file upload and activity timeline not started |
-| M42 | timetable view, add, move and remove done; free-teacher suggestions for cover not started |
+| M42 | timetable view, add, move and remove done; who is free to cover done (web); period-level cover not started |
 | M44 | parent home on the web done; mobile parent app v2, online payment, notifications not started |
 | M45 | teacher's day and marks entry sheet on the web done; mobile teacher app v2, homework with attachments not started |
 | M48 | admissions board done; follow-up reminders, source report, public enquiry form not started |
@@ -381,3 +381,29 @@ Web only; no API or schema change.
 - Checked live in Chrome as principal on "Energy conversions worksheet" (out of
   15): paste of six, two refused in red, four saved, two fixed and saved,
   emptying a saved mark refused. Demo data now has 6 marks on that paper.
+
+## M42.3 — Who is free to cover
+
+Web only; no API or schema change.
+
+- `apps/web/src/lib/cover.ts` (pure, 15 tests, mutation pass clean): for a day,
+  every lesson an absent teacher leaves behind, and up to three people who could
+  take it. Left out: anybody away, anybody who has left, anybody teaching at that
+  time, anybody with no timetable at all (the accountant is always "free").
+  Order: already teaches these children, then teaches the subject, then the
+  lightest day (own lessons plus cover already handed out), then name.
+- `apps/web/src/app/staff/cover-gaps.tsx` in the Cover panel on Staff: each gap
+  with its suggestions and the reason for each; two clicks assign. A lesson the
+  whole class takes together asks which section, because cover is granted on a
+  section.
+- Bug fixed: the old cover form never sent `absentStaffId`, so an assigned cover
+  was saved but the absence still read "Nobody yet" and the "Classes with no
+  cover" tile never cleared. The form now asks who the cover is for.
+- Known limits: weeks are read with one request per member of staff (six at a
+  time) — fine for a school, worth one API route later. Cover is still for the
+  whole day, not the period: nothing maps a lesson's clock time to `period_no`.
+  A whole-class lesson shows as covered once any one of its sections has cover.
+- Checked live in Chrome: Suresh away Wed 11 Nov → "9:00–9:40 · Mathematics ·
+  Class IX", Meera suggested ("teaches this class · 1 lesson that day"),
+  assigned, row and table both show her. Demo data: Physics Wed 10:00 for Meera,
+  Suresh's leave on 11 Nov, Meera covering Class IX A that day.

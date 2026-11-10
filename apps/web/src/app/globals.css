@@ -1037,3 +1037,18 @@ ol.day li.is-now { background: var(--brand-soft); box-shadow: inset 3px 0 0 var(
 input.mark-cell { width: 84px; min-width: 0; text-align: right; font-variant-numeric: tabular-nums; }
 input.mark-cell.bad { border-color: var(--critical); background: var(--critical-wash); color: var(--critical-ink); }
 .mark-why { display: block; color: var(--critical-ink); max-width: 220px; margin-left: auto; white-space: normal; }
+
+/* Cover suggestions */
+.cover-gaps { border-top: 1px solid var(--line); padding: 14px 16px 4px; }
+.cover-gaps h3 { margin: 0 0 8px; font-size: 13px; color: var(--ink-2); font-weight: 600; }
+.cover-gaps ul { list-style: none; margin: 0; padding: 0; }
+.cover-gaps li {
+  display: flex; flex-wrap: wrap; gap: 8px 20px; align-items: flex-start;
+  padding: 10px 0; border-top: 1px solid var(--line);
+}
+.cover-gaps li:first-child { border-top: 0; }
+.cover-gaps .what { flex: 1 1 240px; min-width: 0; }
+.cover-gaps .what .sub { display: block; }
+.cover-gaps .who { flex: 2 1 320px; display: flex; flex-wrap: wrap; gap: 8px 14px; align-items: flex-start; }
+.cover-gaps .pick { display: flex; flex-direction: column; gap: 2px; }
+.cover-gaps-note { padding: 10px 16px; margin: 0; }

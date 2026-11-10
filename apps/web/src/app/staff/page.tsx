@@ -20,6 +20,7 @@ import { Empty, Panel, Pill, SkeletonRows, Tile } from '@/components/ui';
 import { localIsoDate } from '@/lib/dates';
 import { DataTable } from '@/components/data-table';
 import { apiGet, apiPost } from '@/lib/api';
+import { CoverGaps } from './cover-gaps';
 
 interface StaffRow {
   staff_id: string; employee_code: string; given_name: string;
@@ -50,6 +51,9 @@ interface Cover {
 }
 interface Section { id: string; section_name: string; class_name: string | null }
 
+const NOBODY: Cover['absent'] = [];
+const NOTHING: Cover['assigned'] = [];
+
 const who = (r: { given_name: string; family_name: string | null }) =>
   `${r.given_name}${r.family_name ? ` ${r.family_name}` : ''}`;
 
@@ -73,7 +77,7 @@ export default function StaffPage() {
   });
   // A refusal has to carry a reason, so the box lives on the row being refused.
   const [notes, setNotes] = useState<Record<string, string>>({});
-  const [coverForm, setCoverForm] = useState({ sectionId: '', coveringStaffId: '' });
+  const [coverForm, setCoverForm] = useState({ sectionId: '', coveringStaffId: '', absentStaffId: '' });
 
   const load = useCallback(() => {
     setError(null);
@@ -294,8 +298,24 @@ export default function StaffPage() {
           <Empty title="Everybody is in on this day">Nothing to cover.</Empty>
         ) : null}
 
+        {staff ? (
+          <CoverGaps day={day} absent={cover?.absent ?? NOBODY}
+                     assigned={cover?.assigned ?? NOTHING}
+                     staff={staff} sections={sections} busy={busy}
+                     onAssign={(body, done) => act(
+                       () => apiPost('/v1/hr/cover', { ...body, onDate: day }), done)} />
+        ) : null}
+
         {(cover?.absent.length ?? 0) > 0 ? (
           <div className="row-form" style={{ marginTop: 12 }}>
+            <select value={coverForm.absentStaffId} aria-label="Covering for"
+                    onChange={(e) => setCoverForm((f) => ({
+                      ...f, absentStaffId: e.target.value }))}>
+              <option value="">Covering for…</option>
+              {(cover?.absent ?? []).map((a) => (
+                <option key={a.staff_id} value={a.staff_id}>{who(a)}</option>
+              ))}
+            </select>
             <select value={coverForm.coveringStaffId}
                     onChange={(e) => setCoverForm((f) => ({
                       ...f, coveringStaffId: e.target.value }))}>
@@ -319,6 +339,10 @@ export default function StaffPage() {
                       sectionId: coverForm.sectionId,
                       coveringStaffId: coverForm.coveringStaffId,
                       onDate: day,
+                      // Without this the cover is recorded but the absence
+                      // still reads "Nobody yet".
+                      ...(coverForm.absentStaffId
+                        ? { absentStaffId: coverForm.absentStaffId } : {}),
                     }), 'Cover assigned.')}>
               Assign cover
             </button>
