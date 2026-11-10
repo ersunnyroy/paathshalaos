@@ -354,7 +354,7 @@ enquiry form with a fee.
 | M41 | learner profile, structure screens, guardian names, offerings (on the timetable page) done; web file upload and activity timeline not started |
 | M42 | timetable view, add, move and remove done; free-teacher suggestions for cover not started |
 | M44 | parent home on the web done; mobile parent app v2, online payment, notifications not started |
-| M45 | teacher's day on the web done; mobile teacher app v2, marks grid, homework with attachments not started |
+| M45 | teacher's day and marks entry sheet on the web done; mobile teacher app v2, homework with attachments not started |
 | M48 | admissions board done; follow-up reminders, source report, public enquiry form not started |
 | M43, M46, M47, M49 … M52 | not started |
 
