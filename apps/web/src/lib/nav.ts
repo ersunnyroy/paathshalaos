@@ -12,7 +12,7 @@
 export type IconName =
   | 'dashboard' | 'inbox' | 'learners' | 'attendance' | 'bus' | 'staff' | 'book'
   | 'award' | 'fees' | 'send' | 'upload' | 'key' | 'shield' | 'check' | 'help'
-  | 'plug' | 'code';
+  | 'plug' | 'code' | 'layers';
 
 export interface NavItem { href: string; label: string; icon: IconName; keywords?: string }
 export interface NavGroup { title: string; items: NavItem[] }
@@ -37,6 +37,7 @@ export const GROUPS: NavGroup[] = [
     items: [
       { href: '/learning', label: 'Classwork', icon: 'book', keywords: 'homework assignment lesson' },
       { href: '/results', label: 'Results', icon: 'award', keywords: 'marks exam report card' },
+      { href: '/academics', label: 'School structure', icon: 'layers', keywords: 'academic year term class section subject room programme' },
     ],
   },
   {

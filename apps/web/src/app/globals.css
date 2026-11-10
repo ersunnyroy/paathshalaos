@@ -893,3 +893,5 @@ dl.facts dt { width: 132px; flex: none; color: var(--ink-3); }
 dl.facts dd { margin: 0; color: var(--ink); min-width: 0; overflow-wrap: anywhere; }
 .page .console-tabs { margin-bottom: 4px; }
 .page .console-tabs + .panel { margin-top: 16px; }
+
+tr.nested td { background: var(--surface-2); padding-top: 10px; padding-bottom: 10px; }
