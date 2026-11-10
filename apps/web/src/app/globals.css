@@ -918,3 +918,5 @@ table.week td { vertical-align: top; padding: 5px; border-left: 1px solid var(--
 .lesson + .lesson { margin-top: 4px; }
 .lesson strong { color: var(--brand-ink); font-size: 12.5px; }
 .sheet input[type="time"], .sheet input[type="date"] { width: 100%; }
+button.lesson { width: 100%; text-align: left; align-items: stretch; font-weight: 400; cursor: pointer; }
+button.lesson:hover:not(:disabled) { background: var(--brand-wash); }

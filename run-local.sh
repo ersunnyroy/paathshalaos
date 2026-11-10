@@ -39,7 +39,36 @@ compose() {
   else docker-compose "$@"; fi
 }
 
+# The processes that restart the servers, not just the servers.
+#
+# `pnpm dev:api` is three layers: concurrently, which runs `tsc --watch` and
+# `node --watch dist/main.js`, which runs the API. Killing whatever listens on
+# 3001 kills only the innermost one — and `node --watch` exists to start it
+# again. So every earlier run of this script left a supervisor behind, and
+# after the second run there were two, each restarting its own copy of the API
+# on every file change and racing for the port. The loser logged
+# "EADDRINUSE ... Failed running dist/main.js"; which one lost alternated, so
+# it read as an API that failed to restart about half the time.
+#
+# Matched by command line AND by working directory, because these command
+# lines are not unique to this repository and a script that kills another
+# project's `tsc --watch` is worse than the bug.
+stop_supervisors() {
+  pids=$(pgrep -f 'concurrently -n tsc,api|node --watch dist/main.js|tsc -p tsconfig.json --watch|next dev -p 3000' 2>/dev/null || true)
+  killed=0
+  for pid in $pids; do
+    cwd=$(lsof -a -p "$pid" -d cwd -Fn 2>/dev/null | sed -n 's/^n//p' | sed -n '1p')
+    case "$cwd" in
+      "$ROOT"|"$ROOT"/*) kill "$pid" 2>/dev/null && killed=$((killed + 1)) ;;
+    esac
+  done
+  [ "$killed" -gt 0 ] && ok "stopped $killed watcher process(es) left by an earlier run"
+  return 0
+}
+
 stop_servers() {
+  # Supervisors first, or they restart what the loop below stops.
+  stop_supervisors
   for port in 3000 3001; do
     pids=$(lsof -ti:"$port" 2>/dev/null || true)
     if [ -n "$pids" ]; then

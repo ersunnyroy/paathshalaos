@@ -460,3 +460,120 @@ describe('AC-3 — changing the structure does not break history', () => {
     expect(rows.length).toBeGreaterThan(0);
   });
 });
+
+describe('taking a lesson off the timetable, and moving one (M42)', () => {
+  /** A live slot of this tenant on a given weekday, as the database has it. */
+  async function slotOn(day: number): Promise<{
+    id: string; course_offering_id: string; room_id: string | null; staff_id: string | null;
+    starts_at: string; ends_at: string; day_of_week: number;
+  }> {
+    return asOwner(async (c) => {
+      const { rows } = await c.query(
+        `SELECT id, course_offering_id, room_id, staff_id, day_of_week,
+                starts_at::text, ends_at::text
+           FROM schedule_slot
+          WHERE tenant_id = $1 AND deleted_at IS NULL AND day_of_week = $2
+            AND (effective_to IS NULL OR effective_to >= CURRENT_DATE)
+          ORDER BY starts_at LIMIT 1`, [tenant.orgId, day]);
+      return rows[0];
+    });
+  }
+  const live = (id: string) => asOwner(async (c) => {
+    const { rows } = await c.query(
+      'SELECT deleted_at IS NULL AS live FROM schedule_slot WHERE id = $1', [id]);
+    return rows[0]?.live as boolean | undefined;
+  });
+
+  it('refuses a guardian, and leaves the lesson where it was', async () => {
+    const slot = await slotOn(2);
+    expect(slot, 'the earlier describe books a Tuesday lesson').toBeTruthy();
+    const err = await structureService.removeScheduleSlot(guardian(), slot.id).catch((e) => e);
+    // Visible to them (they can read the timetable) and not theirs to change:
+    // a refusal, not "not found".
+    expect(err.getResponse().error.code).toBe('staff_only');
+    expect(await live(slot.id)).toBe(true);
+  });
+
+  it('refuses a guardian moving one, too', async () => {
+    const slot = await slotOn(2);
+    const err = await structureService.moveScheduleSlot(guardian(), slot.id, {
+      dayOfWeek: 4, startsAt: '11:00', endsAt: '11:50',
+    }).catch((e) => e);
+    expect(err.getResponse().error.code).toBe('staff_only');
+    expect((await slotOn(2)).id).toBe(slot.id);
+  });
+
+  it('moves a lesson to a free day and keeps its room and teacher', async () => {
+    const slot = await slotOn(2);
+    const moved = await structureService.moveScheduleSlot(staff(), slot.id, {
+      dayOfWeek: 4, startsAt: '11:00', endsAt: '11:50',
+    });
+    expect(moved).toMatchObject({
+      id: slot.id, day_of_week: 4, starts_at: '11:00:00', ends_at: '11:50:00',
+      // Not mentioned, so not touched.
+      room_id: slot.room_id, staff_id: slot.staff_id,
+    });
+  });
+
+  it('clears the room when asked to, and only then', async () => {
+    const slot = await slotOn(4);
+    const cleared = await structureService.moveScheduleSlot(staff(), slot.id, {
+      dayOfWeek: 4, startsAt: '11:00', endsAt: '11:50', roomId: null,
+    });
+    expect(cleared.room_id).toBeNull();
+    expect(cleared.staff_id).toBe(slot.staff_id);
+    // Put it back for the tests below.
+    await structureService.moveScheduleSlot(staff(), slot.id, {
+      dayOfWeek: 4, startsAt: '11:00', endsAt: '11:50', roomId: slot.room_id,
+    });
+  });
+
+  it('refuses to move a lesson onto a room that is taken, and does not move it', async () => {
+    const thursday = await slotOn(4);
+    const monday = await slotOn(1);
+    expect(monday.room_id).toBe(thursday.room_id);   // same room, or this proves nothing
+    const err = await structureService.moveScheduleSlot(staff(), thursday.id, {
+      dayOfWeek: 1, startsAt: monday.starts_at.slice(0, 5), endsAt: monday.ends_at.slice(0, 5),
+    }).catch((e) => e);
+    expect(err.getResponse().error.code).toMatch(/^timetable_(room|teacher|section)_clash$/);
+    expect((await slotOn(4)).id).toBe(thursday.id);
+  });
+
+  it('refuses a move whose period ends before it starts', async () => {
+    const slot = await slotOn(4);
+    const err = await structureService.moveScheduleSlot(staff(), slot.id, {
+      dayOfWeek: 4, startsAt: '11:00', endsAt: '11:00',
+    }).catch((e) => e);
+    expect(err.getResponse().error.code).toBe('period_ends_before_it_starts');
+  });
+
+  it('removes a lesson, which frees its room and teacher at once', async () => {
+    const slot = await slotOn(4);
+    await structureService.removeScheduleSlot(staff(), slot.id);
+    expect(await live(slot.id)).toBe(false);
+
+    // The same offering, room, teacher and time: a clash a moment ago.
+    await expect(structureService.addScheduleSlot(staff(), {
+      courseOfferingId: slot.course_offering_id,
+      ...(slot.room_id ? { roomId: slot.room_id } : {}),
+      ...(slot.staff_id ? { staffId: slot.staff_id } : {}),
+      dayOfWeek: 4, startsAt: '11:00', endsAt: '11:50',
+    })).resolves.toBeTruthy();
+  });
+
+  it('says not found for a lesson already removed, and for one that never existed', async () => {
+    const slot = await slotOn(4);
+    await structureService.removeScheduleSlot(staff(), slot.id);
+    const again = await structureService.removeScheduleSlot(staff(), slot.id).catch((e) => e);
+    expect(again.getResponse().error.code).toBe('slot_not_found');
+
+    const never = await structureService
+      .removeScheduleSlot(staff(), '00000000-0000-4000-8000-000000000000').catch((e) => e);
+    expect(never.getResponse().error.code).toBe('slot_not_found');
+
+    const moved = await structureService.moveScheduleSlot(staff(), slot.id, {
+      dayOfWeek: 5, startsAt: '08:00', endsAt: '08:40',
+    }).catch((e) => e);
+    expect(moved.getResponse().error.code).toBe('slot_not_found');
+  });
+});

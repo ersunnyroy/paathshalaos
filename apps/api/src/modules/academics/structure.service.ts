@@ -160,6 +160,17 @@ function refused(what: string): never {
     `Only institute staff may change the ${what}.`);
 }
 
+/**
+ * Why an UPDATE on a slot touched nothing: it is not there, or it is not yours
+ * to change. Never returns.
+ */
+async function slotMissingOrRefused(db: TenantClient, slotId: string): Promise<never> {
+  const { rows } = await db.query(
+    'SELECT 1 FROM schedule_slot WHERE id = $1::uuid AND deleted_at IS NULL', [slotId]);
+  if (rows[0]) return refused('timetable');
+  throw ApiError.make('not_found', 'slot_not_found', 'That lesson is not on the timetable.');
+}
+
 /** Dates as the database sees them, so comparisons happen in one place. */
 async function yearOf(db: TenantClient, academicYearId: string):
 Promise<{ id: string; starts_on: string; ends_on: string; status: string } | undefined> {
@@ -704,6 +715,84 @@ export const structureService = {
       } catch (err) {
         return translateConflict(err);
       }
+    });
+  },
+
+  /**
+   * Takes a lesson off the timetable (M42).
+   *
+   * Marked, not deleted: `deleted_at` is what the three exclusion constraints
+   * and the timetable query both filter on, so the room and the teacher are
+   * free again the moment this commits and the row is still there to explain
+   * an attendance session that pointed at it.
+   *
+   * This is for a lesson that should not have been there. A lesson that was
+   * taught until Friday and stops is a different fact — it has an
+   * `effective_to` — and saying it never existed would rewrite the term.
+   *
+   * The UPDATE policy hides the row from anybody who is not staff, so "no row
+   * came back" has two meanings. They are told apart by asking whether the
+   * caller can SEE the slot, which the read policy answers for the tenant:
+   * visible and not updated is a refusal, not visible is not found.
+   */
+  async removeScheduleSlot(scope: TenantScope, slotId: string): Promise<{ id: string }> {
+    return withTenant(scope, async (db) => {
+      try {
+        const { rows } = await db.query<{ id: string }>(
+          `UPDATE schedule_slot SET deleted_at = now()
+            WHERE id = $1::uuid AND deleted_at IS NULL
+            RETURNING id`, [slotId]);
+        if (rows[0]) return rows[0];
+      } catch (err) {
+        return translateConflict(err);
+      }
+      return slotMissingOrRefused(db, slotId);
+    });
+  },
+
+  /**
+   * Moves a lesson to another day, time, room or teacher (M42).
+   *
+   * One UPDATE, so the exclusion constraints judge the lesson where it is
+   * going against everything else as it stands — including the lesson's own
+   * old position, which the same statement vacates. Removing and re-adding
+   * would be two statements with a moment between them in which the lesson
+   * exists nowhere, and a failed second half would lose it.
+   *
+   * `roomId` and `staffId` are three-valued on purpose: absent leaves it as it
+   * is, `null` clears it, a value sets it. "Move to Wednesday" must not also
+   * mean "and take the teacher off".
+   */
+  async moveScheduleSlot(
+    scope: TenantScope,
+    slotId: string,
+    input: {
+      dayOfWeek: number; startsAt: string; endsAt: string;
+      roomId?: string | null | undefined; staffId?: string | null | undefined;
+    },
+  ): Promise<ScheduleSlot> {
+    if (input.endsAt <= input.startsAt) {
+      throw ApiError.make('validation_error', 'period_ends_before_it_starts',
+        'A period has to end after it starts.');
+    }
+    return withTenant(scope, async (db) => {
+      try {
+        const { rows } = await db.query<ScheduleSlot>(
+          `UPDATE schedule_slot
+              SET day_of_week = $2, starts_at = $3, ends_at = $4,
+                  room_id  = CASE WHEN $5::boolean THEN $6::uuid ELSE room_id END,
+                  staff_id = CASE WHEN $7::boolean THEN $8::uuid ELSE staff_id END
+            WHERE id = $1::uuid AND deleted_at IS NULL
+            RETURNING id, course_offering_id, section_id, room_id, staff_id,
+                      day_of_week, starts_at::text, ends_at::text`,
+          [slotId, input.dayOfWeek, input.startsAt, input.endsAt,
+           input.roomId !== undefined, input.roomId ?? null,
+           input.staffId !== undefined, input.staffId ?? null]);
+        if (rows[0]) return rows[0];
+      } catch (err) {
+        return translateConflict(err);
+      }
+      return slotMissingOrRefused(db, slotId);
     });
   },
 

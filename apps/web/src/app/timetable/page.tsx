@@ -4,6 +4,7 @@ import { useMemo, useState, type FormEvent } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
 import { Shell, PageHead } from '../shell';
 import { Panel, Empty, Pill, SkeletonRows } from '@/components/ui';
+import { ConfirmButton } from '@/components/confirm';
 import { apiPost, ApiError } from '@/lib/api';
 import { useApiQuery, apiKey } from '@/lib/query';
 import { orderClasses } from '@/lib/structure';
@@ -23,7 +24,8 @@ import {
  * own lessons. A teacher or a room that is busy elsewhere is refused by the
  * database, and what it says is shown as it is.
  *
- * Lessons cannot be removed here yet: the API has no route for it.
+ * Click a lesson to move it or take it off. Removing is for a lesson that
+ * should not have been there; it frees the room and the teacher at once.
  */
 
 interface Year { id: string; label: string; status: string }
@@ -66,6 +68,7 @@ export default function TimetablePage() {
 
   const [addingOffering, setAddingOffering] = useState(false);
   const [addingLesson, setAddingLesson] = useState(false);
+  const [editing, setEditing] = useState<Slot | null>(null);
 
   const teacherOf = (id: string | null) => {
     const found = (staff.data ?? []).find((s) => s.staff_id === id);
@@ -128,11 +131,13 @@ export default function TimetablePage() {
                               const teacher = teacherOf(lesson.staff_id
                                 ?? offeringById.get(lesson.course_offering_id)?.primary_teacher_staff_id ?? null);
                               return (
-                                <div className="lesson" key={lesson.id}>
+                                <button type="button" className="lesson" key={lesson.id}
+                                        onClick={() => setEditing(lesson)}
+                                        aria-label={`${lesson.subject_name}, ${DAYS[d - 1]!.name} ${clockLabel(lesson.starts_at)}. Move or remove.`}>
                                   <strong>{lesson.subject_name}</strong>
                                   {teacher ? <span>{teacher}</span> : null}
                                   {lesson.room_name ? <span>{lesson.room_name}</span> : null}
-                                </div>
+                                </button>
                               );
                             })}
                           </td>
@@ -172,6 +177,11 @@ export default function TimetablePage() {
         <AddOffering group={group} terms={terms.data ?? []} staff={staff.data ?? []}
                      existing={offerings.data ?? []} listPath={offeringsPath}
                      onClose={() => setAddingOffering(false)} />
+      ) : null}
+      {editing && weekPath && section && group ? (
+        <EditLesson key={editing.id} lesson={editing} title={`${group.name} ${section.name}`}
+                    week={week.data ?? []} staff={staff.data ?? []} rooms={rooms.data ?? []}
+                    weekPath={weekPath} onClose={() => setEditing(null)} />
       ) : null}
       {addingLesson && weekPath && section && group ? (
         <AddLesson title={`${group.name} ${section.name}`} sectionId={section.id}
@@ -371,6 +381,106 @@ function AddLesson({ title, sectionId, offerings, termOf, week, staff, rooms, we
           <button type="submit" className="primary" disabled={busy}>
             {busy ? 'Saving…' : days.length > 1 ? `Add on ${days.length} days` : 'Add lesson'}
           </button>
+        </div>
+      </form>
+    </div>
+  );
+}
+
+/**
+ * Move a lesson, or take it off.
+ *
+ * The room and the teacher are sent as they stand in the form, including
+ * "none" — so clearing a room here clears it, and leaving one alone sends the
+ * value it already had. Nothing is ever dropped by not being mentioned.
+ */
+function EditLesson({ lesson, title, week, staff, rooms, weekPath, onClose }: {
+  lesson: Slot; title: string; week: Slot[]; staff: Staff[]; rooms: Room[];
+  weekPath: string; onClose: () => void;
+}) {
+  const client = useQueryClient();
+  const [day, setDay] = useState(lesson.day_of_week);
+  const [startsAt, setStartsAt] = useState(lesson.starts_at.slice(0, 5));
+  const [endsAt, setEndsAt] = useState(lesson.ends_at.slice(0, 5));
+  const [roomId, setRoomId] = useState(lesson.room_id ?? '');
+  const [teacherId, setTeacherId] = useState(lesson.staff_id ?? '');
+  const [error, setError] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+
+  async function send(path: string, body: unknown) {
+    setBusy(true); setError(null);
+    try {
+      await apiPost(path, body);
+      await client.invalidateQueries({ queryKey: apiKey(weekPath) });
+      onClose();
+    } catch (e) {
+      setError(e instanceof ApiError ? e.message : 'That did not save.');
+    } finally { setBusy(false); }
+  }
+
+  async function move(event: FormEvent) {
+    event.preventDefault();
+    const problem = timeProblem(startsAt, endsAt);
+    if (problem) { setError(problem); return; }
+    // Its own old position is not a clash with itself.
+    const clash = clashesWith(week.filter((s) => s.id !== lesson.id), [day], startsAt, endsAt)[0];
+    if (clash) {
+      setError(`${title} already has ${clash.subject_name} on ${DAYS[clash.day_of_week - 1]!.name} from ${clockLabel(clash.starts_at)} to ${clockLabel(clash.ends_at)}.`);
+      return;
+    }
+    await send(`/v1/structure/schedule-slots/${lesson.id}/move`, {
+      dayOfWeek: day, startsAt, endsAt, roomId: roomId || null, staffId: teacherId || null,
+    });
+  }
+
+  return (
+    <div className="sheet-backdrop" onMouseDown={onClose}>
+      <form className="sheet wide" onSubmit={move} onMouseDown={(e) => e.stopPropagation()}>
+        <h2>{lesson.subject_name} — {title}</h2>
+        <p className="lede">
+          {DAYS[lesson.day_of_week - 1]!.name}, {clockLabel(lesson.starts_at)} to {clockLabel(lesson.ends_at)}.
+        </p>
+        <label htmlFor="edit-day">Day</label>
+        <select id="edit-day" value={day} onChange={(e) => setDay(Number(e.target.value))}>
+          {DAYS.map((d) => <option key={d.n} value={d.n}>{d.name}</option>)}
+        </select>
+        <div className="grid2">
+          <div>
+            <label htmlFor="edit-start">Starts</label>
+            <input id="edit-start" type="time" value={startsAt} onChange={(e) => setStartsAt(e.target.value)} required />
+          </div>
+          <div>
+            <label htmlFor="edit-end">Ends</label>
+            <input id="edit-end" type="time" value={endsAt} onChange={(e) => setEndsAt(e.target.value)} required />
+          </div>
+        </div>
+        <div className="grid2">
+          <div>
+            <label htmlFor="edit-teacher">Teacher</label>
+            <select id="edit-teacher" value={teacherId} onChange={(e) => setTeacherId(e.target.value)}>
+              <option value="">None on this lesson</option>
+              {staff.filter((s) => s.status === 'active' || s.staff_id === lesson.staff_id).map((s) => (
+                <option key={s.staff_id} value={s.staff_id}>{staffName(s)}</option>
+              ))}
+            </select>
+          </div>
+          <div>
+            <label htmlFor="edit-room">Room</label>
+            <select id="edit-room" value={roomId} onChange={(e) => setRoomId(e.target.value)}>
+              <option value="">No room</option>
+              {rooms.map((r) => <option key={r.id} value={r.id}>{r.name}</option>)}
+            </select>
+          </div>
+        </div>
+        {error ? <div className="note bad" style={{ marginTop: 12 }}>{error}</div> : null}
+        <div className="row" style={{ marginTop: 16, justifyContent: 'space-between' }}>
+          <ConfirmButton label="Remove lesson" confirmLabel="Remove it — frees the room and teacher"
+                         tone="critical" disabled={busy}
+                         onConfirm={() => send(`/v1/structure/schedule-slots/${lesson.id}/remove`, {})} />
+          <span className="row">
+            <button type="button" className="ghost" onClick={onClose}>Cancel</button>
+            <button type="submit" className="primary" disabled={busy}>{busy ? 'Saving…' : 'Save changes'}</button>
+          </span>
         </div>
       </form>
     </div>

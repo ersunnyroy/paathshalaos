@@ -315,6 +315,36 @@ export class StructureController {
     };
   }
 
+  /**
+   * POST, not DELETE, for the reason every removal in this API is: the row is
+   * marked and kept, and a verb that says "delete" would be describing
+   * something that does not happen.
+   */
+  @Post('structure/schedule-slots/:id/remove')
+  async removeScheduleSlot(@Param('id') id: string) {
+    const slotId = uuid.safeParse(id);
+    if (!slotId.success) throw ApiError.fromZod(slotId.error);
+    return { data: await structureService.removeScheduleSlot(currentScope(), slotId.data) };
+  }
+
+  @Post('structure/schedule-slots/:id/move')
+  async moveScheduleSlot(@Param('id') id: string, @Body() body: unknown) {
+    const slotId = uuid.safeParse(id);
+    if (!slotId.success) throw ApiError.fromZod(slotId.error);
+    const parsed = z.object({
+      dayOfWeek: z.number().int().min(1).max(7),
+      startsAt: clock,
+      endsAt: clock,
+      // Absent: leave as it is. Null: clear it. See the service.
+      roomId: uuid.nullable().optional(),
+      staffId: uuid.nullable().optional(),
+    }).safeParse(body);
+    if (!parsed.success) throw ApiError.fromZod(parsed.error);
+    return {
+      data: await structureService.moveScheduleSlot(currentScope(), slotId.data, parsed.data),
+    };
+  }
+
   /** What a teacher is expected to be doing this week. */
   @Get('timetable/staff/:id')
   async staffTimetable(@Param('id') id: string) {

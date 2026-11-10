@@ -172,15 +172,44 @@ No drag and drop. No substitution board (B2). Period numbers are not shown.
 for want of a visible name) and the learner page shows who the guardian is. Four tests
 added to `people.spec.ts`, unrun.
 
-**The API no longer stays down after a restart in development.** `node --watch` starts
-the new process while the old one is still closing; about one restart in five lost the
-race for port 3001 and exited with EADDRINUSE until the next file change. `main.ts` now
-waits up to ten seconds for the port outside production. Seen twice in this session
-before the fix and not since — which is not the same as proven.
+**A wrong diagnosis, recorded.** The API was failing to restart about every other file
+change ("EADDRINUSE"). This entry first said that was a race for the port and that a
+retry in `main.ts` had fixed it. It had not: the failures continued, alternating exactly.
+See M42.2.
 
 Mutation pass on `timetable.ts`: 8 mutations, all caught. Web tests 130. Demo data added:
 Physics for Class IX with a teacher; Mathematics Mon/Wed/Fri 9:00 in Room 101 and Physics
 Mon 9:40 for Class IX.
+
+## M42.2 — remove and move a lesson; and why the API kept "failing to restart"
+
+**Remove and move.** `POST /v1/structure/schedule-slots/:id/remove` marks a slot
+`deleted_at` (which the exclusion constraints and the timetable query both filter on, so
+the room and teacher are free at once). `…/:id/move` is one UPDATE, so the constraints
+judge the lesson where it is going; `roomId` and `staffId` are three-valued — absent
+leaves, null clears, a value sets. A caller who can see the slot and may not change it
+gets `staff_only`, not "not found". On the page, click a lesson to move it or take it off.
+Both exercised in a browser against the running API. Eight tests appended to
+`academics.spec.ts`, unrun.
+
+The substitution board in the plan (B2) already exists as M27's absent-and-cover panel on
+the Staff page. What it lacks is suggesting who is free in that period.
+
+**The restart failures were two supervisors, not a race.** `run-local.sh`'s
+`stop_servers` killed whatever listened on 3000 and 3001. For the API that is the
+innermost of three processes, and `node --watch` exists to start it again — so each run
+of the script left a `concurrently` / `tsc --watch` / `node --watch` trio behind. After
+the second run there were two trios, each restarting its own API on every file change and
+racing for port 3001. Which one lost alternated, which is exactly the "fails every other
+restart" that was observed; the loser's error is what landed in `api.log`, and the winner
+served requests, which is why everything kept working.
+
+What was tried first and was wrong: a retry in `main.ts`, then a wait-for-port plus a
+bounded shutdown. Neither changed the pattern — a mutation that changes nothing — and
+`main.ts` is back exactly as it was. `stop_servers` now stops the supervisors first,
+matched by command line **and** working directory so it cannot touch another project.
+**Inferred from the log, not observed**: the session cannot list processes on the Mac, and
+the script change is syntax-checked only. `bash run-local.sh` once clears the leftovers.
 
 ## Status
 
@@ -191,5 +220,5 @@ Mon 9:40 for Class IX.
 | M40 | part 1 done; 18 pages still on effect-fetching, no shared data table yet |
 | M42.5 | all existing routes have screens; revenue added. Left: lifecycle pipeline, school health and usage, 2FA, cross-school support desk |
 | M41 | learner profile, structure screens, guardian names, offerings (on the timetable page) done; web file upload and activity timeline not started |
-| M42 | timetable view and add done; remove/move a lesson and the substitution board not started |
+| M42 | timetable view, add, move and remove done; free-teacher suggestions for cover not started |
 | M43 … M52 | not started |
