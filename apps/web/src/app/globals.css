@@ -920,3 +920,25 @@ table.week td { vertical-align: top; padding: 5px; border-left: 1px solid var(--
 .sheet input[type="time"], .sheet input[type="date"] { width: 100%; }
 button.lesson { width: 100%; text-align: left; align-items: stretch; font-weight: 400; cursor: pointer; }
 button.lesson:hover:not(:disabled) { background: var(--brand-wash); }
+
+/* `num` was written on every table added since M40 and styled nowhere: the
+   existing class is `n`. Same rule, so figures line up on their decimal. */
+td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; }
+
+/* =============================================================== data table */
+
+.th-sort {
+  border: 0; background: transparent; padding: 0; font: inherit; color: inherit;
+  letter-spacing: inherit; text-transform: inherit; cursor: pointer; min-height: 0;
+}
+.th-sort:hover:not(:disabled) { background: transparent; color: var(--ink); }
+th.n .th-sort { margin-left: auto; }
+.menu-anchor { position: relative; }
+.menu {
+  position: absolute; right: 0; top: calc(100% + 6px); z-index: 20; min-width: 190px;
+  background: var(--surface); border: 1px solid var(--line-strong);
+  border-radius: var(--radius-sm); box-shadow: var(--shadow-lift);
+  padding: 8px 10px; display: flex; flex-direction: column; gap: 6px;
+}
+.menu label.check { display: flex; align-items: center; gap: 8px; font-size: 13px; margin: 0; }
+.menu button { align-self: flex-start; padding: 2px 6px; font-size: 12px; }

@@ -211,13 +211,38 @@ matched by command line **and** working directory so it cannot touch another pro
 **Inferred from the log, not observed**: the session cannot list processes on the Mac, and
 the script change is syntax-checked only. `bash run-local.sh` once clears the leftovers.
 
+## M40.2 — one table for every list
+
+`components/data-table.tsx` over `lib/table.ts`: filter, sort by clicking a heading
+(ascending, descending, back to the arriving order), a column picker, a view remembered
+per table in the browser, and CSV export of what is on screen. The Learners page is the
+first list on it; it says so when the API's 200-row ceiling is reached.
+
+Two things the tests found:
+
+- **The file name stripped Hindi.** `\p{L}\p{N}` keeps letters and digits and drops
+  combining marks, and Devanagari vowel signs are combining marks: "छात्र सूची" became
+  "छतर सच". `\p{M}` is kept now.
+- **A tie-break that did nothing.** The sort carried each row's index to keep ties in
+  arriving order. Removing it changed no test, because `Array.prototype.sort` has been
+  stable since ES2019. It is gone, with a comment saying why.
+
+Export is hardened against spreadsheet formulas: a cell beginning `=`, `+`, `-`, `@`, tab
+or carriage return is prefixed with an apostrophe. That includes a negative amount, on
+purpose. Nine mutations: eight caught, one equivalent (above).
+
+Also: every table added since M40 used `className="num"` for figures, and the stylesheet's
+class is `n`, so nothing was right-aligned. `num` is now styled the same.
+
+Still on effect-fetching and hand-written tables: the other sixteen school pages.
+
 ## Status
 
 | ID | State |
 | --- | --- |
 | M39 | tokens done; typed client moved to M39.1 |
 | M39.1 | not started |
-| M40 | part 1 done; 18 pages still on effect-fetching, no shared data table yet |
+| M40 | shell, palette, query cache, shared data table (Learners only). 16 pages still to move; no notification bell |
 | M42.5 | all existing routes have screens; revenue added. Left: lifecycle pipeline, school health and usage, 2FA, cross-school support desk |
 | M41 | learner profile, structure screens, guardian names, offerings (on the timetable page) done; web file upload and activity timeline not started |
 | M42 | timetable view, add, move and remove done; free-teacher suggestions for cover not started |

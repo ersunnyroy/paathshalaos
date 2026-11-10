@@ -3,7 +3,8 @@
 import { useEffect, useState } from 'react';
 import Link from 'next/link';
 import { Shell, PageHead } from '../shell';
-import { Panel, Empty, SkeletonRows, Avatar, Pill, Icon } from '@/components/ui';
+import { Empty, Avatar, Pill, Icon } from '@/components/ui';
+import { DataTable } from '@/components/data-table';
 import { useApiQuery } from '@/lib/query';
 
 interface Student {
@@ -11,6 +12,8 @@ interface Student {
   given_name: string; family_name: string | null;
   section_name: string | null; class_name: string | null;
 }
+
+const fullName = (s: Student) => [s.given_name, s.family_name].filter(Boolean).join(' ');
 
 export default function StudentsPage() {
   const [q, setQ] = useState('');
@@ -56,56 +59,39 @@ export default function StudentsPage() {
 
       {error ? <div className="note bad">{error}</div> : null}
 
-      <Panel
+      <DataTable<Student>
+        id="learners"
         title="Roster"
-        hint={students ? `${students.length} shown` : undefined}
-      >
-        {students && students.length === 0 ? (
+        rows={students}
+        rowKey={(s) => s.id}
+        truncatedAt={200}
+        empty={(
           <Empty title={q ? 'Nothing matches that search' : 'No learners yet'}>
             {q ? 'Try an admission number, or part of a name.' : 'Import a roster to get started.'}
           </Empty>
-        ) : (
-          <div className="scroll">
-            <table>
-              <thead>
-                <tr>
-                  <th>Learner</th>
-                  <th className="opt">Admission no.</th>
-                  <th>Class</th>
-                </tr>
-              </thead>
-              {students ? (
-                <tbody>
-                  {students.map((s) => {
-                    const name = [s.given_name, s.family_name].filter(Boolean).join(' ');
-                    return (
-                      <tr key={s.id}>
-                        <td>
-                          <span className="who2">
-                            <Avatar name={name} />
-                            <span>
-                              <Link className="nm" href={`/students/${s.id}`}>{name}</Link>
-                              <span className="sub" style={{ display: 'block' }}>
-                                {s.admission_no}
-                              </span>
-                            </span>
-                          </span>
-                        </td>
-                        <td className="opt">{s.admission_no}</td>
-                        <td>
-                          {s.class_name
-                            ? <Pill>{`${s.class_name} ${s.section_name ?? ''}`.trim()}</Pill>
-                            : <span className="sub">Not enrolled</span>}
-                        </td>
-                      </tr>
-                    );
-                  })}
-                </tbody>
-              ) : <SkeletonRows rows={8} cols={3} />}
-            </table>
-          </div>
         )}
-      </Panel>
+        columns={[
+          {
+            key: 'name', label: 'Learner', required: true, text: fullName,
+            render: (s) => (
+              <span className="who2">
+                <Avatar name={fullName(s)} />
+                <span>
+                  <Link className="nm" href={`/students/${s.id}`}>{fullName(s)}</Link>
+                  <span className="sub" style={{ display: 'block' }}>{s.admission_no}</span>
+                </span>
+              </span>
+            ),
+          },
+          { key: 'admission_no', label: 'Admission no.', text: (s) => s.admission_no },
+          {
+            key: 'class', label: 'Class', text: (s) => s.class_name ?? '',
+            render: (s) => (s.class_name
+              ? <Pill>{s.class_name}</Pill> : <span className="sub">Not enrolled</span>),
+          },
+          { key: 'section', label: 'Section', text: (s) => s.section_name ?? '' },
+        ]}
+      />
     </Shell>
   );
 }
