@@ -997,3 +997,30 @@ ol.day li.is-now { background: var(--brand-soft); box-shadow: inset 3px 0 0 var(
 .menu.wide { min-width: 280px; }
 .menu a { padding: 6px 4px; border-radius: 6px; color: var(--ink); font-size: 13px; }
 .menu a:hover { background: var(--surface-hover); text-decoration: none; }
+
+/* ======================================================= admissions board */
+
+.board {
+  display: grid; grid-auto-flow: column; grid-auto-columns: minmax(190px, 1fr);
+  gap: 10px; overflow-x: auto; padding: 12px 0 6px; align-items: start;
+}
+.board-col {
+  background: var(--surface-2); border: 1px solid var(--line);
+  border-radius: var(--radius); padding: 8px; min-height: 120px;
+}
+.board-col header { padding: 2px 4px 8px; }
+.board-col h3 { margin: 0; font-size: 12.5px; font-weight: 650; display: flex; align-items: center; gap: 6px; }
+.board-col .count {
+  font-size: 11px; font-weight: 600; color: var(--ink-3);
+  background: var(--surface); border: 1px solid var(--line); border-radius: 999px; padding: 0 7px;
+}
+.board-card {
+  width: 100%; display: flex; flex-direction: column; align-items: flex-start; gap: 3px;
+  text-align: left; background: var(--surface); border: 1px solid var(--line);
+  border-radius: var(--radius-sm); padding: 8px 9px; margin-bottom: 6px;
+  box-shadow: var(--shadow); font-weight: 400;
+}
+.board-card:hover:not(:disabled) { border-color: var(--brand); background: var(--surface); }
+.board-card strong { font-size: 13px; }
+.board-empty { color: var(--ink-3); text-align: center; padding: 14px 0; }
+.col-closed, .col-enrolled { opacity: 0.85; }

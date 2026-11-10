@@ -324,6 +324,25 @@ as optional columns.
 
 `lib/attention.ts`: 5 mutations, all caught. Web tests 190.
 
+## M48.1 — the admissions pipeline as a board
+
+Admissions opens on a board: Enquiry, To decide, Offer out, Waitlist, Accepted, On the
+roll, Closed. Every family is in exactly one column; the longest-waiting is at the top of
+each working column, and a card is flagged when somebody should act — an enquiry with no
+form after a week, an application undecided after a week, an offer within three days of
+lapsing or past it. Clicking a card opens that family in the list, where the buttons that
+move them along already were. The list is one click away and unchanged.
+
+**A bug the test for the new code found in the old code.** "Offer lapsed" was decided from
+a rounded day count: `Math.ceil` of a small negative fraction is `-0`, which is not `< 0`,
+so an offer that ran out an hour ago read "Offered — 0d to reply". Lapsed is now asked of
+the instant (`offerLapsed`), on the board and in the list.
+
+`lib/admissions.ts`: 7 mutations, all caught. Web tests 207.
+
+Not built from C2: follow-up reminders, where an enquiry came from as a report, a public
+enquiry form with a fee.
+
 ## Status
 
 | ID | State |
@@ -336,4 +355,5 @@ as optional columns.
 | M42 | timetable view, add, move and remove done; free-teacher suggestions for cover not started |
 | M44 | parent home on the web done; mobile parent app v2, online payment, notifications not started |
 | M45 | teacher's day on the web done; mobile teacher app v2, marks grid, homework with attachments not started |
-| M43, M46 … M52 | not started |
+| M48 | admissions board done; follow-up reminders, source report, public enquiry form not started |
+| M43, M46, M47, M49 … M52 | not started |

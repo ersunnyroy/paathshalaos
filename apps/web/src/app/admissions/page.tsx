@@ -17,6 +17,7 @@ import { useCallback, useEffect, useState } from 'react';
 import { Shell, PageHead } from '../shell';
 import { Empty, Panel, Pill, SkeletonRows, Tile } from '@/components/ui';
 import { apiGet, apiPost } from '@/lib/api';
+import { buildBoard, offerLapsed, offerDaysLeft } from '@/lib/admissions';
 
 interface Row {
   kind: 'enquiry' | 'application';
@@ -104,10 +105,10 @@ function nextStep(r: Row): { text: string; tone?: 'good' | 'warning' | 'critical
   if (r.declined_at) return { text: 'Family declined' };
   if (r.accepted_at) return { text: 'Accepted — not yet enrolled', tone: 'warning' };
   if (r.outcome === 'offered') {
-    const left = r.offer_expires_at
-      ? Math.ceil((new Date(r.offer_expires_at).getTime() - Date.now()) / 86_400_000)
-      : null;
-    if (left !== null && left < 0) return { text: 'Offer lapsed', tone: 'critical' };
+    // Asked of the instant: an offer that ran out an hour ago is a fraction of
+    // a day past, which rounded up to "0d to reply" instead of "lapsed".
+    if (offerLapsed(r.offer_expires_at, Date.now())) return { text: 'Offer lapsed', tone: 'critical' };
+    const left = offerDaysLeft(r.offer_expires_at, Date.now());
     return {
       text: left === null ? 'Offered' : `Offered — ${left}d to reply`,
       tone: left !== null && left <= 3 ? 'warning' : undefined,
@@ -139,6 +140,10 @@ export default function AdmissionsPage() {
   });
   const [answers, setAnswers] = useState<Record<string, string | boolean>>({});
   const [offerSection, setOfferSection] = useState<Record<string, string>>({});
+  const [view, setView] = useState<'board' | 'list'>('board');
+  // Set by clicking a card: the list then shows that one family, where the
+  // buttons that move them along are.
+  const [focus, setFocus] = useState<string | null>(null);
 
   const year = years.find((y) => y.status === 'active') ?? years[0];
 
@@ -203,7 +208,41 @@ export default function AdmissionsPage() {
         </div>
       ) : null}
 
-      <Panel title="Pipeline" hint="Enquiries and applications, in the order they arrived">
+      <div className="seg" role="group" aria-label="How to show the pipeline" style={{ margin: '16px 0 0' }}>
+        <button aria-pressed={view === 'board'} onClick={() => { setView('board'); setFocus(null); }}>Board</button>
+        <button aria-pressed={view === 'list'} onClick={() => setView('list')}>List</button>
+      </div>
+
+      {view === 'board' ? (
+        <div className="board" aria-label="Admissions pipeline">
+          {buildBoard(rows ?? [], Date.now()).columns.map((column) => (
+            <section key={column.id} className={`board-col col-${column.id}`}>
+              <header>
+                <h3>{column.title} <span className="count">{column.cards.length}</span></h3>
+                <span className="sub">{column.hint}</span>
+              </header>
+              {rows === null ? <div className="sub" style={{ padding: 8 }}>Loading…</div>
+                : column.cards.length === 0 ? <div className="board-empty">—</div>
+                : column.cards.map(({ row: r, days, flag }) => (
+                  <button key={r.id} type="button" className="board-card"
+                          onClick={() => { setFocus(r.id); setView('list'); }}
+                          aria-label={`${r.name}, ${column.title}. Open in the list.`}>
+                    <strong>{r.name}</strong>
+                    <span className="sub">{r.programme_name ?? 'No programme chosen'}</span>
+                    {flag
+                      ? <Pill tone={flag.tone}>{flag.text}</Pill>
+                      : <span className="sub">{days === 0 ? 'Today' : `${days}d ago`}</span>}
+                  </button>
+                ))}
+            </section>
+          ))}
+        </div>
+      ) : null}
+
+      {view === 'list' ? (
+      <Panel title="Pipeline"
+             hint={focus ? 'Showing one family' : 'Enquiries and applications, in the order they arrived'}
+             actions={focus ? <button onClick={() => setFocus(null)}>Show everyone</button> : undefined}>
         <table>
           <thead>
             <tr>
@@ -213,7 +252,7 @@ export default function AdmissionsPage() {
           </thead>
           {rows === null ? <SkeletonRows rows={4} cols={5} /> : (
             <tbody>
-              {rows.map((r) => {
+              {rows.filter((r) => focus === null || r.id === focus).map((r) => {
                 const step = nextStep(r);
                 return (
                   <tr key={r.id}>
@@ -310,6 +349,7 @@ export default function AdmissionsPage() {
           </Empty>
         ) : null}
       </Panel>
+      ) : null}
 
       <Panel title="Somebody rang" hint="A name and a number beats a note on paper">
         <div className="row-form">
