@@ -37,7 +37,22 @@ async function bootstrap(): Promise<void> {
   });
   app.enableShutdownHooks();
 
-  await app.listen(env.PORT);
+  // In development `node --watch` starts the new process while the old one is
+  // still closing its pools, and the new one lost the race for the port about
+  // one restart in five: "EADDRINUSE", exit, and an API that stayed down until
+  // the next file change. Waiting a few seconds for the port is right there
+  // and wrong in production, where a port in use is a second copy running.
+  const attempts = env.NODE_ENV === 'production' ? 1 : 40;
+  for (let attempt = 1; ; attempt += 1) {
+    try {
+      await app.listen(env.PORT);
+      break;
+    } catch (err) {
+      const inUse = (err as NodeJS.ErrnoException).code === 'EADDRINUSE';
+      if (!inUse || attempt >= attempts) throw err;
+      await new Promise((resolve) => setTimeout(resolve, 250));
+    }
+  }
   logger.info({ port: env.PORT, env: env.NODE_ENV }, 'api listening');
 
   for (const signal of ['SIGINT', 'SIGTERM'] as const) {

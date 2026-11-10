@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import {
   ageOn, attendanceRate, attendanceTone, feeStanding, invoiceIsOverdue,
-  guardianCan, orderGuardians, type FeeInvoice, type GuardianLink,
+  guardianCan, orderGuardians, guardianName, type FeeInvoice, type GuardianLink,
 } from '../src/lib/learner.ts';
 
 describe('how old a learner is', () => {
@@ -104,6 +104,14 @@ describe('guardians', () => {
   it('does not let seeing fees imply paying them, or the reverse', () => {
     expect(guardianCan(link({ can_view_finance: true }))).toEqual(['See fees']);
     expect(guardianCan(link({ can_pay: true }))).toEqual(['Pay fees']);
+  });
+
+  it('shows a name when there is one and admits it when there is not', () => {
+    expect(guardianName(link({ guardian_given_name: 'Priya', guardian_family_name: 'Sharma' }))).toBe('Priya Sharma');
+    expect(guardianName(link({ guardian_given_name: ' Priya ', guardian_family_name: null }))).toBe('Priya');
+    expect(guardianName(link({ guardian_given_name: null, guardian_family_name: null }))).toBeNull();
+    expect(guardianName(link({}))).toBeNull();          // an older API that sends no name at all
+    expect(guardianName(link({ guardian_given_name: '  ' }))).toBeNull();
   });
 
   it('puts the primary contact first', () => {

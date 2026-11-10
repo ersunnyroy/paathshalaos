@@ -9,7 +9,7 @@ import { rupees } from '@/lib/api';
 import { useApiQuery } from '@/lib/query';
 import {
   ageOn, attendanceRate, attendanceTone, feeStanding, invoiceIsOverdue,
-  guardianCan, orderGuardians,
+  guardianCan, orderGuardians, guardianName,
   type AttendanceSummary, type FeeInvoice, type GuardianLink,
 } from '@/lib/learner';
 
@@ -332,7 +332,7 @@ export default function LearnerPage() {
             ? <Empty title="No guardian linked">Link one from Access, or through an import.</Empty>
             : (
               <div className="scroll"><table>
-                <thead><tr><th>Relationship</th><th>May</th></tr></thead>
+                <thead><tr><th>Guardian</th><th>May</th></tr></thead>
                 {links ? (
                   <tbody>
                     {links.map((g) => {
@@ -340,8 +340,11 @@ export default function LearnerPage() {
                       return (
                         <tr key={g.id}>
                           <td>
-                            <strong style={{ textTransform: 'capitalize' }}>{g.relationship.replace(/_/g, ' ')}</strong>
+                            <strong>{guardianName(g) ?? 'Name not shown to you'}</strong>
                             {g.is_primary ? <> <Pill tone="good">primary contact</Pill></> : null}
+                            <span className="sub" style={{ display: 'block', textTransform: 'capitalize' }}>
+                              {g.relationship.replace(/_/g, ' ')}
+                            </span>
                           </td>
                           <td>
                             {can.length === 0

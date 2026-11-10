@@ -446,3 +446,48 @@ describe('consent (M3.6)', () => {
     }
   });
 });
+
+describe("who a learner's guardians are (M41)", () => {
+  const office = () => ({ tenantId: tenant.orgId, actorId: staffUser.userId });
+
+  it('names the guardian for the office', async () => {
+    // The office could see that a mother was linked and allowed to collect the
+    // child, and not which mother — the route returned a person id and no name.
+    const links = await peopleRepository.guardiansOf(office(), learnerA.studentId);
+    expect(links).toHaveLength(1);
+    expect(links[0]).toMatchObject({
+      guardian_person_id: guardianPersonId,
+      guardian_given_name: 'Priya', guardian_family_name: 'Sharma',
+      is_primary: true,
+    });
+  });
+
+  it('still returns the permissions that belong to that link, not to the person', async () => {
+    const forB = await peopleRepository.guardiansOf(office(), learnerB.studentId);
+    expect(forB[0]).toMatchObject({
+      guardian_given_name: 'Priya', can_view_finance: false, can_view_academics: false,
+    });
+  });
+
+  it('returns nothing for a learner with no guardian, rather than a row of nulls', async () => {
+    expect(await peopleRepository.guardiansOf(office(), learnerC.studentId)).toEqual([]);
+  });
+
+  it('keeps a link whose person the caller cannot see, with the name withheld', async () => {
+    // A second adult, linked to the same child, with no account of their own.
+    const other = await createPersonRaw(tenant.orgId, 'Rohan', { familyName: 'Sharma' });
+    await linkGuardianRaw(tenant.orgId, learnerA.studentId, other);
+
+    const seenByOffice = await peopleRepository.guardiansOf(office(), learnerA.studentId);
+    expect(seenByOffice.map((l) => l.guardian_given_name).sort()).toEqual(['Priya', 'Rohan']);
+
+    // The first guardian asks the same question. Both links come back — the
+    // count is the same — and whatever `person`'s policy lets a guardian see
+    // of another adult, the link is never dropped for want of a name.
+    const seenByGuardian = await peopleRepository.guardiansOf(
+      { tenantId: tenant.orgId, actorId: guardianUser.userId }, learnerA.studentId);
+    expect(seenByGuardian).toHaveLength(seenByOffice.length);
+    expect(seenByGuardian.find((l) => l.guardian_person_id === guardianPersonId))
+      .toMatchObject({ guardian_given_name: 'Priya' });
+  });
+});

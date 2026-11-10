@@ -36,6 +36,15 @@ export interface GuardianLink {
   can_pay: boolean;
   can_authorise_pickup: boolean;
   can_receive_notifications: boolean;
+  /**
+   * The guardian's name, when the caller may see that person at all.
+   *
+   * Null rather than an error when they may not: one parent asking who else
+   * is linked to their child learns that a link exists and what it allows,
+   * and nothing about who the other adult is. `person`'s own policy decides.
+   */
+  guardian_given_name: string | null;
+  guardian_family_name: string | null;
 }
 
 /** The RESTRICTED columns. Never returned by a list query. */
@@ -200,12 +209,18 @@ export const peopleRepository = {
   async guardiansOf(scope: TenantScope, studentId: string): Promise<GuardianLink[]> {
     return withTenant(scope, async (db) => {
       const { rows } = await db.query<GuardianLink>(
-        `SELECT id, student_id, guardian_person_id, relationship, is_primary,
-                can_view_academics, can_view_finance, can_pay,
-                can_authorise_pickup, can_receive_notifications
-           FROM guardian_link
-          WHERE student_id = $1 AND effective_to IS NULL
-          ORDER BY is_primary DESC`,
+        // LEFT JOIN, deliberately. An inner join would drop the link itself
+        // whenever the person row is not visible to this caller, and a pickup
+        // list that silently omits an authorised adult is the worse failure.
+        `SELECT gl.id, gl.student_id, gl.guardian_person_id, gl.relationship, gl.is_primary,
+                gl.can_view_academics, gl.can_view_finance, gl.can_pay,
+                gl.can_authorise_pickup, gl.can_receive_notifications,
+                p.given_name AS guardian_given_name,
+                p.family_name AS guardian_family_name
+           FROM guardian_link gl
+           LEFT JOIN person p ON p.id = gl.guardian_person_id
+          WHERE gl.student_id = $1 AND gl.effective_to IS NULL
+          ORDER BY gl.is_primary DESC, gl.id`,
         [studentId],
       );
       return rows;

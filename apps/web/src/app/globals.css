@@ -904,3 +904,17 @@ code.secret {
 
 .bar { display: block; height: 8px; border-radius: 999px; background: var(--brand-track); overflow: hidden; }
 .bar > span { display: block; height: 100%; background: var(--brand); border-radius: 999px; }
+
+/* ============================================================ timetable */
+
+table.week { table-layout: fixed; min-width: 640px; }
+table.week th[scope="row"] { width: 86px; text-align: left; font-weight: 600; font-size: 12.5px; vertical-align: top; white-space: nowrap; }
+table.week td { vertical-align: top; padding: 5px; border-left: 1px solid var(--line); }
+.lesson {
+  display: flex; flex-direction: column; gap: 1px;
+  background: var(--brand-soft); border: 1px solid var(--brand-track);
+  border-radius: var(--radius-sm); padding: 6px 8px; font-size: 12px; color: var(--ink-2);
+}
+.lesson + .lesson { margin-top: 4px; }
+.lesson strong { color: var(--brand-ink); font-size: 12.5px; }
+.sheet input[type="time"], .sheet input[type="date"] { width: 100%; }

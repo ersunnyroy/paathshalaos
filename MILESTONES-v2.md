@@ -154,6 +154,34 @@ branch (nothing under `apps/api` had changed yet):
 
 All three fixes are unrun for the same reason as above.
 
+## M42.1 — a class's week, and three smaller things
+
+**Timetable** (`/timetable`, under Academics; teachers see it too). Pick a class and
+section: the week as a grid whose rows are the periods that class actually has, and below
+it the subjects the class takes this term with their teachers. Add a subject to the class;
+add a lesson on one or several days with a time, teacher and room. The page refuses a
+lesson that lands on one of this class's own; a room or teacher booked elsewhere is
+refused by the database's exclusion constraints and its message is shown ("That room is
+already booked for an overlapping period" — seen live). A multi-day add stops at the first
+refusal and says which days were saved.
+
+**Not built, and it matters:** a lesson cannot be removed or moved — there is no route.
+No drag and drop. No substitution board (B2). Period numbers are not shown.
+
+**Guardian names.** `guardiansOf` now joins `person` (LEFT JOIN, so a link is never dropped
+for want of a visible name) and the learner page shows who the guardian is. Four tests
+added to `people.spec.ts`, unrun.
+
+**The API no longer stays down after a restart in development.** `node --watch` starts
+the new process while the old one is still closing; about one restart in five lost the
+race for port 3001 and exited with EADDRINUSE until the next file change. `main.ts` now
+waits up to ten seconds for the port outside production. Seen twice in this session
+before the fix and not since — which is not the same as proven.
+
+Mutation pass on `timetable.ts`: 8 mutations, all caught. Web tests 130. Demo data added:
+Physics for Class IX with a teacher; Mathematics Mon/Wed/Fri 9:00 in Room 101 and Physics
+Mon 9:40 for Class IX.
+
 ## Status
 
 | ID | State |
@@ -162,5 +190,6 @@ All three fixes are unrun for the same reason as above.
 | M39.1 | not started |
 | M40 | part 1 done; 18 pages still on effect-fetching, no shared data table yet |
 | M42.5 | all existing routes have screens; revenue added. Left: lifecycle pipeline, school health and usage, 2FA, cross-school support desk |
-| M41 | learner profile and structure screens done; offerings, web file upload, guardian names not started |
-| M42 … M52 | not started |
+| M41 | learner profile, structure screens, guardian names, offerings (on the timetable page) done; web file upload and activity timeline not started |
+| M42 | timetable view and add done; remove/move a lesson and the substitution board not started |
+| M43 … M52 | not started |

@@ -98,6 +98,9 @@ export const Icon = {
   plug: (p: IconProps) => (
     <svg {...base} {...p}><path d="M9 3v5M15 3v5M6.5 8h11v3a5.5 5.5 0 0 1-11 0ZM12 16.5V21" /></svg>
   ),
+  clock: (p: IconProps) => (
+    <svg {...base} {...p}><circle cx="12" cy="12" r="8.5" /><path d="M12 7.5V12l3 2" /></svg>
+  ),
   layers: (p: IconProps) => (
     <svg {...base} {...p}><path d="M12 3.5 3.5 8 12 12.5 20.5 8Z" /><path d="M3.5 12 12 16.5 20.5 12M3.5 16 12 20.5 20.5 16" /></svg>
   ),

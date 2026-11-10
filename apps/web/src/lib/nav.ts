@@ -12,7 +12,7 @@
 export type IconName =
   | 'dashboard' | 'inbox' | 'learners' | 'attendance' | 'bus' | 'staff' | 'book'
   | 'award' | 'fees' | 'send' | 'upload' | 'key' | 'shield' | 'check' | 'help'
-  | 'plug' | 'code' | 'layers';
+  | 'plug' | 'code' | 'layers' | 'clock';
 
 export interface NavItem { href: string; label: string; icon: IconName; keywords?: string }
 export interface NavGroup { title: string; items: NavItem[] }
@@ -37,6 +37,7 @@ export const GROUPS: NavGroup[] = [
     items: [
       { href: '/learning', label: 'Classwork', icon: 'book', keywords: 'homework assignment lesson' },
       { href: '/results', label: 'Results', icon: 'award', keywords: 'marks exam report card' },
+      { href: '/timetable', label: 'Timetable', icon: 'clock', keywords: 'schedule period lesson week' },
       { href: '/academics', label: 'School structure', icon: 'layers', keywords: 'academic year term class section subject room programme' },
     ],
   },
@@ -71,7 +72,7 @@ export const GROUPS: NavGroup[] = [
  * make the product look broken, and nothing here is protecting anything.
  */
 const SCREENS: Record<string, readonly string[]> = {
-  TEACHER: ['/dashboard', '/students', '/attendance', '/learning', '/results', '/messages', '/support'],
+  TEACHER: ['/dashboard', '/students', '/attendance', '/learning', '/results', '/timetable', '/messages', '/support'],
   ACCOUNTANT: ['/dashboard', '/students', '/fees', '/messages', '/imports', '/support'],
   ADMISSIONS: ['/dashboard', '/admissions', '/students', '/messages', '/imports', '/support'],
   TRANSPORT: ['/dashboard', '/transport', '/support'],

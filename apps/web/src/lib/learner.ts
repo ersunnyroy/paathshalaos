@@ -76,6 +76,7 @@ export function invoiceIsOverdue(invoice: FeeInvoice, today: string): boolean {
 
 export interface GuardianLink {
   id: string; relationship: string; is_primary: boolean;
+  guardian_given_name?: string | null; guardian_family_name?: string | null;
   can_view_academics: boolean; can_view_finance: boolean; can_pay: boolean;
   can_authorise_pickup: boolean; can_receive_notifications: boolean;
 }
@@ -100,4 +101,12 @@ export function guardianCan(link: GuardianLink): string[] {
 export function orderGuardians<T extends GuardianLink>(links: readonly T[]): T[] {
   return [...links].sort((a, b) =>
     Number(b.is_primary) - Number(a.is_primary) || a.relationship.localeCompare(b.relationship));
+}
+
+/** The guardian's name, or null when the caller is not allowed to see who it is. */
+export function guardianName(link: GuardianLink): string | null {
+  const name = [link.guardian_given_name, link.guardian_family_name]
+    .filter((part): part is string => typeof part === 'string' && part.trim() !== '')
+    .map((part) => part.trim()).join(' ');
+  return name === '' ? null : name;
 }
