@@ -1073,7 +1073,8 @@ tbody tr.on td { background: var(--brand-soft); }
   border: 0; border-radius: 6px; background: transparent; color: var(--ink-2);
   font: inherit; position: relative; white-space: normal;
 }
-.bell-list li button:disabled { opacity: 1; cursor: default; }
+.bell-list li button { cursor: pointer; }
+.bell-list li button:hover { background: var(--surface-hover); }
 .bell-list li.unread button { color: var(--ink); font-weight: 600; cursor: pointer; }
 .bell-list li.unread button:hover { background: var(--surface-hover); }
 .bell-list li.unread button::before {

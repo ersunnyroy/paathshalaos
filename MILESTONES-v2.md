@@ -544,3 +544,31 @@ inbox works live; its tests and SQL mutation pass are still unrun.
   parent's Family page shows "Receipts: INV-000001"; the sheet reads "₹500.00
   has been received. The receipt numbers are with the school office. Balance
   ₹32,500.00". After 0089 the same page should list RCP numbers — unverified.
+
+## M43.3 — Fee notices: "payment received" and overdue reminders
+
+No migration.
+
+- `messaging/fee-notice.service.ts`. **Receipt notice**: when the counter
+  records a payment, the guardians the child's fees are shared with
+  (`can_view_finance` and `can_receive_notifications`, link in force) are told
+  in-app, from the school's `FEE_RECEIPT` template (purpose
+  `core_education_service`, so never consent-suppressed). Best-effort: it runs
+  after the payment and can never fail it; idempotent on the payment. No
+  approved `FEE_RECEIPT` template → nothing is sent. The payment response now
+  carries `guardiansTold`.
+- **Overdue reminders**: `GET` / `POST v1/messaging/fee-reminders`. One per
+  guardian per child per day, purpose `fee_notifications` (consent-based),
+  first approved fee template. Asked for by a person, with a two-click confirm.
+  "Per day" is the database's day (UTC), not the school's.
+- Amounts in messages use Indian grouping (`messaging/inr.ts`, 11 tests, run).
+- Web: the fee desk says "Receipt RCP-… issued. 2 guardians told." and has a
+  reminder line that does not offer a button that would send nothing.
+  `lib/reminder.ts` (9 tests, mutation pass clean). In the bell, clicking a
+  message now opens its full text (it was cut at 90 characters with no way to
+  read the rest).
+- Checked live: ₹200 on INV-000001 → "Receipt RCP-000027 issued. 2 guardians
+  told."; reminders with no consent → no button; consent recorded for Aarav →
+  "Send 2 reminders?" → "2 reminders sent. 15 not sent: no consent on record.";
+  the parent's bell shows both messages.
+- No API test against Postgres for either path yet.

@@ -30,6 +30,9 @@ export function Bell({ allowed, office }: {
   allowed: ReadonlySet<string> | null; office: boolean;
 }) {
   const [open, setOpen] = useState(false);
+  // The message being read in full. A row shows one line; the whole text is
+  // one click away, and that click is also what marks it read.
+  const [reading, setReading] = useState<string | null>(null);
   const anchor = useRef<HTMLDivElement>(null);
   const client = useQueryClient();
   const counts = useApiQuery<TodayCounts>(
@@ -105,10 +108,14 @@ export function Bell({ allowed, office }: {
               <ul className="bell-list">
                 {messages.map((m) => (
                   <li key={m.id} className={m.read_at ? undefined : 'unread'}>
-                    <button type="button" disabled={m.read_at !== null}
-                            aria-label={m.read_at ? undefined : 'Mark as read'}
-                            onClick={() => void read([m.id])}>
-                      <span className="text">{preview(m.body)}</span>
+                    <button type="button" aria-expanded={reading === m.id}
+                            onClick={() => {
+                              setReading((id) => (id === m.id ? null : m.id));
+                              if (m.read_at === null) void read([m.id]);
+                            }}>
+                      <span className="text">
+                        {reading === m.id ? (m.body ?? preview(m.body)) : preview(m.body)}
+                      </span>
                       <span className="sub">
                         {m.about ? `About ${m.about} · ` : ''}{ago(m.sent_at, Date.now())}
                       </span>

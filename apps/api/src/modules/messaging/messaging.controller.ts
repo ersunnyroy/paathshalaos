@@ -23,6 +23,7 @@ import { z } from 'zod';
 import { dispatchService, type Audience } from './dispatch.service.ts';
 import { inboxService } from './inbox.service.ts';
 import { absenceService, ABSENCE_SOURCE } from './absence.service.ts';
+import { feeNoticeService, REMINDER_SOURCE } from './fee-notice.service.ts';
 import { templateService } from './template.service.ts';
 import { inAppOnlyProvider } from './providers.ts';
 import { withTenant } from '../../db/tenant.ts';
@@ -198,6 +199,56 @@ export class MessagingController {
     return {
       data: await withTenant(currentScope(),
         (db) => absenceService.status(db, parsed.data)),
+    };
+  }
+
+  /**
+   * Overdue fees: how many children, and how many of their guardians have not
+   * been reminded today (M43.3).
+   */
+  @Get('fee-reminders')
+  async feeReminders() {
+    return { data: await feeNoticeService.reminderStatus(currentScope()) };
+  }
+
+  /**
+   * Reminds the guardians of every child with overdue fees, once per guardian
+   * per child per day. Pressing it again the same day sends nothing.
+   */
+  @Post('fee-reminders')
+  async sendFeeReminders(@Body() body: unknown) {
+    const parsed = z.object({ idempotencyKey: z.string().min(8).max(200) }).safeParse(body);
+    if (!parsed.success) throw ApiError.fromZod(parsed.error);
+    const scope = currentScope();
+    const status = await feeNoticeService.reminderStatus(scope);
+    if (!status.templateCode) {
+      throw ApiError.make('validation_error', 'no_reminder_template',
+        'No fee reminder has been written and approved yet. Add a template '
+        + 'with the purpose "fee notifications" under Messages first.');
+    }
+    const audience = await withTenant(scope, (db) => feeNoticeService.reminderAudience(db));
+    if (audience.length === 0) {
+      throw ApiError.make('validation_error', 'nobody_left_to_remind',
+        'Nobody is left to remind today: either nothing is overdue, the '
+        + 'guardians have already been reminded today, or the fees are not '
+        + 'shared with any guardian.');
+    }
+    const queued = await dispatchService.queue(scope, {
+      templateCode: status.templateCode,
+      idempotencyKey: parsed.data.idempotencyKey,
+      sourceType: REMINDER_SOURCE,
+    });
+    const { outcomes } = await dispatchService.dispatch(scope, {
+      requestId: queued.requestId, audience, provider: inAppOnlyProvider,
+    });
+    return {
+      data: {
+        requestId: queued.requestId,
+        sent: outcomes.filter((o) => o.outcome === 'sent').length,
+        suppressed: outcomes.filter((o) => o.outcome === 'suppressed').length,
+        failed: outcomes.filter((o) => o.outcome === 'failed').length,
+        outcomes,
+      },
     };
   }
 

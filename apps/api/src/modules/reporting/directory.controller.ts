@@ -20,6 +20,7 @@ import { ApiError } from '../../common/errors.ts';
 import { attendanceService } from '../attendance/attendance.service.ts';
 import { peopleRepository } from '../people/people.repository.ts';
 import { paymentService } from '../billing/payment.service.ts';
+import { feeNoticeService } from '../messaging/fee-notice.service.ts';
 import { Money } from '../billing/money.ts';
 
 const uuid = z.string().uuid();
@@ -309,15 +310,21 @@ export class DirectoryController {
         + 'not linked to a member of staff.');
     }
 
-    return {
-      data: await paymentService.recordOfflinePayment(scope, {
-        invoiceId: invoiceId.data,
-        amountMinor: Money.fromDecimalString(parsed.data.amount),
-        method: parsed.data.method,
-        idempotencyKey: parsed.data.idempotencyKey,
-        receivedByStaffId: staffId,
-      }),
-    };
+    const recorded = await paymentService.recordOfflinePayment(scope, {
+      invoiceId: invoiceId.data,
+      amountMinor: Money.fromDecimalString(parsed.data.amount),
+      method: parsed.data.method,
+      idempotencyKey: parsed.data.idempotencyKey,
+      receivedByStaffId: staffId,
+    });
+    // After, and never instead of: the money is recorded whether or not the
+    // family can be told. Idempotent on the payment, so a replayed request
+    // tells nobody twice.
+    const notice = await feeNoticeService.receiptReceived(scope, {
+      invoiceId: invoiceId.data, paymentId: recorded.paymentId,
+      receiptNo: recorded.receiptNo,
+    });
+    return { data: { ...recorded, guardiansTold: notice.told } };
   }
 
   // -------------------------------------------------------------------------

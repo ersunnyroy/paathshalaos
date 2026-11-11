@@ -7,6 +7,8 @@ import { Tile, Panel, Empty, SkeletonRows, Avatar, Pill } from '@/components/ui'
 import { apiGet, apiPost, rupees, rupeesCompact } from '@/lib/api';
 import { DataTable } from '@/components/data-table';
 import { localIsoDate, actionKey } from '@/lib/dates';
+import { paymentLine } from '@/lib/reminder';
+import { FeeReminders } from './fee-reminders';
 
 interface Invoice {
   id: string; invoice_no: string; status: string; due_on: string;
@@ -105,7 +107,12 @@ export default function FeesPage() {
 
   async function act(fn: () => Promise<unknown>, done: string) {
     setBusy(true); setError(null); setSaid(null);
-    try { await fn(); setSaid(done); setReload((n) => n + 1); }
+    // An action that knows better what happened says so itself.
+    try {
+      const out = await fn();
+      setSaid(typeof out === 'string' ? out : done);
+      setReload((n) => n + 1);
+    }
     catch (e) { setError((e as Error).message); }
     finally { setBusy(false); }
   }
@@ -258,6 +265,8 @@ export default function FeesPage() {
         ) : null}
       </Panel>
 
+      <FeeReminders version={reload} />
+
       <DataTable<Invoice>
         id="fee-invoices"
         title="Invoices"
@@ -323,7 +332,9 @@ export default function FeesPage() {
                         disabled={busy || !/^\d+(\.\d{1,2})?$/.test(take[i.id]?.amount ?? '')}
                         onClick={() => void act(async () => {
                           const entry = take[i.id]!;
-                          await apiPost(`/v1/invoices/${i.id}/payments`, {
+                          const paidNow = await apiPost<{
+                            receiptNo?: string; guardiansTold?: number;
+                          }>(`/v1/invoices/${i.id}/payments`, {
                             amount: entry.amount, method: 'cash',
                             // The same key however many times this is pressed
                             // for this amount: two taps at a counter are one
@@ -333,6 +344,7 @@ export default function FeesPage() {
                           // Cleared only once it is recorded, so a failed
                           // attempt can be retried under the same key.
                           setTake((t) => { const { [i.id]: _done, ...rest } = t; return rest; });
+                          return paymentLine(paidNow);
                         }, 'Payment recorded, receipt issued.')}>
                   Take cash
                 </button>
