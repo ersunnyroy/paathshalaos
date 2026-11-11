@@ -1,7 +1,6 @@
 'use client';
 
-import Link from 'next/link';
-import { useParams } from 'next/navigation';
+import { useParams, useRouter } from 'next/navigation';
 import { Shell } from '../../../shell';
 import { Empty } from '@/components/ui';
 import { useApiQuery } from '@/lib/query';
@@ -18,12 +17,15 @@ import {
  */
 export default function ReceiptPage() {
   const { id } = useParams<{ id: string }>();
+  const router = useRouter();
   const sheet = useApiQuery<ReceiptSheet>(`/v1/fees/invoices/${id}/receipts`);
 
   return (
     <Shell>
       <div className="receipt-tools no-print">
-        <Link href="/fees">← Back to fees</Link>
+        {/* Back to wherever they came from: the fee desk for the office, their
+            children for a parent. */}
+        <button type="button" className="ghost" onClick={() => router.back()}>← Back</button>
         <button type="button" className="primary" disabled={!sheet.data}
                 onClick={() => window.print()}>
           Print or save as PDF
@@ -56,7 +58,7 @@ function Receipt({ sheet }: { sheet: ReceiptSheet }) {
           </p>
         </div>
         <div className="kind">
-          <strong>{t.standing.length > 0 ? 'Fee receipt' : 'Fee invoice'}</strong>
+          <strong>{toPaise(invoice.amount_paid) > 0n ? 'Fee receipt' : 'Fee invoice'}</strong>
           {invoice.status === 'void' ? <span className="void">Void</span> : null}
         </div>
       </header>
@@ -134,6 +136,13 @@ function Receipt({ sheet }: { sheet: ReceiptSheet }) {
           </table>
           <p className="words">{rupeesInWords(t.received)}</p>
         </>
+      ) : toPaise(invoice.amount_paid) > 0n ? (
+        // Paid, but no receipt this person may see. Saying "nothing received"
+        // beside a reduced balance would be telling them their money is lost.
+        <p className="words">
+          {rupeesDecimal(invoice.amount_paid)} has been received. The receipt
+          numbers are with the school office.
+        </p>
       ) : (
         <p className="words">Nothing has been received against this invoice yet.</p>
       )}

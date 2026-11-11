@@ -106,6 +106,10 @@ function ChildCard({ child }: { child: Child }) {
   const standing = fees.data ? feeStanding(fees.data.invoices, today) : null;
   const unpaid = (fees.data?.invoices ?? [])
     .filter((i) => i.status !== 'void' && BigInt(i.outstanding_paise) > 0n);
+  // Anything money has been taken against has a receipt worth opening,
+  // whether or not something is still owed on it.
+  const paid = (fees.data?.invoices ?? [])
+    .filter((i) => i.status !== 'void' && BigInt(i.paid_paise) > 0n);
 
   return (
     <section className="panel child">
@@ -162,7 +166,9 @@ function ChildCard({ child }: { child: Child }) {
                 <ul className="lines">
                   {unpaid.map((i) => (
                     <li key={i.id}>
-                      <span>{i.invoice_no} · due {day(i.due_on)}</span>
+                      <span>
+                        <Link href={`/fees/receipt/${i.id}`}>{i.invoice_no}</Link> · due {day(i.due_on)}
+                      </span>
                       <span>
                         {rupees(i.outstanding_paise)}
                         {invoiceIsOverdue(i, today) ? <> <Pill tone="critical">overdue</Pill></> : null}
@@ -173,6 +179,17 @@ function ChildCard({ child }: { child: Child }) {
                 <p className="sub">Pay at the school office for now. Paying online is being built.</p>
               </>
             )}
+          {paid.length > 0 ? (
+            <p className="sub receipts">
+              Receipts:{' '}
+              {paid.map((i, n) => (
+                <span key={i.id}>
+                  {n > 0 ? ', ' : ''}
+                  <Link href={`/fees/receipt/${i.id}`}>{i.invoice_no}</Link>
+                </span>
+              ))}
+            </p>
+          ) : null}
         </div>
 
         <div>

@@ -516,3 +516,31 @@ inbox works live; its tests and SQL mutation pass are still unrun.
 - Seen once and not reproduced: a parent's first sign-in in a fresh tab stayed
   on /dashboard instead of going to /family until a reload (right after the dev
   server compiled /family for the first time).
+
+## M47.2 — A family sees the receipts for its own child's fees
+
+**Migration `0089_a_family_sees_its_receipts.sql`: written, not applied, not run.**
+
+- Before: `payment_read` / `receipt_read` opened only for the recorded payer,
+  and counter cash has no payer, so a parent saw "₹500 paid" and no receipt;
+  invoice lines were finance-only.
+- 0089 adds family read on `invoice_line` and `payment_allocation`, and widens
+  `payment_read` and `receipt_read`, each by reading through the row above it
+  (receipt → payment → allocation → invoice). `invoice_read` stays the one
+  place the rule is written; no definer function, no cycle. Two things it
+  widens are written in the migration: a co-guardian with finance access sees
+  the other's payment row, and a payment split across two families is visible
+  to both (each sees only its own allocation).
+- `apps/api/test/family-receipts.spec.ts`: 27 tests (sheet for office and
+  family; each of the four tables asked directly for parent / other family /
+  unshared parent / former guardian / teacher / accountant / other school; no
+  writes opened). Type-checked, **never run**. SQL mutation pass not done.
+- Web: Family page links each invoice, and lists "Receipts" for anything paid.
+  The receipt page has a Back button that returns to where the person came
+  from, and no longer says "nothing received" when money was received but the
+  viewer may not see the receipt — it says the amount and that the numbers are
+  with the office.
+- Checked live (0089 NOT applied): principal took ₹500 cash on INV-000001; the
+  parent's Family page shows "Receipts: INV-000001"; the sheet reads "₹500.00
+  has been received. The receipt numbers are with the school office. Balance
+  ₹32,500.00". After 0089 the same page should list RCP numbers — unverified.
