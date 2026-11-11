@@ -599,3 +599,26 @@ serial number**. A number that is recorded nowhere is worse than none, so the
 page prints none. A register (who issued what, to whom, when, numbered per
 year) needs a migration. The header carries the school's name only: no
 address, affiliation number or logo, for the same reason as the receipt.
+
+## M47.4 — The school's letterhead
+
+**Migration `0090_a_school_has_a_letterhead.sql`: written, not applied, not run.**
+Until it is applied `GET v1/branding/letterhead` answers 500; the Setup panel
+hides itself and receipts and certificates print with the school's name only,
+as before.
+
+- `school_letterhead`, one row per school: address, PIN, telephone, email,
+  website, affiliation body and number, school code, UDISE+ code, who signs.
+  Its own table rather than columns on `organization`, which the platform role
+  can write; the platform role is granted nothing here. Read by everybody in
+  the school (a parent's receipt needs the header); written under the existing
+  `app_actor_may_change_school_settings()`. CHECKs on PIN (six digits) and
+  UDISE+ (eleven).
+- `branding/letterhead.service.ts`, routes `GET` / `POST v1/branding/letterhead`
+  (saved whole; blanks stored as NULL; audited).
+- Web: "On the school's paper" panel on Setup with a live preview of the
+  header; receipts and certificates print the address, contact and affiliation
+  lines and the signatory. `lib/letterhead.ts` (7 tests, mutation pass clean).
+- `apps/api/test/letterhead.spec.ts`: 10 tests, type-checked, **never run**.
+- Checked live with 0090 NOT applied: receipt prints as before, Setup shows no
+  broken panel. The saved-and-printed path is unverified.

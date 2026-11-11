@@ -8,6 +8,7 @@ import { rupeesDecimal } from '@/lib/console';
 import {
   classLine, dateLabel, methodLabel, rupeesInWords, toPaise, totals, type ReceiptSheet,
 } from '@/lib/receipt';
+import { headerLines, signatory, type Letterhead } from '@/lib/letterhead';
 
 /**
  * A fee receipt, laid out to be printed on one sheet or saved as a PDF.
@@ -19,6 +20,9 @@ export default function ReceiptPage() {
   const { id } = useParams<{ id: string }>();
   const router = useRouter();
   const sheet = useApiQuery<ReceiptSheet>(`/v1/fees/invoices/${id}/receipts`);
+  // A receipt still prints if the letterhead cannot be read; it just has no
+  // address on it.
+  const letterhead = useApiQuery<Letterhead>('/v1/branding/letterhead', { retry: false });
 
   return (
     <Shell>
@@ -35,13 +39,15 @@ export default function ReceiptPage() {
       {sheet.error ? (
         <Empty title="This receipt could not be opened">{sheet.error.message}</Empty>
       ) : null}
-      {sheet.data ? <Receipt sheet={sheet.data} /> : null}
+      {sheet.data ? <Receipt sheet={sheet.data} letterhead={letterhead.data ?? null} /> : null}
     </Shell>
   );
 }
 
-function Receipt({ sheet }: { sheet: ReceiptSheet }) {
-  const { school, learner, invoice, lines } = sheet;
+function Receipt({ sheet, letterhead }: { sheet: ReceiptSheet; letterhead: Letterhead | null }) {
+  const lines = headerLines(letterhead);
+  const signs = signatory(letterhead, 'Authorised signatory');
+  const { school, learner, invoice, lines: billed } = sheet;
   const t = totals(sheet);
   const hasDiscount = toPaise(invoice.discount_total) !== 0n;
   const hasTax = toPaise(invoice.tax_total) !== 0n;
@@ -56,6 +62,9 @@ function Receipt({ sheet }: { sheet: ReceiptSheet }) {
             {school.legal_name !== school.name ? ` · ${school.legal_name}` : ''}
             {school.gstin ? ` · GSTIN ${school.gstin}` : ''}
           </p>
+          {lines.length > 0 ? (
+            <p className="lines">{lines.map((line) => <span key={line}>{line}</span>)}</p>
+          ) : null}
         </div>
         <div className="kind">
           <strong>{toPaise(invoice.amount_paid) > 0n ? 'Fee receipt' : 'Fee invoice'}</strong>
@@ -77,7 +86,7 @@ function Receipt({ sheet }: { sheet: ReceiptSheet }) {
           <tr><th>Particulars</th><th className="n">Amount</th></tr>
         </thead>
         <tbody>
-          {lines.map((line, i) => (
+          {billed.map((line, i) => (
             <tr key={i}>
               <td>
                 {line.description}
@@ -89,7 +98,7 @@ function Receipt({ sheet }: { sheet: ReceiptSheet }) {
           ))}
           {/* An invoice raised as one figure has no lines; a receipt with an
               empty table reads as a receipt for nothing. */}
-          {lines.length === 0 ? (
+          {billed.length === 0 ? (
             <tr><td>Fees for {invoice.financial_year}</td>
                 <td className="n">{rupeesDecimal(invoice.subtotal)}</td></tr>
           ) : null}
@@ -155,7 +164,10 @@ function Receipt({ sheet }: { sheet: ReceiptSheet }) {
 
       <footer>
         <span>Computer-generated; valid without a signature.</span>
-        <span className="sign">For {school.name}</span>
+        <span className="sign">
+          {signs.map((line) => <span key={line} style={{ display: 'block' }}>{line}</span>)}
+          For {school.name}
+        </span>
       </footer>
     </article>
   );

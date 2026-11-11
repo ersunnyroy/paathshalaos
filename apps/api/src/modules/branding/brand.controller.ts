@@ -16,6 +16,7 @@ import { z } from 'zod';
 import type { Request } from 'express';
 import { Public } from '../auth/public.decorator.ts';
 import { brandingService } from './branding.service.ts';
+import { letterheadService } from './letterhead.service.ts';
 import { domainService } from './domain.service.ts';
 import { currentScope } from '../../common/scope.ts';
 import { ApiError } from '../../common/errors.ts';
@@ -107,6 +108,34 @@ export class BrandingSettingsController {
     if (!parsed.success) throw ApiError.fromZod(parsed.error);
 
     return { data: await brandingService.set(currentScope(), parsed.data) };
+  }
+
+  /** What the school prints at the top of its paper (M47.4). Anybody in the school may read it. */
+  @Get('letterhead')
+  async letterhead() {
+    return { data: await letterheadService.get(currentScope()) };
+  }
+
+  /**
+   * Replaces it. The digit counts are checked here so the answer names the
+   * field; the table's own CHECKs are the backstop for any other writer.
+   */
+  @Post('letterhead')
+  async saveLetterhead(@Body() body: unknown) {
+    const text = z.string().max(200).nullable().optional();
+    const parsed = z.object({
+      address_line1: text, address_line2: text, city: text, state: text,
+      phone: text, website: text,
+      affiliation_body: text, affiliation_no: text, school_code: text,
+      signatory_name: text, signatory_title: text,
+      pincode: z.string().trim().regex(/^[1-9][0-9]{5}$/, 'A PIN code is six digits.')
+        .or(z.literal('')).nullable().optional(),
+      udise_code: z.string().trim().regex(/^[0-9]{11}$/, 'A UDISE+ code is eleven digits.')
+        .or(z.literal('')).nullable().optional(),
+      email: z.string().trim().email().max(200).or(z.literal('')).nullable().optional(),
+    }).safeParse(body);
+    if (!parsed.success) throw ApiError.fromZod(parsed.error);
+    return { data: await letterheadService.save(currentScope(), parsed.data) };
   }
 
   @Get('domains')

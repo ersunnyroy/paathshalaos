@@ -5,6 +5,7 @@ import Link from 'next/link';
 import { Shell, PageHead } from '../shell';
 import { Panel, Pill, Icon } from '@/components/ui';
 import { apiGet, apiPost, rupees } from '@/lib/api';
+import { LetterheadPanel } from './letterhead-panel';
 
 interface Step {
   key: string; title: string; why: string;
@@ -282,6 +283,8 @@ export default function SetupPage() {
           <PlanPanel />
 
           <LanguagePanel />
+
+          <LetterheadPanel />
 
           <Panel
             title="All steps"

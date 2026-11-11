@@ -12,6 +12,7 @@ import { yearLabel } from '@/lib/structure';
 import {
   KINDS, certificate, certificateFile, longDate, type CertificateKind,
 } from '@/lib/certificate';
+import { headerLines, signatory, type Letterhead } from '@/lib/letterhead';
 
 interface Learner {
   id: string; admission_no: string; lifecycle_status: string;
@@ -36,6 +37,9 @@ export default function CertificatePage() {
   const learner = useApiQuery<Learner>(`/v1/students/${id}`);
   const guardians = useApiQuery<GuardianLink[]>(`/v1/students/${id}/guardians`);
   const years = useApiQuery<Year[]>('/v1/structure/years');
+  const letterhead = useApiQuery<Letterhead>('/v1/branding/letterhead', { retry: false });
+  const lines = headerLines(letterhead.data);
+  const signs = signatory(letterhead.data, 'Principal / Head of school');
   const today = localIsoDate();
 
   useEffect(() => {
@@ -97,14 +101,22 @@ export default function CertificatePage() {
       {doc && doc.problems.length === 0 ? (
         <article className="receipt certificate">
           <header>
-            <div><h1>{school}</h1></div>
+            <div>
+              <h1>{school}</h1>
+              {lines.length > 0 ? (
+                <p className="lines">{lines.map((line) => <span key={line}>{line}</span>)}</p>
+              ) : null}
+            </div>
             <div className="kind"><strong>{doc.title}</strong></div>
           </header>
           <p className="dated">Date: {longDate(today)}</p>
           {doc.paragraphs.map((text, i) => <p key={i} className="body">{text}</p>)}
           <footer>
             <span>Issued from the school's records on {longDate(today)}.</span>
-            <span className="sign">Principal / Head of school<br />{school}</span>
+            <span className="sign">
+              {signs.map((line) => <span key={line} style={{ display: 'block' }}>{line}</span>)}
+              {school}
+            </span>
           </footer>
         </article>
       ) : null}
