@@ -633,3 +633,31 @@ method and by cashier, the cash that should be in the drawer, the total in
 words, and two signature lines. `lib/collection.ts` (7 tests, mutation pass
 clean). Checked live: 11 Nov shows RCP-000026 and RCP-000027, ₹700, all cash,
 taken by Anjali Menon. No API test.
+
+## M47.6 — The certificate register
+
+**Migration `0091_a_certificate_is_on_the_register.sql`: written, not applied, not run.**
+Until it is applied the certificate page says the register is not available
+and prints an unnumbered, unrecorded copy, as M47.3 did.
+
+- `certificate_issue`: learner, kind, year label, serial, number
+  (`BON/2026-27/0007`), date (the school's day, from `organization.timezone`),
+  purpose, and the exact words as issued. SELECT and INSERT only — no UPDATE or
+  DELETE is granted, like a receipt. Serial is per school, kind and year, under
+  a unique index; max + 1 with a savepoint retry on collision.
+- `app_actor_may_issue_certificates()`: owner, administrator, admissions.
+  Reading follows `student` visibility (office, the class's teachers, the
+  child's family).
+- The server words the certificate. `people/certificate-text.ts` is the web's
+  `lib/certificate.ts`, and `test/certificate-text.spec.ts` (run, passing)
+  fails if the two files differ by a byte. The request carries the kind and
+  what it is for, never the words.
+- Routes on the `v1/students` controller: `GET` / `POST :id/certificates`.
+- Web: "Issue and print" (two clicks: it uses a number) prints the server's
+  version with its number; "Already issued" lists the learner's certificates
+  and reprints one word for word.
+- `apps/api/test/certificates.spec.ts`: 10 tests (numbering, two issued at
+  once, who may issue, who may read, immutability, words kept after the record
+  changes). Type-checked, **never run**.
+- Checked live with 0091 NOT applied: the fallback notice and unnumbered print.
+  Issuing, numbering and reprinting are unverified.

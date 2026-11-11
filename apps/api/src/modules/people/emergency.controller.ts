@@ -29,6 +29,7 @@
 import { Controller, Get, Post, Body, Param, NotFoundException } from '@nestjs/common';
 import { z } from 'zod';
 import { peopleRepository } from './people.repository.ts';
+import { certificateService } from './certificate.service.ts';
 import { currentScope } from '../../common/scope.ts';
 import { ApiError } from '../../common/errors.ts';
 
@@ -36,6 +37,35 @@ const uuid = z.string().uuid();
 
 @Controller('v1/students')
 export class EmergencyController {
+  /** What has been issued in this learner's name (M47.6). */
+  @Get(':id/certificates')
+  async certificates(@Param('id') id: string) {
+    const studentId = uuid.safeParse(id);
+    if (!studentId.success) throw ApiError.fromZod(studentId.error);
+    return { data: await certificateService.listFor(currentScope(), studentId.data) };
+  }
+
+  /**
+   * Issues one onto the register. The body says which kind and what it is
+   * for; the words are composed here from the record, never taken from the
+   * request.
+   */
+  @Post(':id/certificates')
+  async issueCertificate(@Param('id') id: string, @Body() body: unknown) {
+    const studentId = uuid.safeParse(id);
+    if (!studentId.success) throw ApiError.fromZod(studentId.error);
+    const parsed = z.object({
+      kind: z.enum(['bonafide', 'study', 'dob']),
+      purpose: z.string().max(120).optional(),
+    }).safeParse(body);
+    if (!parsed.success) throw ApiError.fromZod(parsed.error);
+    return {
+      data: await certificateService.issue(currentScope(), {
+        studentId: studentId.data, kind: parsed.data.kind, purpose: parsed.data.purpose,
+      }),
+    };
+  }
+
   /**
    * Blood group, medical note, accommodations, and who to call.
    *
