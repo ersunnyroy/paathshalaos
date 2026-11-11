@@ -622,3 +622,14 @@ as before.
 - `apps/api/test/letterhead.spec.ts`: 10 tests, type-checked, **never run**.
 - Checked live with 0090 NOT applied: receipt prints as before, Setup shows no
   broken panel. The saved-and-printed path is unverified.
+
+## M47.5 — The day's collection, for closing the counter
+
+No migration. `GET v1/fees/collections?on=` (`billing/collection.service.ts`):
+every receipt issued on a day, one row per receipt-and-invoice so a split
+payment adds up once; cancelled receipts listed and marked. Finance only, by
+the existing policies. Web `/fees/day` (linked from Fees): the list, totals by
+method and by cashier, the cash that should be in the drawer, the total in
+words, and two signature lines. `lib/collection.ts` (7 tests, mutation pass
+clean). Checked live: 11 Nov shows RCP-000026 and RCP-000027, ₹700, all cash,
+taken by Anjali Menon. No API test.

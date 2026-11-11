@@ -265,6 +265,10 @@ export default function FeesPage() {
         ) : null}
       </Panel>
 
+      <p className="sub" style={{ margin: '0 0 12px' }}>
+        <Link href="/fees/day">Today's collection, for closing the counter →</Link>
+      </p>
+
       <FeeReminders version={reload} />
 
       <DataTable<Invoice>

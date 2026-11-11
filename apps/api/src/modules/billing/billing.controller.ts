@@ -45,6 +45,7 @@ import { z } from 'zod';
 import { feePlanService } from './fee-plan.service.ts';
 import { invoiceService } from './invoice.service.ts';
 import { receiptService } from './receipt.service.ts';
+import { collectionService } from './collection.service.ts';
 import { refundService } from './refund.service.ts';
 import { exportService } from './export.service.ts';
 import { reconciliationService } from './reconciliation.service.ts';
@@ -552,6 +553,18 @@ export class BillingController {
    * An invoice that was issued and then withdrawn is part of the record a
    * school shows an auditor. Deleting it makes the numbering lie.
    */
+  /**
+   * Every receipt issued on a day (M47.5): what the cashier counts the drawer
+   * against at closing. The day is required — "today" is the school's day, and
+   * the server does not know what time zone the counter is in.
+   */
+  @Get('collections')
+  async collections(@Query() query: unknown) {
+    const parsed = z.object({ on: isoDate, campusId: uuid.optional() }).safeParse(query ?? {});
+    if (!parsed.success) throw ApiError.fromZod(parsed.error);
+    return { data: await collectionService.on(currentScope(), parsed.data) };
+  }
+
   /**
    * What a printed receipt for this invoice has on it (M47.1): the school,
    * the learner, the lines, every receipt issued against it and what is left.

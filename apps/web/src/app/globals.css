@@ -1141,3 +1141,8 @@ tbody tr.on td { background: var(--brand-soft); }
 .letterhead-form .bad { color: var(--critical-ink); }
 .letterhead-preview { display: flex; flex-direction: column; gap: 2px; margin: 0 16px 12px; padding: 10px 12px; border: 1px dashed var(--line-strong); border-radius: 8px; font-size: 12.5px; color: var(--ink-2); }
 .receipt header .lines span { display: block; }
+
+/* Day's collection */
+.closing-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 0 28px; }
+.receipt tr.struck td { text-decoration: line-through; color: #5B6B7F; }
+@media (max-width: 640px) { .closing-grid { grid-template-columns: 1fr; } }
