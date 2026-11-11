@@ -68,11 +68,36 @@ export function saveSession(session: Session): void {
   }
 }
 
+const identityListeners = new Set<() => void>();
+
+/**
+ * Calls `fn` whenever whoever is signed in stops being, or somebody new signs
+ * in. Returns the way to stop listening.
+ *
+ * Anything remembered on behalf of a person — the read cache, above all — has
+ * to be dropped here. Without it, the next person to sign in on the same
+ * computer is shown the last person's answers until each one happens to be
+ * asked again: a parent on the staff-room machine briefly reading the
+ * principal's screen.
+ */
+export function onIdentityChange(fn: () => void): () => void {
+  identityListeners.add(fn);
+  return () => { identityListeners.delete(fn); };
+}
+
+function identityChanged(): void {
+  for (const fn of identityListeners) {
+    // One listener failing must not leave the others holding old data.
+    try { fn(); } catch { /* nothing useful to do with it here */ }
+  }
+}
+
 export function clearSession(): void {
   try {
     sessionStorage.removeItem(ACCESS_KEY);
     sessionStorage.removeItem(REFRESH_KEY);
   } catch { /* see above */ }
+  identityChanged();
 }
 
 export function currentToken(): string | null {
@@ -123,6 +148,10 @@ export async function login(email: string, password: string): Promise<Session> {
     throw new ApiError(response.status, body?.error?.code ?? 'login_failed',
       body?.error?.message ?? 'Those details were not accepted.');
   }
+  // A sign-in is a new person as far as anything remembered is concerned,
+  // even if nobody signed out first. A token refresh is not, and goes through
+  // `saveSession` alone.
+  identityChanged();
   saveSession(body.data);
   return body.data;
 }
@@ -309,6 +338,8 @@ export function consolePost<T>(path: string, payload?: unknown): Promise<T> {
  * function remembers.
  */
 export function assumeSchoolSession(accessToken: string): void {
+  // Entering a school as one of its people is a change of person too.
+  identityChanged();
   try {
     sessionStorage.setItem(ACCESS_KEY, accessToken);
     // No refresh token: an entry session cannot be renewed. When the window

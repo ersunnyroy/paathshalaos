@@ -1120,3 +1120,7 @@ tbody tr.on td { background: var(--brand-soft); }
   .receipt .balance { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
   @page { margin: 16mm; }
 }
+
+/* Register: tell the guardians of absentees */
+.absence-notices { display: flex; flex-wrap: wrap; gap: 8px 14px; align-items: center; justify-content: space-between; margin: 0 0 14px; }
+.absence-notices .why { flex-basis: 100%; font-size: 12.5px; }

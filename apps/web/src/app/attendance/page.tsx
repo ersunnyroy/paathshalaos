@@ -6,6 +6,7 @@ import { Avatar, Empty, Icon, Panel, Pill, SkeletonRows, Tile, Toast } from '@/c
 import { apiGet, apiPost } from '@/lib/api';
 import { localIsoDate } from '@/lib/dates';
 import { attendanceQueue, buildRecords, flushWhenOnline } from '@/lib/offline';
+import { AbsenceNotices } from './absence-notices';
 
 interface Section {
   id: string; section_name: string; class_name: string;
@@ -44,6 +45,8 @@ export default function AttendancePage() {
   const [toast, setToast] = useState<{ message: string; tone?: 'bad' } | null>(null);
   const [busy, setBusy] = useState(false);
   const [pending, setPending] = useState(0);
+  // Counts every save, so what is asked after one is never answered from before it.
+  const [saves, setSaves] = useState(0);
 
   useEffect(() => {
     apiGet<Section[]>('/v1/sections')
@@ -152,6 +155,7 @@ export default function AttendancePage() {
                 + 'when you are back online.' },
       );
       refresh();
+      setSaves((n) => n + 1);
     } catch (e) {
       // Opening the session is the only step that can still fail outright: the
       // marks themselves are in the queue by then and are never lost here.
@@ -198,12 +202,17 @@ export default function AttendancePage() {
               value={String(counts.present)}
               meter={roll.length ? counts.present / roll.length : 0} tone="good" />
         <Tile label="Absent" loading={!students}
-              describe={counts.absent ? 'Guardians will be notified' : 'Nobody marked absent'}
+              describe={counts.absent ? 'Save, then tell their guardians below' : 'Nobody marked absent'}
               value={String(counts.absent)} />
         <Tile label="Session" loading={!students}
               describe={existing ? `${existing.marked} marked, ${existing.absent} absent` : 'Saving will start it'}
               value={existing ? 'Open' : 'Not started'} />
       </div>
+
+      {existing ? (
+        <AbsenceNotices key={`${existing.id}-${saves}`} sessionId={existing.id}
+                        version={`${saves}-${existing.marked}-${existing.absent}`} />
+      ) : null}
 
       <Panel
         title="Register"

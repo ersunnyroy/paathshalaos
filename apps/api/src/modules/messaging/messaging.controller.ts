@@ -22,6 +22,7 @@ import { Controller, Get, Post, Body, Param, Query } from '@nestjs/common';
 import { z } from 'zod';
 import { dispatchService, type Audience } from './dispatch.service.ts';
 import { inboxService } from './inbox.service.ts';
+import { absenceService, ABSENCE_SOURCE } from './absence.service.ts';
 import { templateService } from './template.service.ts';
 import { inAppOnlyProvider } from './providers.ts';
 import { withTenant } from '../../db/tenant.ts';
@@ -63,6 +64,9 @@ const sendBody = z.object({
   audience: z.discriminatedUnion('kind', [
     z.object({ kind: z.literal('section'), sectionId: uuid }),
     z.object({ kind: z.literal('people'), personIds: z.array(uuid).min(1).max(500) }),
+    // The guardians of the children marked absent in one register who have
+    // not been told yet. Pressing it twice sends nothing the second time.
+    z.object({ kind: z.literal('absentees'), attendanceSessionId: uuid }),
   ]),
 });
 
@@ -184,6 +188,20 @@ export class MessagingController {
   }
 
   /**
+   * For one register: how many are absent, and how many of their guardians
+   * are still to be told (M43.2). What the "Tell the parents" button reads.
+   */
+  @Get('absence-notices/:sessionId')
+  async absenceNotices(@Param('sessionId') sessionId: string) {
+    const parsed = uuid.safeParse(sessionId);
+    if (!parsed.success) throw ApiError.fromZod(parsed.error);
+    return {
+      data: await withTenant(currentScope(),
+        (db) => absenceService.status(db, parsed.data)),
+    };
+  }
+
+  /**
    * Queue a message and send it.
    *
    * One call, because a school pressing "send to Class IX parents" means one
@@ -206,6 +224,14 @@ export class MessagingController {
       if (spec.kind === 'people') {
         return spec.personIds.map<Audience>((personId) => ({
           personId, variables: variables ?? {},
+        }));
+      }
+      if (spec.kind === 'absentees') {
+        const pending = await absenceService.audience(db, spec.attendanceSessionId);
+        // The child's name and the day come from the register, and win over
+        // anything the caller sent under the same names.
+        return pending.map((member) => ({
+          ...member, variables: { ...(variables ?? {}), ...member.variables },
         }));
       }
       // The guardians of the learners in a section, each message being ABOUT
@@ -231,6 +257,13 @@ export class MessagingController {
       }));
     });
 
+    if (audience.length === 0 && spec.kind === 'absentees') {
+      // Not an error to press the button twice. Say why nothing went.
+      throw ApiError.make('validation_error', 'nobody_left_to_tell',
+        'Nobody is left to tell: either nobody is marked absent in this '
+        + 'register, their guardians have already been told, or no guardian '
+        + 'is linked to them.');
+    }
     if (audience.length === 0) {
       throw ApiError.make('validation_error', 'empty_audience',
         'Nobody would receive this. Check the section has learners with '
@@ -240,7 +273,9 @@ export class MessagingController {
     const queued = await dispatchService.queue(scope, {
       templateCode: parsed.data.templateCode,
       idempotencyKey: parsed.data.idempotencyKey,
-      sourceType: 'manual',
+      ...(spec.kind === 'absentees'
+        ? { sourceType: ABSENCE_SOURCE, sourceId: spec.attendanceSessionId }
+        : { sourceType: 'manual' }),
       ...(parsed.data.campusId ? { campusId: parsed.data.campusId } : {}),
     });
 

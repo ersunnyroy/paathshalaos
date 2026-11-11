@@ -476,3 +476,43 @@ show one.
   itself has not been looked at on paper or in a print preview.
 - Not done: a link from the parent's Family page; receipt PDF stored as a file;
   the school's logo and address on the header (address is not in the schema).
+
+## M43.2 — Telling guardians their child was marked absent
+
+No migration. Migration 0088 (M43.1) has since been applied on the Mac and the
+inbox works live; its tests and SQL mutation pass are still unrun.
+
+- The register's "Absent" tile said "Guardians will be notified". Nothing
+  notified anybody: `attendance.marked` has gone into the outbox since M6 and
+  nothing reads the outbox (`claimUnpublished` has no caller). The tile no
+  longer says it.
+- API (`messaging/absence.service.ts`, routes on MessagingController):
+  `GET v1/messaging/absence-notices/:sessionId` (absent, still to tell, no
+  guardian, no consent, notices that would go) and a new audience
+  `{ kind: 'absentees', attendanceSessionId }` on `POST v1/messaging/send`.
+  Each guardian is told once per child per register: a second press sends
+  nothing (`nobody_left_to_tell`), and a child marked absent later still gets
+  theirs. A guardian who muted or withdrew is settled; `no_consent` is not —
+  nobody was asked — so those go the first time after consent is recorded.
+- Web: under a saved register, a line saying who is absent and who has been
+  told, with "Tell their guardians". It does not offer a button that would send
+  nothing: with no consent on record it says so and points at Consent.
+  `lib/absence.ts` (11 tests, mutation pass clean).
+- **Cache bug found and fixed**: the read cache was keyed by path only and
+  survived sign-out, so the next person to sign in on the same computer was
+  shown the last person's cached answers (a parent saw the principal's empty
+  inbox; it could as easily have been the reverse). `onIdentityChange` in
+  `lib/api.ts` now clears the cache on sign-out, sign-in and console entry.
+- Checked live in Chrome: Class IX A, two marked absent → "no consent on record
+  for 2 children", no button. Consent recorded for Aarav on the Consent screen
+  → button appears → "2 guardians told. 1 not sent: no consent on record." →
+  the parent's bell shows "Aarav was marked absent on 11 Nov 2026".
+- Not done: an API test for the absence service (exercised over HTTP only);
+  SMS/WhatsApp (in-app only: no gateway); sending automatically when the
+  register is saved, which wants the outbox consumer.
+- Demo data: ATT_ABSENT_V1 has an approved in-app wording; today's Class IX A
+  register has two absentees; consent for attendance notices recorded for Aarav
+  Kumar.
+- Seen once and not reproduced: a parent's first sign-in in a fresh tab stayed
+  on /dashboard instead of going to /family until a reload (right after the dev
+  server compiled /family for the first time).

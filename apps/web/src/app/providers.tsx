@@ -1,8 +1,9 @@
 'use client';
 
-import { useState, type ReactNode } from 'react';
+import { useEffect, useState, type ReactNode } from 'react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { shouldRetry } from '@/lib/query';
+import { onIdentityChange } from '@/lib/api';
 
 /**
  * One query cache per browser tab.
@@ -17,5 +18,7 @@ export function Providers({ children }: { children: ReactNode }) {
       queries: { staleTime: 30_000, retry: shouldRetry, refetchOnWindowFocus: true },
     },
   }));
+  // The cache is one person's. When that person changes, it goes.
+  useEffect(() => onIdentityChange(() => client.clear()), [client]);
   return <QueryClientProvider client={client}>{children}</QueryClientProvider>;
 }
