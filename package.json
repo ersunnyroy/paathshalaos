@@ -1,0 +1,26 @@
+{
+  "name": "paathshalaos",
+  "private": true,
+  "version": "0.1.0",
+  "packageManager": "pnpm@9.12.3",
+  "engines": {
+    "node": ">=20.11"
+  },
+  "scripts": {
+    "build": "turbo run build",
+    "dev": "turbo run dev",
+    "lint": "turbo run lint",
+    "typecheck": "turbo run typecheck",
+    "test": "turbo run test",
+    "db:migrate": "pnpm --filter @paathshala/api db:migrate",
+    "db:bootstrap": "pnpm --filter @paathshala/api db:bootstrap",
+    "db:seed": "pnpm --filter @paathshala/api db:seed",
+    "dev:api": "pnpm --filter @paathshala/api dev",
+    "dev:web": "pnpm --filter @paathshala/web dev",
+    "webhooks:relay": "pnpm --filter @paathshala/api webhooks:relay:dev"
+  },
+  "devDependencies": {
+    "turbo": "^2.3.3",
+    "typescript": "^5.7.2"
+  }
+}

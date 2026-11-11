@@ -1,0 +1,30 @@
+# At the CONTEXT root, which is the only place Docker looks.
+#
+# This file started life at apps/api/.dockerignore, next to the Dockerfile,
+# which felt tidy and does nothing: Docker reads .dockerignore from the root of
+# the build context, and the context here is the repository. Everything below
+# was therefore being sent to the daemon and copied into the image.
+#
+# Two consequences, one slow and one serious. The host's node_modules — built
+# for whatever machine ran the build — landed on top of the ones installed
+# inside the image. And `.env` went into a layer, where a later `rm` does not
+# remove it.
+
+.env
+.env.*
+!.env.example
+
+node_modules
+**/node_modules
+dist
+**/dist
+.next
+**/.next
+.turbo
+coverage
+*.log
+.git
+.gitignore
+.DS_Store
+backups
+/tmp

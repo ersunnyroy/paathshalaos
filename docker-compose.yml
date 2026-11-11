@@ -1,0 +1,269 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: paathshala-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: paathshala_owner
+      POSTGRES_PASSWORD: local_dev_only
+      POSTGRES_DB: paathshala
+    ports:
+      - "5433:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U paathshala_owner -d paathshala"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+  redis:
+    image: redis:7-alpine
+    container_name: paathshala-redis
+    restart: unless-stopped
+    command: ["redis-server", "--appendonly", "yes"]
+    ports:
+      - "6380:6379"
+    volumes:
+      - redisdata:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+  # Object storage, on http://localhost:9000 (console on 9001).
+  #
+  # MinIO speaks S3, so the same client and the same presigned URLs work here
+  # and against AWS in `ap-south-1` — the only differences are the endpoint and
+  # `OBJECT_STORE_FORCE_PATH_STYLE`, which MinIO needs because virtual-host
+  # addressing would require DNS for every bucket.
+  #
+  # **The tag is floating, and that is a correction.** The first version of this
+  # file pinned `RELEASE.2025-04-22T22-12-26Z` — a tag that does not exist,
+  # because it was written from memory rather than looked up, and `docker
+  # compose up` failed on the pull with "repository does not exist or may
+  # require 'docker login'", which reads like an authentication problem and is
+  # not one. A wrong pin is worse than no pin: it fails at the registry with an
+  # error that names the wrong cause. This is a local development stack, so a
+  # moving tag is the honest trade until somebody pins one they have actually
+  # pulled.
+  minio:
+    # `quay.io/minio/minio`, not `minio/minio`. MinIO moved their primary
+    # publishing to quay.io and the Docker Hub mirror refuses anonymous pulls
+    # for many networks with "repository does not exist or may require 'docker
+    # login'" — misleading, and exactly what a person running this hit twice.
+    # quay.io is MinIO's own registry and takes anonymous pulls.
+    image: quay.io/minio/minio:latest
+    container_name: paathshala-minio
+    restart: unless-stopped
+    command: ["server", "/data", "--console-address", ":9001"]
+    environment:
+      MINIO_ROOT_USER: paathshala
+      MINIO_ROOT_PASSWORD: paathshala-local-only
+    ports:
+      - "9000:9000"
+      - "9001:9001"
+    volumes:
+      - miniodata:/data
+    healthcheck:
+      # `mc` is not in the server image, so this asks MinIO's own liveness
+      # endpoint over the port it already serves. The previous version shelled
+      # out to `mc ready`, which is a different image.
+      test: ["CMD-SHELL", "curl -fsS http://localhost:9000/minio/health/live || exit 1"]
+      interval: 5s
+      timeout: 5s
+      retries: 30
+
+  # ClamAV, so the scan gate 0017 wrote into the schema can actually be
+  # satisfied locally.
+  #
+  # `virus_scan_state` defaults to 'pending' and nothing is served until a scan
+  # clears it. Without this container every local upload stores fine and is
+  # never downloadable, which looks like a bug and is the rule working.
+  #
+  # Slow to start — it downloads signature databases on first run, a few hundred
+  # megabytes — so the healthcheck is patient and NOTHING depends on it. The API
+  # treats a scanner that is not there as "failed", never "clean", so the rest
+  # of the product works while it warms up.
+  clamav:
+    # `stable`, not `latest`. ClamAV's Docker Hub tag layout puts the current
+    # released version under `stable` and reserves `latest` for a rolling build
+    # that has been broken more than once.
+    image: clamav/clamav:stable
+    # ClamAV publish only an amd64 image, so this runs under Rosetta on an
+    # M-series Mac. Slow, and it does not matter here: the daemon spends its
+    # first ten minutes downloading signature databases whatever it is running
+    # on, and the API treats a scanner that is not yet ready as `failed` rather
+    # than `clean`, so nothing else waits on it.
+    platform: linux/amd64
+    container_name: paathshala-clamav
+    restart: unless-stopped
+    ports:
+      - "3310:3310"
+    volumes:
+      - clamavdb:/var/lib/clamav
+    healthcheck:
+      test: ["CMD", "clamdcheck.sh"]
+      interval: 30s
+      timeout: 10s
+      retries: 20
+      start_period: 600s
+
+  # A browser client for the database, on http://localhost:8081.
+  #
+  # Worth having precisely because this schema is unusual: almost every table
+  # carries row-level security, and the interesting questions are "which
+  # policies are on this table" and "what does this role actually see" rather
+  # than "what columns exist". Adminer will answer all three, and it connects as
+  # whichever role you type — so you can log in as paathshala_app and watch the
+  # policies filter your own SELECT.
+  #
+  # Local only. It is not in any deployment manifest and should never be: a
+  # database console reachable from a browser is a database console reachable
+  # from anything that can reach that browser.
+  adminer:
+    image: adminer:4-standalone
+    container_name: paathshala-adminer
+    restart: unless-stopped
+    ports:
+      - "8081:8080"
+    environment:
+      ADMINER_DEFAULT_SERVER: postgres
+      # 'dracula' reads better against a dark terminal beside it; 'pepa-linha'
+      # is the lighter one if you prefer.
+      ADMINER_DESIGN: pepa-linha
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  # ---------------------------------------------------------------- the API
+  #
+  # BEHIND A PROFILE, and that is the important line. `docker compose up`
+  # brings up Postgres, Redis and Adminer and nothing else, because that is
+  # what `run-local.sh` and every instruction in RUNNING.md assume: the
+  # containers are the infrastructure, and the API runs on the host with a
+  # watcher attached. Adding an API service without a profile quietly changed
+  # what a bare `up` means — it built an image nobody asked for and bound 3001,
+  # which is the port `run-local.sh` starts the host API on a few lines later.
+  # The daemon refuses the second binder with `address already in use`, a
+  # message about sockets that says nothing about the two ways to run this
+  # application having collided.
+  #
+  # So: `docker compose --profile app up --build` runs the whole thing in
+  # containers, and a bare `up` stays what it was.
+  #
+  # Two services from one image, because the ordering between them is the
+  # thing that goes wrong. `migrate` runs to completion first; `api` starts
+  # only after it exits cleanly. A single service that migrated on boot would
+  # have every replica racing to apply the same migrations, and would make a
+  # rollback a schema question rather than an image question.
+  # Roles before schema. This is the M24 lesson arriving somewhere else: the
+  # four application roles are CLUSTER-level objects, so nothing in the
+  # migration history creates them — and every GRANT in every migration names
+  # one. Without this step `migrate` fails on the first GRANT, which reads as
+  # a broken migration rather than as a missing prerequisite.
+  #
+  # Idempotent by design: it creates what is absent and takes back NOSUPERUSER
+  # NOBYPASSRLS on every run, in case somebody granted one to unblock
+  # something.
+  bootstrap:
+    build:
+      context: .
+      dockerfile: apps/api/Dockerfile
+    image: paathshala-api:local
+    container_name: paathshala-bootstrap
+    profiles: ["app"]
+    command: ["node", "dist/db/bootstrap.js"]
+    environment: &api_env
+      NODE_ENV: production
+      PORT: "3001"
+      # The owner role, and ONLY here. The API's own service below does not
+      # get this variable: the application role has no DDL rights, which is
+      # the entire reason migrations are a separate entry point.
+      DATABASE_OWNER_URL: postgres://paathshala_owner:local_dev_only@postgres:5432/paathshala
+      DATABASE_URL: postgres://paathshala_app:local_dev_only@postgres:5432/paathshala
+      DATABASE_AUTH_URL: postgres://paathshala_auth:local_dev_only@postgres:5432/paathshala
+      DATABASE_HEALTH_URL: postgres://paathshala_health:local_dev_only@postgres:5432/paathshala
+      DATABASE_PLATFORM_URL: postgres://paathshala_platform:local_dev_only@postgres:5432/paathshala
+      REDIS_URL: redis://redis:6379
+      # Local only, and obviously so. A real deployment reads this from a
+      # secret manager; a default that looks like a real secret is a default
+      # somebody ships.
+      JWT_SECRET: local_dev_only_not_a_real_secret_padding_padding
+      WEB_ORIGINS: http://localhost:3000
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: "no"
+
+  migrate:
+    build:
+      context: .
+      dockerfile: apps/api/Dockerfile
+    image: paathshala-api:local
+    container_name: paathshala-migrate
+    profiles: ["app"]
+    command: ["node", "dist/db/migrate.js"]
+    environment: *api_env
+    depends_on:
+      bootstrap:
+        condition: service_completed_successfully
+    restart: "no"
+
+  api:
+    build:
+      context: .
+      dockerfile: apps/api/Dockerfile
+    image: paathshala-api:local
+    container_name: paathshala-api
+    profiles: ["app"]
+    environment: *api_env
+    ports:
+      # Overridable because the collision is real: `run-local.sh` runs the API
+      # on the host at 3001. API_PORT=3002 puts the container beside it rather
+      # than instead of it.
+      - "${API_PORT:-3001}:3001"
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+      redis:
+        condition: service_started
+    restart: unless-stopped
+    healthcheck:
+      # The orchestrator owns liveness in a real deployment; here there is no
+      # orchestrator, so compose does.
+      test: ["CMD-SHELL", "node -e \"fetch('http://localhost:3001/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))\""]
+      interval: 10s
+      timeout: 5s
+      retries: 6
+      start_period: 20s
+
+  # The jobs that had no caller until M33: sealing the audit log, deleting the
+  # documents of applicants who did not enrol, checking the ledger balances, and
+  # making next month's partitions.
+  #
+  # Its own service, not a thread inside the API, for the reason the webhook
+  # relay is one: it can be STOPPED. "Stop the scheduler" is something an
+  # on-call engineer can do at three in the morning without taking a school's
+  # app offline — and a fleet-wide purge is exactly the thing somebody wants to
+  # stop at three in the morning.
+  #
+  # Several copies are safe. Tasks are claimed with an UPDATE, so they share the
+  # work rather than duplicating it; see `scheduler.service.ts`.
+  scheduler:
+    image: paathshala-api:local
+    container_name: paathshala-scheduler
+    profiles: ["app"]
+    environment: *api_env
+    command: ["node", "dist/workers/scheduler.js"]
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+    restart: unless-stopped
+
+volumes:
+  pgdata:
+  redisdata:
+  miniodata:
+  clamavdb:

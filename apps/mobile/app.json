@@ -1,0 +1,38 @@
+{
+  "expo": {
+    "name": "paathshalaOS",
+    "slug": "paathshalaos",
+    "version": "0.1.0",
+    "orientation": "portrait",
+    "scheme": "paathshala",
+    "userInterfaceStyle": "automatic",
+    "newArchEnabled": true,
+    "splash": {
+      "backgroundColor": "#0F172A",
+      "resizeMode": "contain"
+    },
+    "assetBundlePatterns": [
+      "**/*"
+    ],
+    "ios": {
+      "supportsTablet": true,
+      "bundleIdentifier": "os.paathshala.app"
+    },
+    "android": {
+      "package": "os.paathshala.app",
+      "adaptiveIcon": {
+        "backgroundColor": "#0F172A"
+      }
+    },
+    "plugins": [
+      "expo-router",
+      "expo-secure-store"
+    ],
+    "experiments": {
+      "typedRoutes": false
+    },
+    "extra": {
+      "tenantId": ""
+    }
+  }
+}

@@ -1,0 +1,1235 @@
+{
+  "openapi": "3.1.0",
+  "info": {
+    "title": "paathshalaOS API",
+    "version": "1.0.0",
+    "description": "The integration surface for an institute running on paathshalaOS.\n\n**Money is a string.** Every amount is an exact decimal rendered as a string. Parsing one into a float is the single most common way an integration ends up disagreeing with a school about what a family owes.\n\n**Paging is keyset.** Follow `next_cursor`; there is no offset parameter, because a row inserted mid-walk would make an offset client skip a child.\n\n**Every write needs an `Idempotency-Key`.** Not optional — a client that omits one is refused.\n\n**Scopes are enforced by the database.** A key without `invoices:read` does not get filtered results from the invoice tables; it gets none, because the row-level security policy that decides is false for it."
+  },
+  "servers": [
+    {
+      "url": "http://localhost:3001",
+      "description": "Local development"
+    }
+  ],
+  "components": {
+    "securitySchemes": {
+      "apiKey": {
+        "type": "http",
+        "scheme": "bearer",
+        "description": "Your key, as `<prefix>.<secret>`. The prefix identifies the key and is safe to log; the secret after the dot is shown once, when the key is issued, and is never retrievable afterwards."
+      }
+    },
+    "schemas": {
+      "Error": {
+        "type": "object",
+        "properties": {
+          "error": {
+            "type": "object",
+            "properties": {
+              "type": {
+                "type": "string",
+                "enum": [
+                  "validation_error",
+                  "authentication_error",
+                  "permission_error",
+                  "not_found",
+                  "conflict",
+                  "rate_limited",
+                  "provider_error",
+                  "internal_error"
+                ]
+              },
+              "code": {
+                "type": "string"
+              },
+              "message": {
+                "type": "string"
+              },
+              "request_id": {
+                "type": "string"
+              },
+              "doc_url": {
+                "type": "string"
+              },
+              "details": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "path": {
+                      "type": "string"
+                    },
+                    "issue": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "path",
+                    "issue"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            },
+            "required": [
+              "type",
+              "code",
+              "message",
+              "request_id",
+              "doc_url"
+            ],
+            "additionalProperties": false
+          }
+        },
+        "required": [
+          "error"
+        ],
+        "additionalProperties": false
+      }
+    }
+  },
+  "security": [
+    {
+      "apiKey": []
+    }
+  ],
+  "x-webhook-events": [
+    {
+      "type": "support.ticket.raised",
+      "when": "Somebody raises a support ticket."
+    }
+  ],
+  "x-webhook-signature": {
+    "header": "X-Paathshala-Signature",
+    "format": "t=<unix seconds>,v1=<hex>[,v1=<hex>]",
+    "algorithm": "HMAC-SHA256 over `{t}.{raw request body}`",
+    "tolerance_seconds": 300,
+    "notes": [
+      "Compare in constant time. A verifier written with === leaks, byte by byte, how much of a guess was right.",
+      "Sign the RAW body. Re-serialising parsed JSON changes key order and number formatting, and the signature stops matching.",
+      "More than one v1 may be present during a secret rotation; accept the request if any of them matches.",
+      "Reject a timestamp more than 300 seconds from now, before doing the HMAC, so replayed requests cost you nothing."
+    ]
+  },
+  "paths": {
+    "/api/v1/students": {
+      "get": {
+        "operationId": "listStudents",
+        "summary": "List learners",
+        "description": "Active learners, oldest id first. Name parts are returned separately rather than concatenated, because every consumer splits a full name differently. Medical notes and emergency contacts are deliberately not in this response.",
+        "security": [
+          {
+            "apiKey": []
+          }
+        ],
+        "x-scopes": [
+          "students:read"
+        ],
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "data",
+                    "next_cursor"
+                  ],
+                  "properties": {
+                    "data": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "id": {
+                            "type": "string",
+                            "format": "uuid"
+                          },
+                          "admission_no": {
+                            "type": "string"
+                          },
+                          "lifecycle_status": {
+                            "type": "string"
+                          },
+                          "given_name": {
+                            "type": "string"
+                          },
+                          "middle_name": {
+                            "type": "string",
+                            "nullable": true
+                          },
+                          "family_name": {
+                            "type": "string",
+                            "nullable": true
+                          },
+                          "preferred_name": {
+                            "type": "string",
+                            "nullable": true
+                          }
+                        },
+                        "required": [
+                          "id",
+                          "admission_no",
+                          "lifecycle_status",
+                          "given_name",
+                          "middle_name",
+                          "family_name",
+                          "preferred_name"
+                        ],
+                        "additionalProperties": false
+                      }
+                    },
+                    "next_cursor": {
+                      "type": [
+                        "string",
+                        "null"
+                      ],
+                      "description": "Pass as `cursor` for the next page. Null on the last page."
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "The API key is missing, malformed, revoked or expired.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "The key lacks the students:read scope.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "The request failed validation.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Rate limit exceeded for this key. `Retry-After` says when the window resets.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 200,
+              "default": 50
+            }
+          },
+          {
+            "name": "cursor",
+            "in": "query",
+            "required": false,
+            "description": "The `next_cursor` from the previous page. Keyset, not offset: a row inserted mid-walk shifts every later offset page by one, so an offset client silently skips a record.",
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "description": "The `next_cursor` from the previous page. Keyset, not offset: a row inserted mid-walk shifts every later offset page by one, so an offset client silently skips a record."
+            }
+          }
+        ]
+      }
+    },
+    "/api/v1/invoices": {
+      "get": {
+        "operationId": "listInvoices",
+        "summary": "List invoices",
+        "description": "Every invoice the key may see. Amounts are exact decimal strings.",
+        "security": [
+          {
+            "apiKey": []
+          }
+        ],
+        "x-scopes": [
+          "invoices:read"
+        ],
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "data",
+                    "next_cursor"
+                  ],
+                  "properties": {
+                    "data": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "id": {
+                            "type": "string",
+                            "format": "uuid"
+                          },
+                          "invoice_no": {
+                            "type": "string"
+                          },
+                          "enrollment_id": {
+                            "type": "string",
+                            "format": "uuid"
+                          },
+                          "status": {
+                            "type": "string"
+                          },
+                          "due_on": {
+                            "type": "string"
+                          },
+                          "total": {
+                            "type": "string",
+                            "description": "An exact decimal as a string. Never a JSON number: a JSON number is an IEEE double, and money that has been through one is no longer the amount owed."
+                          },
+                          "amount_paid": {
+                            "type": "string",
+                            "description": "An exact decimal as a string. Never a JSON number: a JSON number is an IEEE double, and money that has been through one is no longer the amount owed."
+                          }
+                        },
+                        "required": [
+                          "id",
+                          "invoice_no",
+                          "enrollment_id",
+                          "status",
+                          "due_on",
+                          "total",
+                          "amount_paid"
+                        ],
+                        "additionalProperties": false
+                      }
+                    },
+                    "next_cursor": {
+                      "type": [
+                        "string",
+                        "null"
+                      ],
+                      "description": "Pass as `cursor` for the next page. Null on the last page."
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "The API key is missing, malformed, revoked or expired.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "The key lacks the invoices:read scope.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "The request failed validation.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Rate limit exceeded for this key. `Retry-After` says when the window resets.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 200,
+              "default": 50
+            }
+          },
+          {
+            "name": "cursor",
+            "in": "query",
+            "required": false,
+            "description": "The `next_cursor` from the previous page. Keyset, not offset: a row inserted mid-walk shifts every later offset page by one, so an offset client silently skips a record.",
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "description": "The `next_cursor` from the previous page. Keyset, not offset: a row inserted mid-walk shifts every later offset page by one, so an offset client silently skips a record."
+            }
+          }
+        ]
+      }
+    },
+    "/api/v1/payments": {
+      "get": {
+        "operationId": "listPayments",
+        "summary": "List payments",
+        "description": "Settled and pending payments, for reconciliation against your own ledger. `target_invoice_id` is the invoice the payer chose, which is not always the oldest one outstanding.",
+        "security": [
+          {
+            "apiKey": []
+          }
+        ],
+        "x-scopes": [
+          "payments:read"
+        ],
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "data",
+                    "next_cursor"
+                  ],
+                  "properties": {
+                    "data": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "id": {
+                            "type": "string",
+                            "format": "uuid"
+                          },
+                          "target_invoice_id": {
+                            "type": "string",
+                            "format": "uuid",
+                            "nullable": true
+                          },
+                          "method": {
+                            "type": "string"
+                          },
+                          "status": {
+                            "type": "string"
+                          },
+                          "provider": {
+                            "type": "string",
+                            "nullable": true
+                          },
+                          "provider_payment_id": {
+                            "type": "string",
+                            "nullable": true
+                          },
+                          "received_on": {
+                            "type": "string"
+                          },
+                          "amount": {
+                            "type": "string",
+                            "description": "An exact decimal as a string. Never a JSON number: a JSON number is an IEEE double, and money that has been through one is no longer the amount owed."
+                          }
+                        },
+                        "required": [
+                          "id",
+                          "target_invoice_id",
+                          "method",
+                          "status",
+                          "provider",
+                          "provider_payment_id",
+                          "received_on",
+                          "amount"
+                        ],
+                        "additionalProperties": false
+                      }
+                    },
+                    "next_cursor": {
+                      "type": [
+                        "string",
+                        "null"
+                      ],
+                      "description": "Pass as `cursor` for the next page. Null on the last page."
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "The API key is missing, malformed, revoked or expired.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "The key lacks the payments:read scope.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "The request failed validation.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Rate limit exceeded for this key. `Retry-After` says when the window resets.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 200,
+              "default": 50
+            }
+          },
+          {
+            "name": "cursor",
+            "in": "query",
+            "required": false,
+            "description": "The `next_cursor` from the previous page. Keyset, not offset: a row inserted mid-walk shifts every later offset page by one, so an offset client silently skips a record.",
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "description": "The `next_cursor` from the previous page. Keyset, not offset: a row inserted mid-walk shifts every later offset page by one, so an offset client silently skips a record."
+            }
+          }
+        ]
+      }
+    },
+    "/api/v1/attendance": {
+      "get": {
+        "operationId": "listAttendance",
+        "summary": "List attendance records",
+        "description": "`recorded_at` is the server time the mark was accepted. A mark made offline carries the device time separately and is never trusted for ordering.",
+        "security": [
+          {
+            "apiKey": []
+          }
+        ],
+        "x-scopes": [
+          "attendance:read"
+        ],
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "data",
+                    "next_cursor"
+                  ],
+                  "properties": {
+                    "data": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "id": {
+                            "type": "string",
+                            "format": "uuid"
+                          },
+                          "attendance_session_id": {
+                            "type": "string",
+                            "format": "uuid"
+                          },
+                          "enrollment_id": {
+                            "type": "string",
+                            "format": "uuid"
+                          },
+                          "state": {
+                            "type": "string",
+                            "enum": [
+                              "present",
+                              "absent",
+                              "late",
+                              "excused",
+                              "half_day"
+                            ]
+                          },
+                          "minutes_late": {
+                            "type": "integer",
+                            "nullable": true
+                          },
+                          "recorded_at": {
+                            "type": "string"
+                          },
+                          "session_date": {
+                            "type": "string"
+                          }
+                        },
+                        "required": [
+                          "id",
+                          "attendance_session_id",
+                          "enrollment_id",
+                          "state",
+                          "minutes_late",
+                          "recorded_at",
+                          "session_date"
+                        ],
+                        "additionalProperties": false
+                      }
+                    },
+                    "next_cursor": {
+                      "type": [
+                        "string",
+                        "null"
+                      ],
+                      "description": "Pass as `cursor` for the next page. Null on the last page."
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "The API key is missing, malformed, revoked or expired.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "The key lacks the attendance:read scope.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "The request failed validation.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Rate limit exceeded for this key. `Retry-After` says when the window resets.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 200,
+              "default": 50
+            }
+          },
+          {
+            "name": "cursor",
+            "in": "query",
+            "required": false,
+            "description": "The `next_cursor` from the previous page. Keyset, not offset: a row inserted mid-walk shifts every later offset page by one, so an offset client silently skips a record.",
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "description": "The `next_cursor` from the previous page. Keyset, not offset: a row inserted mid-walk shifts every later offset page by one, so an offset client silently skips a record."
+            }
+          }
+        ]
+      }
+    },
+    "/api/v1/results": {
+      "get": {
+        "operationId": "listResults",
+        "summary": "List result lines",
+        "description": "Published result lines only. An unreviewed result is invisible here for the same reason it is invisible in the parent app.",
+        "security": [
+          {
+            "apiKey": []
+          }
+        ],
+        "x-scopes": [
+          "results:read"
+        ],
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "data",
+                    "next_cursor"
+                  ],
+                  "properties": {
+                    "data": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "id": {
+                            "type": "string",
+                            "format": "uuid"
+                          },
+                          "result_run_id": {
+                            "type": "string",
+                            "format": "uuid"
+                          },
+                          "enrollment_id": {
+                            "type": "string",
+                            "format": "uuid"
+                          },
+                          "course_offering_id": {
+                            "type": "string",
+                            "format": "uuid"
+                          },
+                          "obtained": {
+                            "type": "string",
+                            "nullable": true
+                          },
+                          "maximum": {
+                            "type": "string",
+                            "nullable": true
+                          },
+                          "percentage": {
+                            "type": "string",
+                            "nullable": true
+                          },
+                          "is_pass": {
+                            "type": "boolean",
+                            "nullable": true
+                          },
+                          "grade_label": {
+                            "type": "string",
+                            "nullable": true
+                          },
+                          "not_graded_reason": {
+                            "type": "string",
+                            "nullable": true
+                          }
+                        },
+                        "required": [
+                          "id",
+                          "result_run_id",
+                          "enrollment_id",
+                          "course_offering_id",
+                          "obtained",
+                          "maximum",
+                          "percentage",
+                          "is_pass",
+                          "grade_label",
+                          "not_graded_reason"
+                        ],
+                        "additionalProperties": false
+                      }
+                    },
+                    "next_cursor": {
+                      "type": [
+                        "string",
+                        "null"
+                      ],
+                      "description": "Pass as `cursor` for the next page. Null on the last page."
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "The API key is missing, malformed, revoked or expired.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "The key lacks the results:read scope.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "The request failed validation.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Rate limit exceeded for this key. `Retry-After` says when the window resets.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 200,
+              "default": 50
+            }
+          },
+          {
+            "name": "cursor",
+            "in": "query",
+            "required": false,
+            "description": "The `next_cursor` from the previous page. Keyset, not offset: a row inserted mid-walk shifts every later offset page by one, so an offset client silently skips a record.",
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "description": "The `next_cursor` from the previous page. Keyset, not offset: a row inserted mid-walk shifts every later offset page by one, so an offset client silently skips a record."
+            }
+          }
+        ]
+      }
+    },
+    "/api/v1/webhooks/deliveries": {
+      "get": {
+        "operationId": "listDeliveries",
+        "summary": "List webhook deliveries",
+        "description": "What we attempted to send you and what came back, so you can reconcile your inbox against our outbox without asking us.",
+        "security": [
+          {
+            "apiKey": []
+          }
+        ],
+        "x-scopes": [
+          "webhooks:read"
+        ],
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "data",
+                    "next_cursor"
+                  ],
+                  "properties": {
+                    "data": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "id": {
+                            "type": "string",
+                            "format": "uuid",
+                            "description": "Stable across every retry of this delivery, including a replay. This is the value to de-duplicate on."
+                          },
+                          "webhook_endpoint_id": {
+                            "type": "string",
+                            "format": "uuid"
+                          },
+                          "event_type": {
+                            "type": "string"
+                          },
+                          "status": {
+                            "type": "string"
+                          },
+                          "attempt_count": {
+                            "type": "integer"
+                          },
+                          "last_error": {
+                            "type": "string",
+                            "nullable": true
+                          },
+                          "succeeded_at": {
+                            "type": "string",
+                            "nullable": true
+                          },
+                          "created_at": {
+                            "type": "string"
+                          }
+                        },
+                        "required": [
+                          "id",
+                          "webhook_endpoint_id",
+                          "event_type",
+                          "status",
+                          "attempt_count",
+                          "last_error",
+                          "succeeded_at",
+                          "created_at"
+                        ],
+                        "additionalProperties": false
+                      }
+                    },
+                    "next_cursor": {
+                      "type": [
+                        "string",
+                        "null"
+                      ],
+                      "description": "Pass as `cursor` for the next page. Null on the last page."
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "The API key is missing, malformed, revoked or expired.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "The key lacks the webhooks:read scope.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "The request failed validation.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Rate limit exceeded for this key. `Retry-After` says when the window resets.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 200,
+              "default": 50
+            }
+          },
+          {
+            "name": "cursor",
+            "in": "query",
+            "required": false,
+            "description": "The `next_cursor` from the previous page. Keyset, not offset: a row inserted mid-walk shifts every later offset page by one, so an offset client silently skips a record.",
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "description": "The `next_cursor` from the previous page. Keyset, not offset: a row inserted mid-walk shifts every later offset page by one, so an offset client silently skips a record."
+            }
+          }
+        ]
+      }
+    },
+    "/api/v1/attendance/marks": {
+      "post": {
+        "operationId": "markAttendance",
+        "summary": "Mark attendance",
+        "description": "Requires an `Idempotency-Key` header. Reusing a key with the same body replays the first response; reusing it with a different body is refused rather than replayed, because that is almost always a loop variable that failed to advance.",
+        "security": [
+          {
+            "apiKey": []
+          }
+        ],
+        "x-scopes": [
+          "attendance:write"
+        ],
+        "responses": {
+          "201": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "data": {
+                      "type": "object",
+                      "properties": {
+                        "sessionId": {
+                          "type": "string",
+                          "format": "uuid"
+                        },
+                        "outcomes": {
+                          "type": "array",
+                          "items": {
+                            "type": "object",
+                            "properties": {
+                              "clientEventId": {
+                                "type": "string"
+                              },
+                              "status": {
+                                "type": "string",
+                                "enum": [
+                                  "applied",
+                                  "already_applied",
+                                  "rejected",
+                                  "queued_for_approval"
+                                ]
+                              },
+                              "recordId": {
+                                "type": "string",
+                                "format": "uuid"
+                              }
+                            },
+                            "required": [
+                              "clientEventId",
+                              "status"
+                            ],
+                            "additionalProperties": false
+                          }
+                        },
+                        "serverTime": {
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "sessionId",
+                        "outcomes",
+                        "serverTime"
+                      ],
+                      "additionalProperties": false
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "The API key is missing, malformed, revoked or expired.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "The key lacks the attendance:write scope.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "A request with this Idempotency-Key is still in flight.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "The request failed validation.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Rate limit exceeded for this key. `Retry-After` says when the window resets.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "minLength": 8,
+              "maxLength": 255
+            },
+            "description": "Unique per distinct request. A replayed response carries `Idempotent-Replay: true`."
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "sessionId": {
+                    "type": "string",
+                    "format": "uuid"
+                  },
+                  "marks": {
+                    "type": "array",
+                    "items": {
+                      "type": "object",
+                      "properties": {
+                        "clientEventId": {
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 120,
+                          "description": "Your own id for this mark. Required rather than generated, because a generated one would differ on every retry."
+                        },
+                        "studentId": {
+                          "type": "string",
+                          "format": "uuid"
+                        },
+                        "state": {
+                          "type": "string",
+                          "enum": [
+                            "present",
+                            "absent",
+                            "late",
+                            "excused",
+                            "half_day"
+                          ]
+                        },
+                        "minutesLate": {
+                          "type": "integer",
+                          "minimum": 0,
+                          "maximum": 600
+                        }
+                      },
+                      "required": [
+                        "clientEventId",
+                        "studentId",
+                        "state"
+                      ],
+                      "additionalProperties": false
+                    },
+                    "minItems": 1,
+                    "maxItems": 200
+                  }
+                },
+                "required": [
+                  "sessionId",
+                  "marks"
+                ],
+                "additionalProperties": false
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}

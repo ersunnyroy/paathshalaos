@@ -1,3 +1,24 @@
-.claude/
+node_modules/
+dist/
+.next/
+out/
+coverage/
+*.tsbuildinfo
+.env
+.env.*
+!.env.example
+.turbo/
+.DS_Store
+*.log
+pgdata/
 
-template-react/
+# Claude Code / Cowork
+.claude/settings.local.json
+Claude outputs/
+
+# Expo
+apps/mobile/.expo/
+apps/mobile/dist/
+
+# pnpm store (kept in-repo by this machine's pnpm config)
+.pnpm-store/
