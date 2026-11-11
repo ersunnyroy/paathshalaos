@@ -25,6 +25,7 @@
  */
 import { Controller, Get, Post, Body, Param, Query } from '@nestjs/common';
 import { z } from 'zod';
+import { resultNoticeService } from '../messaging/result-notice.service.ts';
 import { assessmentService } from './assessment.service.ts';
 import { gradingService } from './grading.service.ts';
 import { resultService } from './result.service.ts';
@@ -488,7 +489,10 @@ export class ResultRunController {
     await resultService.publish(scope, {
       runId: runId.data, publishedByStaffId: await requireStaff(scope),
     });
-    return { data: { published: true } };
+    // After, never instead of: the run is published whether or not anybody
+    // could be told.
+    const notice = await resultNoticeService.published(scope, runId.data);
+    return { data: { published: true, guardiansTold: notice.told } };
   }
 
   /**

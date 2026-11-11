@@ -72,7 +72,8 @@ export default function ResultsPage() {
 
   async function act(fn: () => Promise<unknown>, done: string) {
     setBusy(true); setError(null); setSaid(null);
-    try { await fn(); setSaid(done); load(); }
+    // An action that knows better what happened says so itself.
+    try { const out = await fn(); setSaid(typeof out === 'string' ? out : done); load(); }
     catch (e) { setError((e as Error).message); }
     finally { setBusy(false); }
   }
@@ -252,7 +253,14 @@ export default function ResultsPage() {
                     {r.status === 'reviewed' ? (
                       <button className="ghost" disabled={busy}
                               onClick={() => void act(
-                                () => apiPost(`/v1/result-runs/${r.id}/publish`),
+                                async () => {
+                                  const out = await apiPost<{ guardiansTold?: number }>(
+                                    `/v1/result-runs/${r.id}/publish`);
+                                  const told = out.guardiansTold ?? 0;
+                                  return told > 0
+                                    ? `Published — families can see this now. ${told} ${told === 1 ? 'guardian' : 'guardians'} told.`
+                                    : 'Published — families can see this now.';
+                                },
                                 'Published — families can see this now.')}>
                         Publish
                       </button>

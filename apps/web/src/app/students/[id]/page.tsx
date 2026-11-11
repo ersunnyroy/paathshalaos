@@ -119,6 +119,12 @@ export default function LearnerPage() {
         {parent
           ? <Link href="/family" className="back">← My children</Link>
           : <Link href="/students" className="back">← Learners</Link>}
+        {/* The office issues certificates; a parent asks the office for one. */}
+        {!parent && l ? (
+          <Link href={`/students/${id}/certificate`} className="back no-print">
+            Certificate…
+          </Link>
+        ) : null}
         <div className="who">
           <span className="big-avatar"><Avatar name={name || '…'} /></span>
           <div>

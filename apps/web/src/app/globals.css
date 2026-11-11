@@ -1125,3 +1125,8 @@ tbody tr.on td { background: var(--brand-soft); }
 /* Register: tell the guardians of absentees */
 .absence-notices { display: flex; flex-wrap: wrap; gap: 8px 14px; align-items: center; justify-content: space-between; margin: 0 0 14px; }
 .absence-notices .why { flex-basis: 100%; font-size: 12.5px; }
+
+/* Certificates share the receipt's paper */
+.certificate .dated { text-align: right; margin: 18px 0 26px; }
+.certificate .body { font-size: 15.5px; line-height: 1.9; margin: 0 0 16px; text-align: justify; }
+.certificate footer { margin-top: 90px; }

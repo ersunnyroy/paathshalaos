@@ -572,3 +572,30 @@ No migration.
   "Send 2 reminders?" → "2 reminders sent. 15 not sent: no consent on record.";
   the parent's bell shows both messages.
 - No API test against Postgres for either path yet.
+
+## M43.4 — Families are told when a result is published
+
+No migration. `messaging/result-notice.service.ts`: after a run is published,
+guardians with `can_view_academics` (link in force, notifications on) of the
+learners in it are told in-app from the school's `RESULT_PUBLISHED` template.
+It says the result is out, not what it is. Best-effort, idempotent on the run;
+no approved template → nothing sent. The publish response carries
+`guardiansTold`, and Results says so. Checked live: Class IX A Term 1 reviewed
+by the teacher, published by the principal → "11 guardians told." No API test.
+
+## M47.3 — Certificates from the learner's record
+
+Web only. `/students/<id>/certificate`, opened from "Certificate…" on the
+learner profile (office only): bonafide, study, and date of birth. The words
+come from the record — name, guardian ("ward of"), admission number, class,
+year, date of birth — and the office types only what it is for. A
+date-of-birth certificate with no date on record, or any certificate for a
+learner in no class, is refused rather than printed with a gap.
+`lib/certificate.ts` (9 tests, mutation pass clean). Checked live for Aarav
+Kumar (bonafide and date of birth).
+
+Not done, and it matters: **there is no register of certificates issued and no
+serial number**. A number that is recorded nowhere is worse than none, so the
+page prints none. A register (who issued what, to whom, when, numbered per
+year) needs a migration. The header carries the school's name only: no
+address, affiliation number or logo, for the same reason as the receipt.
